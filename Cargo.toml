@@ -1,0 +1,8 @@
+[package]
+name = "ocellus"
+version = "0.1.0"
+edition = "2024"
+description = "A minimal Rust hardware telemetry exporter skeleton."
+license = "MIT OR Apache-2.0"
+
+[dependencies]

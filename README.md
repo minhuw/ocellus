@@ -1,21 +1,21 @@
 # ocellus
 
-`ocellus` is a minimal Rust skeleton for a hardware telemetry exporter inspired by `peacock`.
+`ocellus` is a Rust hardware telemetry exporter for x86_64 Linux hosts.
 
-The intended direction is to expose Intel PMU, uncore, RDT, and RAPL metrics through a small Prometheus-compatible service.
+## Usage
 
-## Development
+`ocellus` currently reads x86 MSRs, so load the `msr` kernel module and run with root or `CAP_SYS_RAWIO`.
+
+Local JSONL mode is the default:
 
 ```sh
-nix develop
-cargo fmt
-cargo test
-cargo run -- --help
+sudo modprobe msr
+sudo cargo run -- --output ocellus-metrics.jsonl --measure-interval-ms 1000
 ```
 
-## Build
+Prometheus daemon mode:
 
 ```sh
-nix build
-nix run
+sudo modprobe msr
+sudo cargo run -- --daemon --listen 0.0.0.0:8080 --measure-interval-ms 1000
 ```

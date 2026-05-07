@@ -9,7 +9,8 @@ use prometheus_client::registry::Registry;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{Mutex, oneshot};
 
 use crate::metrics::MetricsRegistry;
 use crate::runtime::sampler::SamplerReader;
@@ -18,32 +19,50 @@ const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.
 
 #[derive(Debug)]
 struct PrometheusExporter {
-    sampler: SamplerReader,
-    registry: Registry,
-    metrics: MetricsRegistry,
+    metrics: Arc<MetricsRegistry>,
+    registry: Mutex<Registry>,
 }
 
 impl PrometheusExporter {
     fn new(sampler: SamplerReader) -> Self {
         let mut registry = Registry::default();
-        let metrics = MetricsRegistry::register(&mut registry, sampler.metadata().processor);
+        let metrics = Arc::new(MetricsRegistry::register(
+            &mut registry,
+            sampler.metadata().processor,
+        ));
 
         Self {
-            sampler,
-            registry,
             metrics,
+            registry: Mutex::new(registry),
         }
     }
 
-    async fn update_scrape_metrics(&self) {
-        self.metrics.update(self.sampler.latest_state().await);
+    #[cfg(test)]
+    fn update_state(&self, state: crate::metrics::MetricsState) {
+        self.metrics.update_state(state);
+    }
+
+    fn spawn_updater(&self, sampler: SamplerReader) {
+        let metrics = self.metrics.clone();
+        let mut updates = sampler.subscribe_updates();
+
+        tokio::spawn(async move {
+            loop {
+                match updates.recv().await {
+                    Ok(update) => metrics.update(update),
+                    Err(RecvError::Lagged(skipped)) => {
+                        eprintln!("ocellus: Prometheus metrics updater skipped {skipped} updates");
+                    }
+                    Err(RecvError::Closed) => return,
+                }
+            }
+        });
     }
 
     async fn render_metrics(&self) -> Result<String, std::fmt::Error> {
-        self.update_scrape_metrics().await;
-
         let mut metrics = String::new();
-        encode(&mut metrics, &self.registry)?;
+        let registry = self.registry.lock().await;
+        encode(&mut metrics, &registry)?;
         Ok(metrics)
     }
 }
@@ -55,9 +74,10 @@ struct AppState {
 
 impl AppState {
     fn new(sampler: SamplerReader) -> Self {
-        Self {
-            exporter: PrometheusExporter::new(sampler),
-        }
+        let exporter = PrometheusExporter::new(sampler.clone());
+        exporter.spawn_updater(sampler);
+
+        Self { exporter }
     }
 }
 
@@ -123,18 +143,29 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Response {
 mod tests {
     use super::*;
 
+    fn processor_metadata() -> crate::metrics::ProcessorMetadata {
+        crate::metrics::ProcessorMetadata {
+            brand: "Intel(R) Xeon(R) Gold 6252 CPU @ 2.10GHz".to_string(),
+            family: 6,
+            invariant_tsc_supported: true,
+            model: 85,
+            package_rapl_supported: true,
+            vendor: "GenuineIntel".to_string(),
+        }
+    }
+
     #[test]
     fn renders_prometheus_text() {
         let sampler = SamplerReader::new_for_test(
             crate::runtime::sampler::SamplerMetadata {
                 measure_interval: std::time::Duration::from_millis(1),
-                processor: crate::metrics::ProcessorMetadata {
-                    invariant_tsc_supported: true,
-                },
+                processor: processor_metadata(),
             },
             crate::metrics::MetricsState::default(),
         );
+        let state = crate::metrics::MetricsState::default();
         let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
 
@@ -144,7 +175,9 @@ mod tests {
         assert!(metrics.contains("processor_info"));
         assert!(!metrics.contains("ocellus_up"));
         assert!(!metrics.contains("ocellus_tsc_supported"));
-        assert!(metrics.contains("processor_info{invariant_tsc_supported=\"true\"}"));
+        assert!(metrics.contains("invariant_tsc_supported=\"true\""));
+        assert!(metrics.contains("package_rapl_supported=\"true\""));
+        assert!(metrics.contains("vendor=\"GenuineIntel\""));
         assert!(!metrics.contains("ocellus_info{invariant_tsc_supported"));
         assert!(!metrics.contains("ocellus_invariant_tsc_supported"));
         assert!(!metrics.contains("ocellus_tsc_frequency_hz"));
@@ -153,26 +186,67 @@ mod tests {
 
     #[test]
     fn renders_tsc_metric_after_first_sample() {
+        let state = crate::metrics::MetricsState {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            rapl: None,
+            tsc: Some(crate::metrics::tsc::TscMetrics {
+                frequency_hz: 2_400_000_000.0,
+            }),
+        };
         let sampler = SamplerReader::new_for_test(
             crate::runtime::sampler::SamplerMetadata {
                 measure_interval: std::time::Duration::from_millis(1),
-                processor: crate::metrics::ProcessorMetadata {
-                    invariant_tsc_supported: true,
-                },
+                processor: processor_metadata(),
             },
-            crate::metrics::MetricsState {
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                tsc: Some(crate::metrics::tsc::TscMetrics {
-                    frequency_hz: 2_400_000_000.0,
-                }),
-            },
+            state.clone(),
         );
         let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
 
         assert!(metrics.contains("# TYPE ocellus_tsc_frequency_hz gauge"));
         assert!(metrics.contains("ocellus_tsc_frequency_hz"));
         assert!(metrics.contains("2400000000"));
+    }
+
+    #[test]
+    fn renders_rapl_domain_metrics() {
+        let state = crate::metrics::MetricsState {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            rapl: Some(crate::metrics::rapl::RaplMetrics {
+                domains: vec![crate::metrics::rapl::RaplDomainMetrics {
+                    domain: crate::metrics::rapl::RaplDomainKind::Package,
+                    energy_joules_total: 42.0,
+                    power_watts: 21.0,
+                    scope: crate::metrics::rapl::RaplScope {
+                        die_group_id: 0,
+                        die_id: 0,
+                        package_id: 0,
+                    },
+                }],
+            }),
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                processor: processor_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_rapl_energy_joules counter"));
+        assert!(metrics.contains("ocellus_rapl_energy_joules_total"));
+        assert!(metrics.contains("die_group=\"0\""));
+        assert!(metrics.contains("die=\"0\""));
+        assert!(metrics.contains("domain=\"package\""));
+        assert!(metrics.contains("package=\"0\""));
+        assert!(metrics.contains("# TYPE ocellus_rapl_power_watts gauge"));
+        assert!(metrics.contains("ocellus_rapl_power_watts"));
     }
 }

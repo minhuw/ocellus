@@ -56,7 +56,7 @@ impl LocalRecord {
 
 fn unix_time_seconds(time: SystemTime) -> f64 {
     time.duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
+        .expect("system clock must be after Unix epoch")
         .as_secs_f64()
 }
 
@@ -65,6 +65,7 @@ pub async fn run(
     sampler: SamplerReader,
     mut shutdown: oneshot::Receiver<()>,
 ) -> Result<(), String> {
+    let metadata = sampler.metadata();
     let mut output = OpenOptions::new()
         .create(true)
         .append(true)
@@ -75,19 +76,19 @@ pub async fn run(
         "ocellus {}: appending local JSONL metrics to {} every {:.3}s",
         env!("CARGO_PKG_VERSION"),
         output_path.display(),
-        sampler.metadata().measure_interval.as_secs_f64()
+        metadata.measure_interval.as_secs_f64()
     );
 
     write_jsonl_record(
         &mut output,
         &LocalRecord::metadata(
-            sampler.metadata().measure_interval,
-            sampler.metadata().processor.invariant_tsc_supported,
+            metadata.measure_interval,
+            metadata.processor.invariant_tsc_supported,
         ),
     )
     .await?;
 
-    let mut interval = tokio::time::interval(sampler.metadata().measure_interval);
+    let mut interval = tokio::time::interval(metadata.measure_interval);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     interval.tick().await;
 
@@ -149,6 +150,7 @@ mod tests {
     fn encodes_sample_record() {
         let state = MetricsState {
             version: env!("CARGO_PKG_VERSION").to_string(),
+            rapl: None,
             tsc: None,
         };
         let record = LocalRecord::sample(state);
@@ -159,5 +161,34 @@ mod tests {
         assert!(object.contains_key("timestamp_unix_seconds"));
         assert!(object.contains_key("version"));
         assert!(!object.contains_key("invariant_tsc_supported"));
+    }
+
+    #[test]
+    fn encodes_rapl_domain_sample() {
+        let state = MetricsState {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            rapl: Some(crate::metrics::rapl::RaplMetrics {
+                domains: vec![crate::metrics::rapl::RaplDomainMetrics {
+                    domain: crate::metrics::rapl::RaplDomainKind::Dram,
+                    energy_joules_total: 10.0,
+                    power_watts: 5.0,
+                    scope: crate::metrics::rapl::RaplScope {
+                        die_group_id: 0,
+                        die_id: 0,
+                        package_id: 0,
+                    },
+                }],
+            }),
+            tsc: None,
+        };
+        let record = LocalRecord::sample(state);
+        let json = serde_json::to_value(&record).unwrap();
+
+        assert_eq!(json["rapl"]["domains"][0]["domain"], "dram");
+        assert_eq!(json["rapl"]["domains"][0]["die_group_id"], 0);
+        assert_eq!(json["rapl"]["domains"][0]["die_id"], 0);
+        assert_eq!(json["rapl"]["domains"][0]["energy_joules_total"], 10.0);
+        assert_eq!(json["rapl"]["domains"][0]["package_id"], 0);
+        assert_eq!(json["rapl"]["domains"][0]["power_watts"], 5.0);
     }
 }

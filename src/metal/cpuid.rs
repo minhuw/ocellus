@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use raw_cpuid::{CpuId, CpuIdReaderNative};
 
 #[derive(Clone, Debug)]
@@ -20,6 +18,13 @@ impl CpuInfo {
         }
     }
 
+    pub fn brand(&self) -> Option<String> {
+        self.cpuid
+            .get_processor_brand_string()
+            .map(|brand| brand.as_str().trim().to_owned())
+            .filter(|brand| !brand.is_empty())
+    }
+
     pub fn vendor(&self) -> Option<String> {
         self.cpuid
             .get_vendor_info()
@@ -32,10 +37,22 @@ impl CpuInfo {
             .is_some_and(|features| features.has_tsc())
     }
 
+    pub fn family_id(&self) -> Option<u8> {
+        self.cpuid
+            .get_feature_info()
+            .map(|features| features.family_id())
+    }
+
     pub fn has_invariant_tsc(&self) -> bool {
         self.cpuid
             .get_advanced_power_mgmt_info()
             .is_some_and(|features| features.has_invariant_tsc())
+    }
+
+    pub fn model_id(&self) -> Option<u8> {
+        self.cpuid
+            .get_feature_info()
+            .map(|features| features.model_id())
     }
 }
 

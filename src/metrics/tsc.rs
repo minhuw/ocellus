@@ -7,6 +7,7 @@ use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 
+use crate::arch::Architecture;
 use crate::metal;
 use crate::metrics::{MetricEvent, MetricUpdate};
 
@@ -15,7 +16,6 @@ const IA32_TSC: u64 = 0x10;
 #[derive(Debug)]
 pub struct TscCollector {
     is_supported: bool,
-    is_invariant: bool,
     previous: Option<TscReading>,
 }
 
@@ -87,11 +87,7 @@ impl TscTask {
 
 impl TscCollector {
     pub fn new() -> Self {
-        Self::with_capabilities(tsc_supported(), invariant_tsc_supported())
-    }
-
-    pub fn invariant_tsc_supported(&self) -> bool {
-        self.is_invariant
+        Self::with_capabilities(tsc_supported())
     }
 
     pub fn sample(&mut self) -> Result<Option<TscMetrics>, String> {
@@ -108,10 +104,9 @@ impl TscCollector {
         Ok(TscMetrics::from_readings(previous, current))
     }
 
-    pub(crate) fn with_capabilities(is_supported: bool, is_invariant: bool) -> Self {
+    pub(crate) fn with_capabilities(is_supported: bool) -> Self {
         Self {
             is_supported,
-            is_invariant,
             previous: None,
         }
     }
@@ -130,12 +125,10 @@ impl TscPrometheusMetrics {
         Self { frequency_hz }
     }
 
-    pub fn update(&self, metrics: Option<TscMetrics>) {
-        if let Some(metrics) = metrics {
-            self.frequency_hz
-                .get_or_create(&TscMetricLabels {})
-                .set(metrics.frequency_hz);
-        }
+    pub fn update(&self, metrics: TscMetrics) {
+        self.frequency_hz
+            .get_or_create(&TscMetricLabels {})
+            .set(metrics.frequency_hz);
     }
 }
 
@@ -165,7 +158,10 @@ impl TscReading {
     }
 }
 
-pub fn preflight_permissions() -> Result<(), String> {
+pub fn preflight_permissions(architecture: &Architecture) -> Result<(), String> {
+    if !architecture.features.tsc {
+        return Ok(());
+    }
     let msr = metal::msr::Msr::open_readonly(0).map_err(|error| {
         format!(
             "missing required MSR read permission for /dev/cpu/0/msr: {error}; try `sudo modprobe msr` and run with sufficient privileges"
@@ -178,10 +174,6 @@ pub fn preflight_permissions() -> Result<(), String> {
     })?;
 
     Ok(())
-}
-
-fn invariant_tsc_supported() -> bool {
-    metal::cpuid::CpuInfo::new().has_invariant_tsc()
 }
 
 fn read_tsc() -> Result<u64, String> {
@@ -199,7 +191,7 @@ mod tests {
 
     #[test]
     fn disabled_collector_has_no_tsc_sample() {
-        let mut collector = TscCollector::with_capabilities(false, true);
+        let mut collector = TscCollector::with_capabilities(false);
         let tsc = collector.sample().unwrap();
 
         assert!(tsc.is_none());

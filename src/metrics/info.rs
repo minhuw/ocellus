@@ -11,7 +11,12 @@ struct OcellusInfoLabels {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct ProcessorInfoLabels {
+    brand: String,
+    family: String,
     invariant_tsc_supported: String,
+    model: String,
+    package_rapl_supported: String,
+    vendor: String,
 }
 
 pub fn register(registry: &mut Registry, processor: ProcessorMetadata) {
@@ -36,7 +41,12 @@ pub fn register(registry: &mut Registry, processor: ProcessorMetadata) {
         .set(1);
     processor_info
         .get_or_create(&ProcessorInfoLabels {
+            brand: processor.brand,
+            family: processor.family.to_string(),
             invariant_tsc_supported: processor.invariant_tsc_supported.to_string(),
+            model: processor.model.to_string(),
+            package_rapl_supported: processor.package_rapl_supported.to_string(),
+            vendor: processor.vendor,
         })
         .set(1);
 }

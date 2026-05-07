@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 axum = "0.8.9"
 clap = { version = "4.6.1", features = ["derive"] }
+nix = { version = "0.31.2", features = ["sched"] }
 prometheus-client = "0.24.1"
 raw-cpuid = "11.6.0"
 serde = { version = "1.0.228", features = ["derive"] }

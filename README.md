@@ -1,6 +1,6 @@
 # ocellus
 
-`ocellus` is a Rust hardware telemetry exporter for x86_64 Linux hosts.
+`ocellus` is a Rust hardware telemetry exporter for Intel server processors.
 
 ## Usage
 

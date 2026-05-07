@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::unix::fs::FileExt;
@@ -11,6 +9,7 @@ pub struct Msr {
 }
 
 impl Msr {
+    #[allow(dead_code)]
     pub fn open(cpu: u32) -> io::Result<Self> {
         let path = msr_path(cpu);
         let file = OpenOptions::new().read(true).write(true).open(path)?;
@@ -29,6 +28,7 @@ impl Msr {
         Ok(u64::from_le_bytes(bytes))
     }
 
+    #[allow(dead_code)]
     pub fn write(&self, address: u64, value: u64) -> io::Result<()> {
         self.file.write_all_at(&value.to_le_bytes(), address)
     }
@@ -38,6 +38,13 @@ pub fn read(cpu: u32, address: u64) -> io::Result<u64> {
     Msr::open_readonly(cpu)?.read(address)
 }
 
+pub fn read_required(cpu: u32, address: u64) -> Result<u64, String> {
+    read(cpu, address).map_err(|error| {
+        format!("failed to read MSR 0x{address:x} from /dev/cpu/{cpu}/msr: {error}")
+    })
+}
+
+#[allow(dead_code)]
 pub fn write(cpu: u32, address: u64, value: u64) -> io::Result<()> {
     Msr::open(cpu)?.write(address, value)
 }

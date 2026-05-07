@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use clap::Parser;
 
+mod arch;
 mod metal;
 mod metrics;
 mod runtime;
@@ -64,10 +65,11 @@ async fn main() -> Result<(), String> {
 }
 
 async fn run(config: Config) -> Result<(), String> {
-    metrics::tsc::preflight_permissions()?;
+    let architecture = arch::Architecture::detect()?;
+    metrics::tsc::preflight_permissions(&architecture)?;
 
     let measure_interval = config.measure_interval();
-    let sampler = runtime::sampler::spawn(measure_interval);
+    let sampler = runtime::sampler::spawn(measure_interval, architecture);
 
     runtime::run(config.runtime_mode(), sampler).await
 }

@@ -2,15 +2,18 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
+use crate::arch::Architecture;
+use crate::metrics::rapl::{RaplCollector, RaplTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
-use crate::metrics::{MetricEvent, MetricsState, ProcessorMetadata};
+use crate::metrics::{MetricEvent, MetricUpdate, MetricsState, ProcessorMetadata};
 
 const EVENT_CHANNEL_CAPACITY: usize = 64;
+const UPDATE_CHANNEL_CAPACITY: usize = 64;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct SamplerMetadata {
     pub measure_interval: Duration,
     pub processor: ProcessorMetadata,
@@ -20,6 +23,7 @@ pub struct SamplerMetadata {
 pub struct SamplerReader {
     metadata: SamplerMetadata,
     latest: Arc<RwLock<MetricsState>>,
+    updates: broadcast::Sender<MetricUpdate>,
 }
 
 impl SamplerReader {
@@ -28,16 +32,30 @@ impl SamplerReader {
     }
 
     pub fn metadata(&self) -> SamplerMetadata {
-        self.metadata
+        self.metadata.clone()
+    }
+
+    pub fn subscribe_updates(&self) -> broadcast::Receiver<MetricUpdate> {
+        self.updates.subscribe()
     }
 
     #[cfg(test)]
     pub fn new_for_test(metadata: SamplerMetadata, latest_state: MetricsState) -> Self {
-        Self::from_parts(metadata, Arc::new(RwLock::new(latest_state)))
+        let (updates, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
+
+        Self::from_parts(metadata, Arc::new(RwLock::new(latest_state)), updates)
     }
 
-    fn from_parts(metadata: SamplerMetadata, latest: Arc<RwLock<MetricsState>>) -> Self {
-        Self { metadata, latest }
+    fn from_parts(
+        metadata: SamplerMetadata,
+        latest: Arc<RwLock<MetricsState>>,
+        updates: broadcast::Sender<MetricUpdate>,
+    ) -> Self {
+        Self {
+            metadata,
+            latest,
+            updates,
+        }
     }
 }
 
@@ -60,27 +78,62 @@ impl Sampler {
     }
 }
 
-pub fn spawn(measure_interval: Duration) -> Sampler {
-    let tsc = TscCollector::new();
-    let metadata = SamplerMetadata {
-        measure_interval,
-        processor: ProcessorMetadata {
-            invariant_tsc_supported: tsc.invariant_tsc_supported(),
-        },
-    };
+pub fn spawn(measure_interval: Duration, architecture: Architecture) -> Sampler {
+    let metadata = sampler_metadata(measure_interval, &architecture);
     let latest = Arc::new(RwLock::new(MetricsState::default()));
     let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
-    let task_latest = latest.clone();
+    let (update_tx, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
+
+    spawn_rapl_collector(&architecture, measure_interval, &event_tx);
     spawn_collector(
         "tsc",
-        TscTask::new(tsc, measure_interval, event_tx.clone()).run(),
+        TscTask::new(TscCollector::new(), measure_interval, event_tx.clone()).run(),
         event_tx,
     );
-    let task = tokio::spawn(aggregate_events(event_rx, task_latest));
+
+    let task = tokio::spawn(aggregate_events(
+        event_rx,
+        latest.clone(),
+        update_tx.clone(),
+    ));
 
     Sampler {
-        reader: SamplerReader::from_parts(metadata, latest),
+        reader: SamplerReader::from_parts(metadata, latest, update_tx),
         task,
+    }
+}
+
+fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> SamplerMetadata {
+    SamplerMetadata {
+        measure_interval,
+        processor: ProcessorMetadata {
+            brand: architecture.brand.clone(),
+            family: architecture.family,
+            invariant_tsc_supported: architecture.features.invariant_tsc,
+            model: architecture.model,
+            package_rapl_supported: architecture.features.package_rapl,
+            vendor: architecture.vendor.clone(),
+        },
+    }
+}
+
+fn spawn_rapl_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    events: &mpsc::Sender<MetricEvent>,
+) {
+    match RaplCollector::new(architecture) {
+        Ok(rapl) => {
+            eprintln!("ocellus: starting RAPL collector");
+            spawn_collector(
+                "rapl",
+                RaplTask::new(rapl, measure_interval, events.clone()).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping RAPL collector: {error}");
+        }
     }
 }
 
@@ -102,6 +155,7 @@ fn spawn_collector(
 async fn aggregate_events(
     mut events: mpsc::Receiver<MetricEvent>,
     latest: Arc<RwLock<MetricsState>>,
+    updates: broadcast::Sender<MetricUpdate>,
 ) -> Result<(), String> {
     let mut state = MetricsState::default();
 
@@ -109,8 +163,9 @@ async fn aggregate_events(
         match event {
             MetricEvent::Failure(error) => return Err(error),
             MetricEvent::Update(update) => {
-                state.apply(update);
+                state.apply(update.clone());
                 *latest.write().await = state.clone();
+                let _ = updates.send(update);
             }
         }
     }

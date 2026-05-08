@@ -2,7 +2,12 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
-use crate::metrics::ProcessorMetadata;
+use crate::metrics::InfoMetadata;
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
+struct CollectorInfoLabels {
+    imc_supported: String,
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct OcellusInfoLabels {
@@ -19,10 +24,16 @@ struct ProcessorInfoLabels {
     vendor: String,
 }
 
-pub fn register(registry: &mut Registry, processor: ProcessorMetadata) {
+pub fn register(registry: &mut Registry, metadata: InfoMetadata) {
+    let collector_info = Family::<CollectorInfoLabels, Gauge>::default();
     let ocellus_info = Family::<OcellusInfoLabels, Gauge>::default();
     let processor_info = Family::<ProcessorInfoLabels, Gauge>::default();
 
+    registry.register(
+        "ocellus_collector_info",
+        "Static metadata for Ocellus collector capabilities",
+        collector_info.clone(),
+    );
     registry.register(
         "ocellus_info",
         "Static metadata for the ocellus exporter",
@@ -39,14 +50,19 @@ pub fn register(registry: &mut Registry, processor: ProcessorMetadata) {
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
         .set(1);
+    collector_info
+        .get_or_create(&CollectorInfoLabels {
+            imc_supported: metadata.collectors.imc_supported.to_string(),
+        })
+        .set(1);
     processor_info
         .get_or_create(&ProcessorInfoLabels {
-            brand: processor.brand,
-            family: processor.family.to_string(),
-            invariant_tsc_supported: processor.invariant_tsc_supported.to_string(),
-            model: processor.model.to_string(),
-            package_rapl_supported: processor.package_rapl_supported.to_string(),
-            vendor: processor.vendor,
+            brand: metadata.processor.brand,
+            family: metadata.processor.family.to_string(),
+            invariant_tsc_supported: metadata.processor.invariant_tsc_supported.to_string(),
+            model: metadata.processor.model.to_string(),
+            package_rapl_supported: metadata.processor.package_rapl_supported.to_string(),
+            vendor: metadata.processor.vendor,
         })
         .set(1);
 }

@@ -83,7 +83,7 @@ pub async fn run(
         &mut output,
         &LocalRecord::metadata(
             metadata.measure_interval,
-            metadata.processor.invariant_tsc_supported,
+            metadata.info.processor.invariant_tsc_supported,
         ),
     )
     .await?;
@@ -149,6 +149,7 @@ mod tests {
     #[test]
     fn encodes_sample_record() {
         let state = MetricsState {
+            imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             rapl: None,
             tsc: None,
@@ -166,6 +167,7 @@ mod tests {
     #[test]
     fn encodes_rapl_domain_sample() {
         let state = MetricsState {
+            imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             rapl: Some(crate::metrics::rapl::RaplMetrics {
                 domains: vec![crate::metrics::rapl::RaplDomainMetrics {

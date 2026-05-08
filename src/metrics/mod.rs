@@ -1,3 +1,4 @@
+pub mod imc;
 mod info;
 pub mod rapl;
 pub mod tsc;
@@ -7,6 +8,8 @@ use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct MetricsState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imc: Option<imc::ImcMetrics>,
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rapl: Option<rapl::RaplMetrics>,
@@ -17,6 +20,7 @@ pub struct MetricsState {
 impl MetricsState {
     pub fn apply(&mut self, update: MetricUpdate) {
         match update {
+            MetricUpdate::Imc(imc) => self.imc = Some(imc),
             MetricUpdate::Rapl(rapl) => self.rapl = Some(rapl),
             MetricUpdate::Tsc(tsc) => self.tsc = Some(tsc),
         }
@@ -27,10 +31,22 @@ impl Default for MetricsState {
     fn default() -> Self {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
+            imc: None,
             rapl: None,
             tsc: None,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct CollectorMetadata {
+    pub imc_supported: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct InfoMetadata {
+    pub collectors: CollectorMetadata,
+    pub processor: ProcessorMetadata,
 }
 
 #[derive(Clone, Debug)]
@@ -51,21 +67,24 @@ pub enum MetricEvent {
 
 #[derive(Clone, Debug)]
 pub enum MetricUpdate {
+    Imc(imc::ImcMetrics),
     Rapl(rapl::RaplMetrics),
     Tsc(tsc::TscMetrics),
 }
 
 #[derive(Debug)]
 pub struct MetricsRegistry {
+    imc: imc::ImcPrometheusMetrics,
     rapl: rapl::RaplPrometheusMetrics,
     tsc: tsc::TscPrometheusMetrics,
 }
 
 impl MetricsRegistry {
-    pub fn register(registry: &mut Registry, processor: ProcessorMetadata) -> Self {
-        info::register(registry, processor);
+    pub fn register(registry: &mut Registry, metadata: InfoMetadata) -> Self {
+        info::register(registry, metadata);
 
         Self {
+            imc: imc::ImcPrometheusMetrics::register(registry),
             rapl: rapl::RaplPrometheusMetrics::register(registry),
             tsc: tsc::TscPrometheusMetrics::register(registry),
         }
@@ -73,6 +92,7 @@ impl MetricsRegistry {
 
     pub fn update(&self, update: MetricUpdate) {
         match update {
+            MetricUpdate::Imc(imc) => self.imc.update(imc),
             MetricUpdate::Rapl(rapl) => self.rapl.update(rapl),
             MetricUpdate::Tsc(tsc) => self.tsc.update(tsc),
         }
@@ -80,6 +100,9 @@ impl MetricsRegistry {
 
     #[cfg(test)]
     pub fn update_state(&self, state: MetricsState) {
+        if let Some(imc) = state.imc {
+            self.imc.update(imc);
+        }
         if let Some(rapl) = state.rapl {
             self.rapl.update(rapl);
         }

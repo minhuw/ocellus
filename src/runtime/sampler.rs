@@ -6,9 +6,10 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::arch::Architecture;
+use crate::metrics::imc::{ImcCollector, ImcTask};
 use crate::metrics::rapl::{RaplCollector, RaplTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
-use crate::metrics::{MetricEvent, MetricUpdate, MetricsState, ProcessorMetadata};
+use crate::metrics::{CollectorMetadata, InfoMetadata, MetricEvent, MetricUpdate, MetricsState};
 
 const EVENT_CHANNEL_CAPACITY: usize = 64;
 const UPDATE_CHANNEL_CAPACITY: usize = 64;
@@ -16,7 +17,7 @@ const UPDATE_CHANNEL_CAPACITY: usize = 64;
 #[derive(Clone, Debug)]
 pub struct SamplerMetadata {
     pub measure_interval: Duration,
-    pub processor: ProcessorMetadata,
+    pub info: InfoMetadata,
 }
 
 #[derive(Clone, Debug)]
@@ -85,6 +86,7 @@ pub fn spawn(measure_interval: Duration, architecture: Architecture) -> Sampler 
     let (update_tx, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
 
     spawn_rapl_collector(&architecture, measure_interval, &event_tx);
+    spawn_imc_collector(&architecture, measure_interval, &event_tx);
     spawn_collector(
         "tsc",
         TscTask::new(TscCollector::new(), measure_interval, event_tx.clone()).run(),
@@ -106,14 +108,39 @@ pub fn spawn(measure_interval: Duration, architecture: Architecture) -> Sampler 
 fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> SamplerMetadata {
     SamplerMetadata {
         measure_interval,
-        processor: ProcessorMetadata {
-            brand: architecture.brand.clone(),
-            family: architecture.family,
-            invariant_tsc_supported: architecture.features.invariant_tsc,
-            model: architecture.model,
-            package_rapl_supported: architecture.features.package_rapl,
-            vendor: architecture.vendor.clone(),
+        info: InfoMetadata {
+            collectors: CollectorMetadata {
+                imc_supported: ImcCollector::is_supported(architecture),
+            },
+            processor: crate::metrics::ProcessorMetadata {
+                brand: architecture.brand.clone(),
+                family: architecture.family,
+                invariant_tsc_supported: architecture.features.invariant_tsc,
+                model: architecture.model,
+                package_rapl_supported: architecture.features.package_rapl,
+                vendor: architecture.vendor.clone(),
+            },
         },
+    }
+}
+
+fn spawn_imc_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    events: &mpsc::Sender<MetricEvent>,
+) {
+    match ImcCollector::new(architecture) {
+        Ok(imc) => {
+            eprintln!("ocellus: starting IMC collector");
+            spawn_collector(
+                "imc",
+                ImcTask::new(imc, measure_interval, events.clone()).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping IMC collector: {error}");
+        }
     }
 }
 

@@ -11,6 +11,7 @@ use tokio::time::MissedTickBehavior;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
+use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
 use crate::metrics::{MetricEvent, MetricUpdate};
 
@@ -46,8 +47,8 @@ struct RaplDomainKey {
 struct RaplDomain {
     key: RaplDomainKey,
     cpu: u32,
-    status_msr: u64,
     energy_unit_joules: f64,
+    status_msr: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -178,9 +179,8 @@ impl RaplCollector {
     fn read(&self) -> Result<RaplReading, String> {
         let mut energy_raw = Vec::with_capacity(self.domains.len());
         for domain in &self.domains {
-            energy_raw.push(
-                metal::msr::read_required(domain.cpu, domain.status_msr)? & u64::from(u32::MAX),
-            );
+            let msr = Msr::open_readonly(domain.cpu)?;
+            energy_raw.push(msr.read(domain.status_msr)? & u64::from(u32::MAX));
         }
 
         Ok(RaplReading {
@@ -340,7 +340,7 @@ fn available_domains(
                 _ => package_energy_unit_joules,
             };
 
-            metal::msr::read_required(leader.cpu, spec.status_msr)?;
+            Msr::open_readonly(leader.cpu)?.read(spec.status_msr)?;
 
             Ok(RaplDomain {
                 cpu: leader.cpu,
@@ -360,7 +360,7 @@ fn discover_domains(model: IntelServerCpuModel) -> Result<Vec<RaplDomain>, Strin
     let mut domains = Vec::with_capacity(leaders.len());
 
     for leader in leaders {
-        let rapl_power_unit = metal::msr::read_required(leader.cpu, MSR_RAPL_POWER_UNIT)?;
+        let rapl_power_unit = Msr::open_readonly(leader.cpu)?.read(MSR_RAPL_POWER_UNIT)?;
         let package_energy_unit_joules = energy_unit_joules(rapl_power_unit);
         domains.extend(available_domains(
             model,

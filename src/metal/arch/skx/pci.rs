@@ -33,7 +33,7 @@ pub const IMC_CHANNELS: [PciDeviceSpec; 6] = [
     },
 ];
 
-pub fn socket_buses(socket_count: usize) -> Result<Vec<SocketBus>, String> {
+pub fn imc_socket_buses(socket_count: usize) -> Result<Vec<ImcSocketBus>, String> {
     let locations = crate::metal::pci::find_intel_devices(IMC_CHANNELS[0])?;
 
     if locations.len() < socket_count {
@@ -47,21 +47,20 @@ pub fn socket_buses(socket_count: usize) -> Result<Vec<SocketBus>, String> {
         .into_iter()
         .take(socket_count)
         .enumerate()
-        .map(|(socket_id, location)| {
-            Ok(SocketBus {
+        .map(|(socket_index, location)| {
+            Ok(ImcSocketBus {
                 bus: PciBus {
                     bus: location.bus,
                     group: location.group,
                 },
-                socket_id: u32::try_from(socket_id)
-                    .map_err(|error| format!("SKX socket id is invalid: {error}"))?,
+                socket_index,
             })
         })
         .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SocketBus {
+pub struct ImcSocketBus {
     pub bus: PciBus,
-    pub socket_id: u32,
+    pub socket_index: usize,
 }

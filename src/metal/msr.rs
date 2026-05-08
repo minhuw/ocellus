@@ -5,48 +5,60 @@ use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct Msr {
+    cpu: u32,
     file: File,
 }
 
 impl Msr {
-    #[allow(dead_code)]
-    pub fn open(cpu: u32) -> io::Result<Self> {
+    pub fn open_readonly(cpu: u32) -> Result<Self, String> {
+        Self::open_readonly_raw(cpu)
+            .map_err(|error| format!("failed to open /dev/cpu/{cpu}/msr for MSR reads: {error}"))
+    }
+
+    pub fn open(cpu: u32) -> Result<Self, String> {
+        Self::open_raw(cpu)
+            .map_err(|error| format!("failed to open /dev/cpu/{cpu}/msr for MSR writes: {error}"))
+    }
+
+    fn open_raw(cpu: u32) -> io::Result<Self> {
         let path = msr_path(cpu);
         let file = OpenOptions::new().read(true).write(true).open(path)?;
-        Ok(Self { file })
+        Ok(Self { cpu, file })
     }
 
-    pub fn open_readonly(cpu: u32) -> io::Result<Self> {
+    fn open_readonly_raw(cpu: u32) -> io::Result<Self> {
         let path = msr_path(cpu);
         let file = OpenOptions::new().read(true).open(path)?;
-        Ok(Self { file })
+        Ok(Self { cpu, file })
     }
 
-    pub fn read(&self, address: u64) -> io::Result<u64> {
+    pub fn read(&self, address: u64) -> Result<u64, String> {
+        self.read_raw(address).map_err(|error| {
+            format!(
+                "failed to read MSR 0x{address:x} from /dev/cpu/{}/msr: {error}",
+                self.cpu
+            )
+        })
+    }
+
+    pub fn write(&self, address: u64, value: u64) -> Result<(), String> {
+        self.write_raw(address, value).map_err(|error| {
+            format!(
+                "failed to write MSR 0x{address:x} on /dev/cpu/{}/msr: {error}",
+                self.cpu
+            )
+        })
+    }
+
+    fn read_raw(&self, address: u64) -> io::Result<u64> {
         let mut bytes = [0_u8; 8];
         self.file.read_exact_at(&mut bytes, address)?;
         Ok(u64::from_le_bytes(bytes))
     }
 
-    #[allow(dead_code)]
-    pub fn write(&self, address: u64, value: u64) -> io::Result<()> {
+    fn write_raw(&self, address: u64, value: u64) -> io::Result<()> {
         self.file.write_all_at(&value.to_le_bytes(), address)
     }
-}
-
-pub fn read(cpu: u32, address: u64) -> io::Result<u64> {
-    Msr::open_readonly(cpu)?.read(address)
-}
-
-pub fn read_required(cpu: u32, address: u64) -> Result<u64, String> {
-    read(cpu, address).map_err(|error| {
-        format!("failed to read MSR 0x{address:x} from /dev/cpu/{cpu}/msr: {error}")
-    })
-}
-
-#[allow(dead_code)]
-pub fn write(cpu: u32, address: u64, value: u64) -> io::Result<()> {
-    Msr::open(cpu)?.write(address, value)
 }
 
 fn msr_path(cpu: u32) -> PathBuf {
@@ -67,8 +79,13 @@ mod tests {
     fn reads_actual_tsc_msr() {
         const IA32_TIME_STAMP_COUNTER: u64 = 0x10;
 
-        let first = read(0, IA32_TIME_STAMP_COUNTER).expect("read IA32_TSC MSR first time");
-        let second = read(0, IA32_TIME_STAMP_COUNTER).expect("read IA32_TSC MSR second time");
+        let msr = Msr::open_readonly(0).expect("open /dev/cpu/0/msr");
+        let first = msr
+            .read(IA32_TIME_STAMP_COUNTER)
+            .expect("read IA32_TSC MSR first time");
+        let second = msr
+            .read(IA32_TIME_STAMP_COUNTER)
+            .expect("read IA32_TSC MSR second time");
 
         assert!(second >= first);
     }

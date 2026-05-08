@@ -146,7 +146,9 @@ mod tests {
     fn info_metadata() -> crate::metrics::InfoMetadata {
         crate::metrics::InfoMetadata {
             collectors: crate::metrics::CollectorMetadata {
+                iio_supported: true,
                 imc_supported: true,
+                irp_supported: true,
             },
             processor: crate::metrics::ProcessorMetadata {
                 brand: "Intel(R) Xeon(R) Gold 6252 CPU @ 2.10GHz".to_string(),
@@ -200,8 +202,10 @@ mod tests {
     #[test]
     fn renders_tsc_metric_after_first_sample() {
         let state = crate::metrics::MetricsState {
+            iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
             rapl: None,
             tsc: Some(crate::metrics::tsc::TscMetrics {
                 frequency_hz: 2_400_000_000.0,
@@ -227,8 +231,10 @@ mod tests {
     #[test]
     fn renders_rapl_domain_metrics() {
         let state = crate::metrics::MetricsState {
+            iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
             rapl: Some(crate::metrics::rapl::RaplMetrics {
                 domains: vec![crate::metrics::rapl::RaplDomainMetrics {
                     domain: crate::metrics::rapl::RaplDomainKind::Package,
@@ -268,6 +274,7 @@ mod tests {
     #[test]
     fn renders_imc_metrics() {
         let state = crate::metrics::MetricsState {
+            iio: None,
             imc: Some(crate::metrics::imc::skx::ImcMetrics {
                 scopes: vec![crate::metrics::imc::skx::ImcScopeMetrics {
                     activate_commands_per_second: 128.0,
@@ -289,6 +296,7 @@ mod tests {
                 }],
             }),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
             rapl: None,
             tsc: None,
         };
@@ -328,5 +336,128 @@ mod tests {
         assert!(metrics.contains("ocellus_imc_wpq_residency_seconds"));
         assert!(metrics.contains("# TYPE ocellus_imc_wpq_occupancy_entries gauge"));
         assert!(metrics.contains("ocellus_imc_wpq_occupancy_entries"));
+    }
+
+    #[test]
+    fn renders_iio_metrics() {
+        let state = crate::metrics::MetricsState {
+            iio: Some(crate::metrics::iio::skx::IioMetrics {
+                ports: vec![crate::metrics::iio::skx::IioPciePortMetrics {
+                    port_id: 1,
+                    read_bytes_per_second: 1024.0,
+                    scope: crate::metrics::uncore::skx::UncoreScope {
+                        die_group_id: 0,
+                        die_id: 0,
+                        package_id: 0,
+                    },
+                    stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
+                    write_bytes_per_second: 2048.0,
+                }],
+                scopes: vec![crate::metrics::iio::skx::IioScopeMetrics {
+                    completion_inserts_per_second: 1.0,
+                    completion_latency_seconds: 0.000002,
+                    completion_occupancy_entries: 2.0,
+                    frequency_hz: 1_000_000_000.0,
+                    l1_misses_per_second: 4.0,
+                    l2_misses_per_second: 5.0,
+                    l3_misses_per_second: 6.0,
+                    scope: crate::metrics::uncore::skx::UncoreScope {
+                        die_group_id: 0,
+                        die_id: 0,
+                        package_id: 0,
+                    },
+                    stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
+                    tlb_hits_per_second: 10.0,
+                    tlb_misses_per_second: 11.0,
+                    vtd_accesses_per_second: 12.0,
+                    vtd_latency_seconds: 0.000001,
+                    vtd_occupancy_entries: 13.0,
+                }],
+            }),
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_iio_frequency_hz gauge"));
+        assert!(metrics.contains("ocellus_iio_frequency_hz"));
+        assert!(metrics.contains("# TYPE ocellus_iio_tlb_misses_per_second gauge"));
+        assert!(metrics.contains("ocellus_iio_tlb_misses_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_iio_vtd_latency_seconds gauge"));
+        assert!(metrics.contains("ocellus_iio_vtd_latency_seconds"));
+        assert!(metrics.contains("# TYPE ocellus_iio_completion_latency_seconds gauge"));
+        assert!(metrics.contains("ocellus_iio_completion_latency_seconds"));
+        assert!(metrics.contains("# TYPE ocellus_iio_pcie_read_bytes_per_second gauge"));
+        assert!(metrics.contains("ocellus_iio_pcie_read_bytes_per_second"));
+        assert!(metrics.contains("stack=\"pcie1\""));
+        assert!(metrics.contains("port=\"1\""));
+    }
+
+    #[test]
+    fn renders_irp_metrics() {
+        let state = crate::metrics::MetricsState {
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: Some(crate::metrics::irp::skx::IrpMetrics {
+                scopes: vec![crate::metrics::irp::skx::IrpScopeMetrics {
+                    clflush_bytes_per_second: 3.0,
+                    core_read_bytes_per_second: 8.0,
+                    demand_read_bytes_per_second: 9.0,
+                    faf_occupancy_entries: 2.0,
+                    frequency_hz: 1_000_000_000.0,
+                    pci_dca_hint_bytes_per_second: 10.0,
+                    pci_itom_bytes_per_second: 4.0,
+                    pcie_read_current_bytes_per_second: 5.0,
+                    read_for_ownership_bytes_per_second: 6.0,
+                    scope: crate::metrics::uncore::skx::UncoreScope {
+                        die_group_id: 0,
+                        die_id: 0,
+                        package_id: 0,
+                    },
+                    stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
+                    total_irp_occupancy_entries: 11.0,
+                    wbmtoi_bytes_per_second: 7.0,
+                    write_inserts_per_second: 12.0,
+                    write_latency_seconds: 0.000001,
+                }],
+            }),
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_irp_frequency_hz gauge"));
+        assert!(metrics.contains("ocellus_irp_frequency_hz"));
+        assert!(metrics.contains("# TYPE ocellus_irp_write_latency_seconds gauge"));
+        assert!(metrics.contains("ocellus_irp_write_latency_seconds"));
+        assert!(metrics.contains("# TYPE ocellus_irp_pcie_read_current_bytes_per_second gauge"));
+        assert!(metrics.contains("ocellus_irp_pcie_read_current_bytes_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_irp_write_inserts_per_second gauge"));
+        assert!(metrics.contains("ocellus_irp_write_inserts_per_second"));
+        assert!(metrics.contains("stack=\"pcie1\""));
     }
 }

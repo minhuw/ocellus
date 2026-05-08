@@ -2,13 +2,16 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: ocellus-grafana
+    environment:
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: 1s
+      GF_FEATURE_TOGGLES_ENABLE: dashboardSectionVariables
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
     depends_on:
       - prometheus
 

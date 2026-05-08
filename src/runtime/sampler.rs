@@ -6,7 +6,9 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::arch::Architecture;
+use crate::metrics::iio::{IioCollector, IioTask};
 use crate::metrics::imc::{ImcCollector, ImcTask};
+use crate::metrics::irp::{IrpCollector, IrpTask};
 use crate::metrics::rapl::{RaplCollector, RaplTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
 use crate::metrics::{CollectorMetadata, InfoMetadata, MetricEvent, MetricUpdate, MetricsState};
@@ -87,6 +89,8 @@ pub fn spawn(measure_interval: Duration, architecture: Architecture) -> Sampler 
 
     spawn_rapl_collector(&architecture, measure_interval, &event_tx);
     spawn_imc_collector(&architecture, measure_interval, &event_tx);
+    spawn_iio_collector(&architecture, measure_interval, &event_tx);
+    spawn_irp_collector(&architecture, measure_interval, &event_tx);
     spawn_collector(
         "tsc",
         TscTask::new(TscCollector::new(), measure_interval, event_tx.clone()).run(),
@@ -110,7 +114,9 @@ fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> 
         measure_interval,
         info: InfoMetadata {
             collectors: CollectorMetadata {
+                iio_supported: IioCollector::is_supported(architecture),
                 imc_supported: ImcCollector::is_supported(architecture),
+                irp_supported: IrpCollector::is_supported(architecture),
             },
             processor: crate::metrics::ProcessorMetadata {
                 brand: architecture.brand.clone(),
@@ -121,6 +127,26 @@ fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> 
                 vendor: architecture.vendor.clone(),
             },
         },
+    }
+}
+
+fn spawn_iio_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    events: &mpsc::Sender<MetricEvent>,
+) {
+    match IioCollector::new(architecture) {
+        Ok(iio) => {
+            eprintln!("ocellus: starting IIO collector");
+            spawn_collector(
+                "iio",
+                IioTask::new(iio, measure_interval, events.clone()).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping IIO collector: {error}");
+        }
     }
 }
 
@@ -140,6 +166,26 @@ fn spawn_imc_collector(
         }
         Err(error) => {
             eprintln!("ocellus: skipping IMC collector: {error}");
+        }
+    }
+}
+
+fn spawn_irp_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    events: &mpsc::Sender<MetricEvent>,
+) {
+    match IrpCollector::new(architecture) {
+        Ok(irp) => {
+            eprintln!("ocellus: starting IRP collector");
+            spawn_collector(
+                "irp",
+                IrpTask::new(irp, measure_interval, events.clone()).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping IRP collector: {error}");
         }
     }
 }

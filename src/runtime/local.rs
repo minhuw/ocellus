@@ -149,8 +149,10 @@ mod tests {
     #[test]
     fn encodes_sample_record() {
         let state = MetricsState {
+            iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
             rapl: None,
             tsc: None,
         };
@@ -167,8 +169,10 @@ mod tests {
     #[test]
     fn encodes_rapl_domain_sample() {
         let state = MetricsState {
+            iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
             rapl: Some(crate::metrics::rapl::RaplMetrics {
                 domains: vec![crate::metrics::rapl::RaplDomainMetrics {
                     domain: crate::metrics::rapl::RaplDomainKind::Dram,

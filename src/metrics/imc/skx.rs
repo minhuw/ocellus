@@ -607,11 +607,6 @@ impl ImcMeasurementAccumulator {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct ImcLeader {
-    scope: ImcScope,
-}
-
 fn discover_channels(model: IntelServerCpuModel) -> Result<Vec<ImcChannel>, String> {
     let channel_specs = discover_channel_specs(model)?;
     let mut channels = Vec::with_capacity(channel_specs.len());
@@ -645,33 +640,27 @@ fn discover_channel_specs(model: IntelServerCpuModel) -> Result<Vec<ImcChannelSp
 }
 
 fn imc_bus_scopes() -> Result<Vec<(metal::pci::PciBus, ImcScope)>, String> {
-    let leaders = imc_leaders()?;
-    let mut scopes_by_package = BTreeMap::new();
+    let socket_scopes = imc_scopes()?;
+    let socket_buses = metal::arch::skx::pci::imc_socket_buses(socket_scopes.len())?;
 
-    for leader in leaders {
-        scopes_by_package.insert(leader.scope.package_id, leader.scope);
-    }
-
-    let socket_buses = metal::arch::skx::pci::socket_buses(scopes_by_package.len())?;
-
-    if socket_buses.len() != scopes_by_package.len() {
+    if socket_buses.len() != socket_scopes.len() {
         return Err(format!(
             "discovered {} IMC buses for {} CPU packages",
             socket_buses.len(),
-            scopes_by_package.len()
+            socket_scopes.len()
         ));
     }
 
     socket_buses
         .into_iter()
         .map(|socket_bus| {
-            let scope = scopes_by_package
-                .get(&socket_bus.socket_id)
+            let scope = socket_scopes
+                .get(socket_bus.socket_index)
                 .copied()
                 .ok_or_else(|| {
                     format!(
-                        "failed to map SKX socket {} to a CPUID package",
-                        socket_bus.socket_id
+                        "failed to map SKX IMC socket index {} to a CPUID package",
+                        socket_bus.socket_index
                     )
                 })?;
 
@@ -680,23 +669,20 @@ fn imc_bus_scopes() -> Result<Vec<(metal::pci::PciBus, ImcScope)>, String> {
         .collect()
 }
 
-fn imc_leaders() -> Result<Vec<ImcLeader>, String> {
-    let mut leaders = BTreeMap::new();
+fn imc_scopes() -> Result<Vec<ImcScope>, String> {
+    let mut scopes = BTreeMap::new();
 
     for topology in metal::topology::cpu_topologies()? {
-        leaders
+        scopes
             .entry(ImcScope::from_topology(&topology)?)
             .or_insert(topology.cpu);
     }
 
-    if leaders.is_empty() {
-        return Err("failed to discover any IMC scope leaders".to_string());
+    if scopes.is_empty() {
+        return Err("failed to discover any IMC scopes".to_string());
     }
 
-    Ok(leaders
-        .into_keys()
-        .map(|scope| ImcLeader { scope })
-        .collect())
+    Ok(scopes.into_keys().collect())
 }
 
 fn program_channels(channels: &[ImcChannel], group: ImcEventGroup) -> Result<(), String> {

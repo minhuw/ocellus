@@ -1,7 +1,10 @@
+pub mod iio;
 pub mod imc;
 mod info;
+pub mod irp;
 pub mod rapl;
 pub mod tsc;
+pub mod uncore;
 
 use prometheus_client::registry::Registry;
 use serde::Serialize;
@@ -9,7 +12,11 @@ use serde::Serialize;
 #[derive(Clone, Debug, Serialize)]
 pub struct MetricsState {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub iio: Option<iio::IioMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub imc: Option<imc::ImcMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub irp: Option<irp::IrpMetrics>,
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rapl: Option<rapl::RaplMetrics>,
@@ -20,7 +27,9 @@ pub struct MetricsState {
 impl MetricsState {
     pub fn apply(&mut self, update: MetricUpdate) {
         match update {
+            MetricUpdate::Iio(iio) => self.iio = Some(iio),
             MetricUpdate::Imc(imc) => self.imc = Some(imc),
+            MetricUpdate::Irp(irp) => self.irp = Some(irp),
             MetricUpdate::Rapl(rapl) => self.rapl = Some(rapl),
             MetricUpdate::Tsc(tsc) => self.tsc = Some(tsc),
         }
@@ -31,7 +40,9 @@ impl Default for MetricsState {
     fn default() -> Self {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
+            iio: None,
             imc: None,
+            irp: None,
             rapl: None,
             tsc: None,
         }
@@ -40,7 +51,9 @@ impl Default for MetricsState {
 
 #[derive(Clone, Debug)]
 pub struct CollectorMetadata {
+    pub iio_supported: bool,
     pub imc_supported: bool,
+    pub irp_supported: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -67,14 +80,18 @@ pub enum MetricEvent {
 
 #[derive(Clone, Debug)]
 pub enum MetricUpdate {
+    Iio(iio::IioMetrics),
     Imc(imc::ImcMetrics),
+    Irp(irp::IrpMetrics),
     Rapl(rapl::RaplMetrics),
     Tsc(tsc::TscMetrics),
 }
 
 #[derive(Debug)]
 pub struct MetricsRegistry {
+    iio: iio::IioPrometheusMetrics,
     imc: imc::ImcPrometheusMetrics,
+    irp: irp::IrpPrometheusMetrics,
     rapl: rapl::RaplPrometheusMetrics,
     tsc: tsc::TscPrometheusMetrics,
 }
@@ -84,7 +101,9 @@ impl MetricsRegistry {
         info::register(registry, metadata);
 
         Self {
+            iio: iio::IioPrometheusMetrics::register(registry),
             imc: imc::ImcPrometheusMetrics::register(registry),
+            irp: irp::IrpPrometheusMetrics::register(registry),
             rapl: rapl::RaplPrometheusMetrics::register(registry),
             tsc: tsc::TscPrometheusMetrics::register(registry),
         }
@@ -92,7 +111,9 @@ impl MetricsRegistry {
 
     pub fn update(&self, update: MetricUpdate) {
         match update {
+            MetricUpdate::Iio(iio) => self.iio.update(iio),
             MetricUpdate::Imc(imc) => self.imc.update(imc),
+            MetricUpdate::Irp(irp) => self.irp.update(irp),
             MetricUpdate::Rapl(rapl) => self.rapl.update(rapl),
             MetricUpdate::Tsc(tsc) => self.tsc.update(tsc),
         }
@@ -100,8 +121,14 @@ impl MetricsRegistry {
 
     #[cfg(test)]
     pub fn update_state(&self, state: MetricsState) {
+        if let Some(iio) = state.iio {
+            self.iio.update(iio);
+        }
         if let Some(imc) = state.imc {
             self.imc.update(imc);
+        }
+        if let Some(irp) = state.irp {
+            self.irp.update(irp);
         }
         if let Some(rapl) = state.rapl {
             self.rapl.update(rapl);

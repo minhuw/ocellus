@@ -162,23 +162,14 @@ pub fn preflight_permissions(architecture: &Architecture) -> Result<(), String> 
     if !architecture.features.tsc {
         return Ok(());
     }
-    let msr = metal::msr::Msr::open_readonly(0).map_err(|error| {
-        format!(
-            "missing required MSR read permission for /dev/cpu/0/msr: {error}; try `sudo modprobe msr` and run with sufficient privileges"
-        )
-    })?;
-    msr.read(IA32_TSC).map_err(|error| {
-        format!(
-            "failed required IA32_TSC MSR read permission on /dev/cpu/0/msr: {error}; run with sufficient privileges"
-        )
-    })?;
+    let msr = metal::msr::Msr::open_readonly(0)?;
+    msr.read(IA32_TSC)?;
 
     Ok(())
 }
 
 fn read_tsc() -> Result<u64, String> {
-    metal::msr::read(0, IA32_TSC)
-        .map_err(|error| format!("failed to read IA32_TSC from /dev/cpu/0/msr: {error}"))
+    metal::msr::Msr::open_readonly(0)?.read(IA32_TSC)
 }
 
 fn tsc_supported() -> bool {

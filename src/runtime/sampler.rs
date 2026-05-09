@@ -6,6 +6,7 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::arch::Architecture;
+use crate::metrics::cha::{ChaCollector, ChaMultiplexMode, ChaTask};
 use crate::metrics::iio::{IioCollector, IioTask};
 use crate::metrics::imc::{ImcCollector, ImcTask};
 use crate::metrics::irp::{IrpCollector, IrpTask};
@@ -81,12 +82,22 @@ impl Sampler {
     }
 }
 
-pub fn spawn(measure_interval: Duration, architecture: Architecture) -> Sampler {
+pub fn spawn(
+    measure_interval: Duration,
+    architecture: Architecture,
+    cha_multiplex_mode: ChaMultiplexMode,
+) -> Sampler {
     let metadata = sampler_metadata(measure_interval, &architecture);
     let latest = Arc::new(RwLock::new(MetricsState::default()));
     let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
     let (update_tx, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
 
+    spawn_cha_collector(
+        &architecture,
+        measure_interval,
+        cha_multiplex_mode,
+        &event_tx,
+    );
     spawn_rapl_collector(&architecture, measure_interval, &event_tx);
     spawn_imc_collector(&architecture, measure_interval, &event_tx);
     spawn_iio_collector(&architecture, measure_interval, &event_tx);
@@ -114,6 +125,7 @@ fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> 
         measure_interval,
         info: InfoMetadata {
             collectors: CollectorMetadata {
+                cha_supported: ChaCollector::is_supported(architecture),
                 iio_supported: IioCollector::is_supported(architecture),
                 imc_supported: ImcCollector::is_supported(architecture),
                 irp_supported: IrpCollector::is_supported(architecture),
@@ -127,6 +139,30 @@ fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> 
                 vendor: architecture.vendor.clone(),
             },
         },
+    }
+}
+
+fn spawn_cha_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    multiplex_mode: ChaMultiplexMode,
+    events: &mpsc::Sender<MetricEvent>,
+) {
+    match ChaCollector::new(architecture).map(|mut cha| {
+        cha.set_multiplex_mode(multiplex_mode);
+        cha
+    }) {
+        Ok(cha) => {
+            eprintln!("ocellus: starting CHA collector");
+            spawn_collector(
+                "cha",
+                ChaTask::new(cha, measure_interval, events.clone()).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping CHA collector: {error}");
+        }
     }
 }
 
@@ -236,6 +272,7 @@ async fn aggregate_events(
         match event {
             MetricEvent::Failure(error) => return Err(error),
             MetricEvent::Update(update) => {
+                let update = *update;
                 state.apply(update.clone());
                 *latest.write().await = state.clone();
                 let _ = updates.send(update);

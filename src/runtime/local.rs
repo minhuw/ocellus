@@ -32,7 +32,7 @@ struct LocalSample {
 #[serde(tag = "record_type", rename_all = "snake_case")]
 enum LocalRecord {
     Metadata(LocalMetadata),
-    Sample(LocalSample),
+    Sample(Box<LocalSample>),
 }
 
 impl LocalRecord {
@@ -47,10 +47,10 @@ impl LocalRecord {
     }
 
     fn sample(state: MetricsState) -> Self {
-        Self::Sample(LocalSample {
+        Self::Sample(Box::new(LocalSample {
             timestamp_unix_seconds: unix_time_seconds(SystemTime::now()),
             state,
-        })
+        }))
     }
 }
 
@@ -149,6 +149,7 @@ mod tests {
     #[test]
     fn encodes_sample_record() {
         let state = MetricsState {
+            cha: None,
             iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -169,6 +170,7 @@ mod tests {
     #[test]
     fn encodes_rapl_domain_sample() {
         let state = MetricsState {
+            cha: None,
             iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),

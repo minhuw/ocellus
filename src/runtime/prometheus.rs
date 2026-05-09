@@ -146,6 +146,7 @@ mod tests {
     fn info_metadata() -> crate::metrics::InfoMetadata {
         crate::metrics::InfoMetadata {
             collectors: crate::metrics::CollectorMetadata {
+                cha_supported: true,
                 iio_supported: true,
                 imc_supported: true,
                 irp_supported: true,
@@ -202,6 +203,7 @@ mod tests {
     #[test]
     fn renders_tsc_metric_after_first_sample() {
         let state = crate::metrics::MetricsState {
+            cha: None,
             iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -231,6 +233,7 @@ mod tests {
     #[test]
     fn renders_rapl_domain_metrics() {
         let state = crate::metrics::MetricsState {
+            cha: None,
             iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -274,6 +277,7 @@ mod tests {
     #[test]
     fn renders_imc_metrics() {
         let state = crate::metrics::MetricsState {
+            cha: None,
             iio: None,
             imc: Some(crate::metrics::imc::skx::ImcMetrics {
                 scopes: vec![crate::metrics::imc::skx::ImcScopeMetrics {
@@ -341,6 +345,7 @@ mod tests {
     #[test]
     fn renders_iio_metrics() {
         let state = crate::metrics::MetricsState {
+            cha: None,
             iio: Some(crate::metrics::iio::skx::IioMetrics {
                 ports: vec![crate::metrics::iio::skx::IioPciePortMetrics {
                     port_id: 1,
@@ -409,6 +414,7 @@ mod tests {
     #[test]
     fn renders_irp_metrics() {
         let state = crate::metrics::MetricsState {
+            cha: None,
             iio: None,
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -459,5 +465,137 @@ mod tests {
         assert!(metrics.contains("# TYPE ocellus_irp_write_inserts_per_second gauge"));
         assert!(metrics.contains("ocellus_irp_write_inserts_per_second"));
         assert!(metrics.contains("stack=\"pcie1\""));
+    }
+
+    #[test]
+    fn renders_cha_metrics() {
+        let scope = crate::metrics::uncore::skx::UncoreScope {
+            die_group_id: 0,
+            die_id: 0,
+            package_id: 0,
+        };
+        let state = crate::metrics::MetricsState {
+            cha: Some(crate::metrics::cha::skx::ChaMetrics {
+                evictions: vec![crate::metrics::cha::skx::ChaEvictionMetrics {
+                    bandwidth_bytes_per_second: 10.0,
+                    latency_seconds: 0.000003,
+                    occupancy_entries: 6.0,
+                    scope,
+                }],
+                ha_requests: vec![crate::metrics::cha::skx::ChaHaRequestMetrics {
+                    local_read_bytes_per_second: 11.0,
+                    local_read_ratio: 0.75,
+                    local_write_bytes_per_second: 12.0,
+                    local_write_ratio: 0.5,
+                    remote_read_bytes_per_second: 13.0,
+                    remote_write_bytes_per_second: 14.0,
+                    scope,
+                }],
+                llc_lookups: vec![crate::metrics::cha::skx::ChaLlcLookupMetrics {
+                    bytes_per_second: 1.0,
+                    operation: crate::metrics::cha::skx::ChaLookupOperation::Read,
+                    scope,
+                    state: crate::metrics::cha::skx::ChaCacheState::M,
+                }],
+                llc_victims: vec![crate::metrics::cha::skx::ChaLlcVictimMetrics {
+                    per_second: 2.0,
+                    scope,
+                    state: crate::metrics::cha::skx::ChaCacheState::E,
+                }],
+                no_credits: vec![crate::metrics::cha::skx::ChaNoCreditMetrics {
+                    direction: crate::metrics::cha::skx::ChaNoCreditDirection::Read,
+                    ratio: 0.25,
+                    scope,
+                }],
+                request_queues: vec![crate::metrics::cha::skx::ChaRequestQueueMetrics {
+                    occupancy_entries: 7.0,
+                    scope,
+                    source: crate::metrics::cha::skx::ChaRequestSource::Ia,
+                }],
+                rxc: vec![crate::metrics::cha::skx::ChaRxcMetrics {
+                    inserts_per_second: 4.0,
+                    latency_seconds: 0.000001,
+                    occupancy_entries: 5.0,
+                    queue: crate::metrics::cha::skx::ChaRxcQueue::Irq,
+                    scope,
+                }],
+                scopes: vec![crate::metrics::cha::skx::ChaScopeMetrics {
+                    frequency_hz: 1_000_000_000.0,
+                    scope,
+                }],
+                sf_evictions: vec![crate::metrics::cha::skx::ChaSfEvictionMetrics {
+                    bytes_per_second: 3.0,
+                    scope,
+                    state: crate::metrics::cha::skx::ChaCacheState::S,
+                }],
+                transaction_results: vec![crate::metrics::cha::skx::ChaTransactionResultMetrics {
+                    bandwidth_bytes_per_second: 15.0,
+                    inserts_per_second: 4.0,
+                    latency_seconds: 0.000001,
+                    occupancy_entries: 5.0,
+                    result: crate::metrics::cha::skx::ChaTransactionResult::Miss,
+                    scope,
+                    transaction: crate::metrics::cha::skx::ChaTransactionKind::IaDrd,
+                }],
+                transactions: vec![crate::metrics::cha::skx::ChaTransactionMetrics {
+                    bandwidth_bytes_per_second: 16.0,
+                    hit_rate: 0.9,
+                    latency_seconds: 0.0,
+                    scope,
+                    transaction: crate::metrics::cha::skx::ChaTransactionKind::IaDrd,
+                }],
+            }),
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_cha_frequency_hz gauge"));
+        assert!(metrics.contains("ocellus_cha_frequency_hz"));
+        assert!(metrics.contains("# TYPE ocellus_cha_eviction_latency_seconds gauge"));
+        assert!(metrics.contains("ocellus_cha_eviction_latency_seconds"));
+        assert!(metrics.contains("# TYPE ocellus_cha_ha_request_local_ratio gauge"));
+        assert!(metrics.contains("ocellus_cha_ha_request_local_ratio"));
+        assert!(metrics.contains("# TYPE ocellus_cha_llc_lookup_bytes_per_second gauge"));
+        assert!(metrics.contains("ocellus_cha_llc_lookup_bytes_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_cha_llc_victims_per_second gauge"));
+        assert!(metrics.contains("ocellus_cha_llc_victims_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_cha_no_credit_ratio gauge"));
+        assert!(metrics.contains("ocellus_cha_no_credit_ratio"));
+        assert!(metrics.contains("# TYPE ocellus_cha_request_queue_occupancy_entries gauge"));
+        assert!(metrics.contains("ocellus_cha_request_queue_occupancy_entries"));
+        assert!(metrics.contains("# TYPE ocellus_cha_rxc_inserts_per_second gauge"));
+        assert!(metrics.contains("ocellus_cha_rxc_inserts_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_cha_rxc_latency_seconds gauge"));
+        assert!(metrics.contains("ocellus_cha_rxc_latency_seconds"));
+        assert!(metrics.contains("# TYPE ocellus_cha_rxc_occupancy_entries gauge"));
+        assert!(metrics.contains("ocellus_cha_rxc_occupancy_entries"));
+        assert!(metrics.contains("# TYPE ocellus_cha_sf_eviction_bytes_per_second gauge"));
+        assert!(metrics.contains("ocellus_cha_sf_eviction_bytes_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_cha_transaction_result_latency_seconds gauge"));
+        assert!(metrics.contains("ocellus_cha_transaction_result_latency_seconds"));
+        assert!(metrics.contains("# TYPE ocellus_cha_transaction_hit_rate gauge"));
+        assert!(metrics.contains("ocellus_cha_transaction_hit_rate"));
+        assert!(metrics.contains("direction=\"read\""));
+        assert!(metrics.contains("locality=\"local\""));
+        assert!(metrics.contains("operation=\"read\""));
+        assert!(metrics.contains("queue=\"irq\""));
+        assert!(metrics.contains("source=\"ia\""));
+        assert!(metrics.contains("state=\"m\""));
+        assert!(metrics.contains("transaction=\"ia_drd\""));
     }
 }

@@ -310,7 +310,7 @@ impl IrpTask {
                 Ok(irp) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(MetricUpdate::Irp(irp)))
+                        .send(MetricEvent::Update(Box::new(MetricUpdate::Irp(irp))))
                         .await
                         .is_err()
                     {

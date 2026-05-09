@@ -1,3 +1,4 @@
+pub mod cha;
 pub mod iio;
 pub mod imc;
 mod info;
@@ -11,6 +12,8 @@ use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct MetricsState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cha: Option<cha::ChaMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iio: Option<iio::IioMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -27,6 +30,7 @@ pub struct MetricsState {
 impl MetricsState {
     pub fn apply(&mut self, update: MetricUpdate) {
         match update {
+            MetricUpdate::Cha(cha) => self.cha = Some(*cha),
             MetricUpdate::Iio(iio) => self.iio = Some(iio),
             MetricUpdate::Imc(imc) => self.imc = Some(imc),
             MetricUpdate::Irp(irp) => self.irp = Some(irp),
@@ -40,6 +44,7 @@ impl Default for MetricsState {
     fn default() -> Self {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
+            cha: None,
             iio: None,
             imc: None,
             irp: None,
@@ -51,6 +56,7 @@ impl Default for MetricsState {
 
 #[derive(Clone, Debug)]
 pub struct CollectorMetadata {
+    pub cha_supported: bool,
     pub iio_supported: bool,
     pub imc_supported: bool,
     pub irp_supported: bool,
@@ -75,11 +81,12 @@ pub struct ProcessorMetadata {
 #[derive(Clone, Debug)]
 pub enum MetricEvent {
     Failure(String),
-    Update(MetricUpdate),
+    Update(Box<MetricUpdate>),
 }
 
 #[derive(Clone, Debug)]
 pub enum MetricUpdate {
+    Cha(Box<cha::ChaMetrics>),
     Iio(iio::IioMetrics),
     Imc(imc::ImcMetrics),
     Irp(irp::IrpMetrics),
@@ -89,6 +96,7 @@ pub enum MetricUpdate {
 
 #[derive(Debug)]
 pub struct MetricsRegistry {
+    cha: cha::ChaPrometheusMetrics,
     iio: iio::IioPrometheusMetrics,
     imc: imc::ImcPrometheusMetrics,
     irp: irp::IrpPrometheusMetrics,
@@ -101,6 +109,7 @@ impl MetricsRegistry {
         info::register(registry, metadata);
 
         Self {
+            cha: cha::ChaPrometheusMetrics::register(registry),
             iio: iio::IioPrometheusMetrics::register(registry),
             imc: imc::ImcPrometheusMetrics::register(registry),
             irp: irp::IrpPrometheusMetrics::register(registry),
@@ -111,6 +120,7 @@ impl MetricsRegistry {
 
     pub fn update(&self, update: MetricUpdate) {
         match update {
+            MetricUpdate::Cha(cha) => self.cha.update(*cha),
             MetricUpdate::Iio(iio) => self.iio.update(iio),
             MetricUpdate::Imc(imc) => self.imc.update(imc),
             MetricUpdate::Irp(irp) => self.irp.update(irp),
@@ -121,6 +131,9 @@ impl MetricsRegistry {
 
     #[cfg(test)]
     pub fn update_state(&self, state: MetricsState) {
+        if let Some(cha) = state.cha {
+            self.cha.update(cha);
+        }
         if let Some(iio) = state.iio {
             self.iio.update(iio);
         }

@@ -424,7 +424,9 @@ mod tests {
                     core_read_bytes_per_second: 8.0,
                     demand_read_bytes_per_second: 9.0,
                     faf_occupancy_entries: 2.0,
+                    pcie_inbound_reads_per_second: 13.0,
                     frequency_hz: 1_000_000_000.0,
+                    io_write_conflict_ratio: 0.25,
                     pci_dca_hint_bytes_per_second: 10.0,
                     pci_itom_bytes_per_second: 4.0,
                     pcie_read_current_bytes_per_second: 5.0,
@@ -437,8 +439,8 @@ mod tests {
                     stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
                     total_irp_occupancy_entries: 11.0,
                     wbmtoi_bytes_per_second: 7.0,
-                    write_inserts_per_second: 12.0,
-                    write_latency_seconds: 0.000001,
+                    pcie_inbound_writes_per_second: 12.0,
+                    pcie_inbound_write_latency_seconds: 0.000001,
                 }],
             }),
             rapl: None,
@@ -458,12 +460,16 @@ mod tests {
 
         assert!(metrics.contains("# TYPE ocellus_irp_frequency_hz gauge"));
         assert!(metrics.contains("ocellus_irp_frequency_hz"));
-        assert!(metrics.contains("# TYPE ocellus_irp_write_latency_seconds gauge"));
-        assert!(metrics.contains("ocellus_irp_write_latency_seconds"));
+        assert!(metrics.contains("# TYPE ocellus_irp_pcie_inbound_write_latency_seconds gauge"));
+        assert!(metrics.contains("ocellus_irp_pcie_inbound_write_latency_seconds"));
         assert!(metrics.contains("# TYPE ocellus_irp_pcie_read_current_bytes_per_second gauge"));
         assert!(metrics.contains("ocellus_irp_pcie_read_current_bytes_per_second"));
-        assert!(metrics.contains("# TYPE ocellus_irp_write_inserts_per_second gauge"));
-        assert!(metrics.contains("ocellus_irp_write_inserts_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_irp_pcie_inbound_writes_per_second gauge"));
+        assert!(metrics.contains("ocellus_irp_pcie_inbound_writes_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_irp_pcie_inbound_reads_per_second gauge"));
+        assert!(metrics.contains("ocellus_irp_pcie_inbound_reads_per_second"));
+        assert!(metrics.contains("# TYPE ocellus_irp_io_write_conflict_ratio gauge"));
+        assert!(metrics.contains("ocellus_irp_io_write_conflict_ratio"));
         assert!(metrics.contains("stack=\"pcie1\""));
     }
 

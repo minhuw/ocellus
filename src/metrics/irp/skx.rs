@@ -31,6 +31,8 @@ enum IrpEventKind {
     CoreRead,
     DemandRead,
     FafOccupancy,
+    FafTransactions,
+    LostFwd,
     PciDcaHint,
     PciItoM,
     PcieReadCurrent,
@@ -64,7 +66,7 @@ impl IrpEventGroup {
     }
 }
 
-const SKX_IRP_EVENT_GROUPS: [IrpEventGroup; 6] = [
+const SKX_IRP_EVENT_GROUPS: [IrpEventGroup; 7] = [
     IrpEventGroup {
         events: [
             IrpEventSpec::sum(IrpEventKind::PcieReadCurrent, 0x10, 0x01),
@@ -98,6 +100,12 @@ const SKX_IRP_EVENT_GROUPS: [IrpEventGroup; 6] = [
     IrpEventGroup {
         events: [
             IrpEventSpec::sum(IrpEventKind::WriteInserts, 0x11, 0x08),
+            IrpEventSpec::sum(IrpEventKind::LostFwd, 0x1d, 0x10),
+        ],
+    },
+    IrpEventGroup {
+        events: [
+            IrpEventSpec::sum(IrpEventKind::FafTransactions, 0x16, 0x00),
             IrpEventSpec::sum(IrpEventKind::Clockticks, 0x01, 0x00),
         ],
     },
@@ -111,7 +119,9 @@ pub struct IrpScopeMetrics {
     pub core_read_bytes_per_second: f64,
     pub demand_read_bytes_per_second: f64,
     pub faf_occupancy_entries: f64,
+    pub pcie_inbound_reads_per_second: f64,
     pub frequency_hz: f64,
+    pub io_write_conflict_ratio: f64,
     pub pci_dca_hint_bytes_per_second: f64,
     pub pci_itom_bytes_per_second: f64,
     pub pcie_read_current_bytes_per_second: f64,
@@ -119,8 +129,8 @@ pub struct IrpScopeMetrics {
     pub stack: SkxIioStack,
     pub total_irp_occupancy_entries: f64,
     pub wbmtoi_bytes_per_second: f64,
-    pub write_inserts_per_second: f64,
-    pub write_latency_seconds: f64,
+    pub pcie_inbound_writes_per_second: f64,
+    pub pcie_inbound_write_latency_seconds: f64,
 }
 
 impl IrpScopeMetrics {
@@ -133,6 +143,8 @@ impl IrpScopeMetrics {
         let core_read = required_measurement(measurements, IrpEventKind::CoreRead)?;
         let demand_read = required_measurement(measurements, IrpEventKind::DemandRead)?;
         let faf_occupancy = required_measurement(measurements, IrpEventKind::FafOccupancy)?;
+        let faf_transactions = required_measurement(measurements, IrpEventKind::FafTransactions)?;
+        let lost_fwd = required_measurement(measurements, IrpEventKind::LostFwd)?;
         let pci_dca_hint = required_measurement(measurements, IrpEventKind::PciDcaHint)?;
         let pci_itom = required_measurement(measurements, IrpEventKind::PciItoM)?;
         let pcie_read_current = required_measurement(measurements, IrpEventKind::PcieReadCurrent)?;
@@ -142,6 +154,12 @@ impl IrpScopeMetrics {
             required_measurement(measurements, IrpEventKind::TotalIrpOccupancy)?;
         let wbmtoi = required_measurement(measurements, IrpEventKind::WbMtoI)?;
         let write_inserts = required_measurement(measurements, IrpEventKind::WriteInserts)?;
+        let lost_fwd_count = scale_to_enabled(lost_fwd.value, lost_fwd.enabled, lost_fwd.running);
+        let write_insert_count = scale_to_enabled(
+            write_inserts.value,
+            write_inserts.enabled,
+            write_inserts.running,
+        );
 
         Ok(Self {
             scope: stack_scope.scope,
@@ -149,7 +167,9 @@ impl IrpScopeMetrics {
             core_read_bytes_per_second: bytes_per_second(core_read),
             demand_read_bytes_per_second: bytes_per_second(demand_read),
             faf_occupancy_entries: occupancy_entries(faf_occupancy, clockticks),
+            pcie_inbound_reads_per_second: event_rate(faf_transactions),
             frequency_hz: frequency_hz(clockticks.value, clockticks.running),
+            io_write_conflict_ratio: ratio(lost_fwd_count, write_insert_count),
             pci_dca_hint_bytes_per_second: bytes_per_second(pci_dca_hint),
             pci_itom_bytes_per_second: bytes_per_second(pci_itom),
             pcie_read_current_bytes_per_second: bytes_per_second(pcie_read_current),
@@ -157,7 +177,7 @@ impl IrpScopeMetrics {
             stack: stack_scope.stack,
             total_irp_occupancy_entries: occupancy_entries(total_irp_occupancy, clockticks),
             wbmtoi_bytes_per_second: bytes_per_second(wbmtoi),
-            write_inserts_per_second: events_per_second(
+            pcie_inbound_writes_per_second: events_per_second(
                 scale_to_enabled(
                     write_inserts.value,
                     write_inserts.enabled,
@@ -165,7 +185,7 @@ impl IrpScopeMetrics {
                 ),
                 write_inserts.enabled,
             ),
-            write_latency_seconds: write_latency_seconds(
+            pcie_inbound_write_latency_seconds: pcie_inbound_write_latency_seconds(
                 total_irp_occupancy,
                 faf_occupancy,
                 write_inserts,
@@ -351,15 +371,17 @@ pub struct IrpPrometheusMetrics {
     core_read_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     demand_read_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     faf_occupancy_entries: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
+    pcie_inbound_reads_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     frequency_hz: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
+    io_write_conflict_ratio: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     pci_dca_hint_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     pci_itom_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     pcie_read_current_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     read_for_ownership_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     total_irp_occupancy_entries: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     wbmtoi_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
-    write_inserts_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
-    write_latency_seconds: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
+    pcie_inbound_writes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
+    pcie_inbound_write_latency_seconds: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
 }
 
 impl IrpPrometheusMetrics {
@@ -370,7 +392,10 @@ impl IrpPrometheusMetrics {
             demand_read_bytes_per_second: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(
             ),
             faf_occupancy_entries: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            pcie_inbound_reads_per_second: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(
+            ),
             frequency_hz: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            io_write_conflict_ratio: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
             pci_dca_hint_bytes_per_second: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(
             ),
             pci_itom_bytes_per_second: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
@@ -380,8 +405,10 @@ impl IrpPrometheusMetrics {
                 Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
             total_irp_occupancy_entries: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
             wbmtoi_bytes_per_second: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            write_inserts_per_second: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            write_latency_seconds: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            pcie_inbound_writes_per_second:
+                Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            pcie_inbound_write_latency_seconds:
+                Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
         };
 
         registry.register(
@@ -405,9 +432,19 @@ impl IrpPrometheusMetrics {
             metrics.faf_occupancy_entries.clone(),
         );
         registry.register(
+            "ocellus_irp_pcie_inbound_reads_per_second",
+            "Interval-derived IRP PCIe inbound reads per second",
+            metrics.pcie_inbound_reads_per_second.clone(),
+        );
+        registry.register(
             "ocellus_irp_frequency_hz",
             "Interval-derived IRP clock frequency in hertz",
             metrics.frequency_hz.clone(),
+        );
+        registry.register(
+            "ocellus_irp_io_write_conflict_ratio",
+            "Interval-derived IRP I/O write conflict ratio from lost forwards over PCIe inbound writes",
+            metrics.io_write_conflict_ratio.clone(),
         );
         registry.register(
             "ocellus_irp_pci_dca_hint_bytes_per_second",
@@ -440,14 +477,14 @@ impl IrpPrometheusMetrics {
             metrics.wbmtoi_bytes_per_second.clone(),
         );
         registry.register(
-            "ocellus_irp_write_inserts_per_second",
-            "Interval-derived IRP inbound write fast-path inserts per second",
-            metrics.write_inserts_per_second.clone(),
+            "ocellus_irp_pcie_inbound_writes_per_second",
+            "Interval-derived IRP PCIe inbound writes per second",
+            metrics.pcie_inbound_writes_per_second.clone(),
         );
         registry.register(
-            "ocellus_irp_write_latency_seconds",
+            "ocellus_irp_pcie_inbound_write_latency_seconds",
             "Interval-derived IRP inbound write residency latency in seconds",
-            metrics.write_latency_seconds.clone(),
+            metrics.pcie_inbound_write_latency_seconds.clone(),
         );
 
         metrics
@@ -469,9 +506,15 @@ impl IrpPrometheusMetrics {
             self.faf_occupancy_entries
                 .get_or_create(&labels)
                 .set(scope.faf_occupancy_entries);
+            self.pcie_inbound_reads_per_second
+                .get_or_create(&labels)
+                .set(scope.pcie_inbound_reads_per_second);
             self.frequency_hz
                 .get_or_create(&labels)
                 .set(scope.frequency_hz);
+            self.io_write_conflict_ratio
+                .get_or_create(&labels)
+                .set(scope.io_write_conflict_ratio);
             self.pci_dca_hint_bytes_per_second
                 .get_or_create(&labels)
                 .set(scope.pci_dca_hint_bytes_per_second);
@@ -490,12 +533,12 @@ impl IrpPrometheusMetrics {
             self.wbmtoi_bytes_per_second
                 .get_or_create(&labels)
                 .set(scope.wbmtoi_bytes_per_second);
-            self.write_inserts_per_second
+            self.pcie_inbound_writes_per_second
                 .get_or_create(&labels)
-                .set(scope.write_inserts_per_second);
-            self.write_latency_seconds
+                .set(scope.pcie_inbound_writes_per_second);
+            self.pcie_inbound_write_latency_seconds
                 .get_or_create(&labels)
-                .set(scope.write_latency_seconds);
+                .set(scope.pcie_inbound_write_latency_seconds);
         }
     }
 }
@@ -640,10 +683,14 @@ impl IrpMeasurementAccumulator {
 }
 
 fn bytes_per_second(measurement: &IrpEventMeasurement) -> f64 {
+    event_rate(measurement) * BYTES_PER_CACHE_LINE
+}
+
+fn event_rate(measurement: &IrpEventMeasurement) -> f64 {
     events_per_second(
         scale_to_enabled(measurement.value, measurement.enabled, measurement.running),
         measurement.enabled,
-    ) * BYTES_PER_CACHE_LINE
+    )
 }
 
 fn occupancy_entries(occupancy: &IrpEventMeasurement, clockticks: &IrpEventMeasurement) -> f64 {
@@ -653,7 +700,7 @@ fn occupancy_entries(occupancy: &IrpEventMeasurement, clockticks: &IrpEventMeasu
     ratio(occupancy, clockticks)
 }
 
-fn write_latency_seconds(
+fn pcie_inbound_write_latency_seconds(
     total_occupancy: &IrpEventMeasurement,
     faf_occupancy: &IrpEventMeasurement,
     inserts: &IrpEventMeasurement,
@@ -807,6 +854,8 @@ mod tests {
                 measurement(IrpEventKind::CoreRead, 200, 100),
                 measurement(IrpEventKind::DemandRead, 300, 100),
                 measurement(IrpEventKind::FafOccupancy, 200, 100),
+                measurement(IrpEventKind::FafTransactions, 250, 100),
+                measurement(IrpEventKind::LostFwd, 150, 100),
                 measurement(IrpEventKind::PciDcaHint, 400, 100),
                 measurement(IrpEventKind::PciItoM, 200, 100),
                 measurement(IrpEventKind::PcieReadCurrent, 300, 100),
@@ -823,7 +872,9 @@ mod tests {
         assert_eq!(scope_metrics.core_read_bytes_per_second, 128_000.0);
         assert_eq!(scope_metrics.demand_read_bytes_per_second, 192_000.0);
         assert_eq!(scope_metrics.faf_occupancy_entries, 0.2);
+        assert_eq!(scope_metrics.pcie_inbound_reads_per_second, 2_500.0);
         assert_eq!(scope_metrics.frequency_hz, 10_000.0);
+        assert_eq!(scope_metrics.io_write_conflict_ratio, 0.25);
         assert_eq!(scope_metrics.pci_dca_hint_bytes_per_second, 256_000.0);
         assert_eq!(scope_metrics.pci_itom_bytes_per_second, 128_000.0);
         assert_eq!(scope_metrics.pcie_read_current_bytes_per_second, 192_000.0);
@@ -831,8 +882,8 @@ mod tests {
         assert_eq!(scope_metrics.stack, SkxIioStack::Pcie0);
         assert_eq!(scope_metrics.total_irp_occupancy_entries, 0.5);
         assert_eq!(scope_metrics.wbmtoi_bytes_per_second, 320_000.0);
-        assert_eq!(scope_metrics.write_inserts_per_second, 6_000.0);
-        assert_eq!(scope_metrics.write_latency_seconds, 0.00005);
+        assert_eq!(scope_metrics.pcie_inbound_writes_per_second, 6_000.0);
+        assert_eq!(scope_metrics.pcie_inbound_write_latency_seconds, 0.00005);
     }
 
     #[test]
@@ -841,33 +892,18 @@ mod tests {
 
         assert_eq!(
             slice_groups(collector.schedule(Duration::from_secs(1))),
-            vec![
-                SKX_IRP_EVENT_GROUPS[0],
-                SKX_IRP_EVENT_GROUPS[1],
-                SKX_IRP_EVENT_GROUPS[2],
-                SKX_IRP_EVENT_GROUPS[3],
-                SKX_IRP_EVENT_GROUPS[4],
-                SKX_IRP_EVENT_GROUPS[5],
-                SKX_IRP_EVENT_GROUPS[0],
-                SKX_IRP_EVENT_GROUPS[1],
-                SKX_IRP_EVENT_GROUPS[2],
-                SKX_IRP_EVENT_GROUPS[3],
-                SKX_IRP_EVENT_GROUPS[4],
-                SKX_IRP_EVENT_GROUPS[5],
-            ]
+            SKX_IRP_EVENT_GROUPS
+                .into_iter()
+                .chain(SKX_IRP_EVENT_GROUPS)
+                .collect::<Vec<_>>()
         );
 
         collector.rotate_group();
+        let mut expected = SKX_IRP_EVENT_GROUPS.to_vec();
+        expected.rotate_left(1);
         assert_eq!(
             slice_groups(collector.schedule(Duration::from_millis(100))),
-            vec![
-                SKX_IRP_EVENT_GROUPS[1],
-                SKX_IRP_EVENT_GROUPS[2],
-                SKX_IRP_EVENT_GROUPS[3],
-                SKX_IRP_EVENT_GROUPS[4],
-                SKX_IRP_EVENT_GROUPS[5],
-                SKX_IRP_EVENT_GROUPS[0],
-            ]
+            expected
         );
     }
 

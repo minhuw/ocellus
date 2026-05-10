@@ -34,7 +34,7 @@ pub const IMC_CHANNELS: [PciDeviceSpec; 6] = [
 ];
 
 pub fn imc_socket_buses(socket_count: usize) -> Result<Vec<ImcSocketBus>, String> {
-    let locations = crate::metal::pci::find_intel_devices(IMC_CHANNELS[0])?;
+    let locations = crate::metal::pci::find_intel_devices_matching_spec(IMC_CHANNELS[0])?;
 
     if locations.len() < socket_count {
         return Err(format!(

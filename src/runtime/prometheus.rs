@@ -279,26 +279,28 @@ mod tests {
         let state = crate::metrics::MetricsState {
             cha: None,
             iio: None,
-            imc: Some(crate::metrics::imc::skx::ImcMetrics {
-                scopes: vec![crate::metrics::imc::skx::ImcScopeMetrics {
-                    activate_commands_per_second: 128.0,
-                    frequency_hz: 1_000_000_000.0,
-                    page_miss_precharge_commands_per_second: 512.0,
-                    read_cas_commands_per_second: 1024.0,
-                    read_bytes_per_second: 1024.0,
-                    rpq_residency_seconds: 0.000001,
-                    rpq_occupancy_entries: 0.5,
-                    scope: crate::metrics::imc::skx::ImcScope {
-                        die_group_id: 0,
-                        die_id: 0,
-                        package_id: 0,
-                    },
-                    write_cas_commands_per_second: 2048.0,
-                    write_bytes_per_second: 2048.0,
-                    wpq_residency_seconds: 0.000002,
-                    wpq_occupancy_entries: 0.75,
-                }],
-            }),
+            imc: Some(crate::metrics::imc::ImcMetrics::Skx(
+                crate::metrics::imc::skx::ImcMetrics {
+                    scopes: vec![crate::metrics::imc::skx::ImcScopeMetrics {
+                        activate_commands_per_second: 128.0,
+                        frequency_hz: 1_000_000_000.0,
+                        page_miss_precharge_commands_per_second: 512.0,
+                        read_cas_commands_per_second: 1024.0,
+                        read_bytes_per_second: 1024.0,
+                        rpq_residency_seconds: 0.000001,
+                        rpq_occupancy_entries: 0.5,
+                        scope: crate::metrics::imc::skx::ImcScope {
+                            die_group_id: 0,
+                            die_id: 0,
+                            package_id: 0,
+                        },
+                        write_cas_commands_per_second: 2048.0,
+                        write_bytes_per_second: 2048.0,
+                        wpq_residency_seconds: 0.000002,
+                        wpq_occupancy_entries: 0.75,
+                    }],
+                },
+            )),
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             rapl: None,
@@ -603,5 +605,61 @@ mod tests {
         assert!(metrics.contains("source=\"ia\""));
         assert!(metrics.contains("state=\"m\""));
         assert!(metrics.contains("transaction=\"ia_drd\""));
+    }
+
+    #[test]
+    fn renders_hsx_ha_and_imc_metrics() {
+        let scope = crate::metrics::uncore::hsx::HsxUncoreScope { package_id: 0 };
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: Some(crate::metrics::imc::ImcMetrics::Hsx(
+                crate::metrics::imc::hsx::HsxImcMetrics {
+                    scopes: vec![crate::metrics::imc::hsx::HsxImcMetricsByScope {
+                        activate_commands_per_second: 5.0,
+                        frequency_hz: 1_000_000_000.0,
+                        ha_local_read_bytes_per_second: 1.0,
+                        ha_local_read_ratio: 0.75,
+                        ha_local_write_bytes_per_second: 2.0,
+                        ha_local_write_ratio: 0.5,
+                        ha_remote_read_bytes_per_second: 3.0,
+                        ha_remote_write_bytes_per_second: 4.0,
+                        page_miss_precharge_commands_per_second: 6.0,
+                        read_cas_commands_per_second: 7.0,
+                        read_bytes_per_second: 8.0,
+                        rpq_non_empty_ratio: 0.2,
+                        scope,
+                        write_cas_commands_per_second: 9.0,
+                        write_bytes_per_second: 10.0,
+                        wpq_full_ratio: 0.5,
+                        wpq_non_empty_ratio: 0.6,
+                    }],
+                },
+            )),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_haswell_imc_frequency_hz gauge"));
+        assert!(metrics.contains("ocellus_haswell_imc_read_bytes_per_second"));
+        assert!(metrics.contains("ocellus_haswell_imc_rpq_non_empty_ratio"));
+        assert!(metrics.contains("ocellus_haswell_imc_wpq_full_ratio"));
+        assert!(metrics.contains("ocellus_haswell_imc_wpq_non_empty_ratio"));
+        assert!(metrics.contains("ocellus_haswell_ha_local_read_bytes_per_second"));
+        assert!(metrics.contains("ocellus_haswell_ha_local_read_ratio"));
+        assert!(metrics.contains("package=\"0\""));
     }
 }

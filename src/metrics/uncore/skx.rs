@@ -3,9 +3,8 @@ use std::time::Duration;
 
 use crate::metal;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metrics::common::DEFAULT_MAX_SLICE;
 
-pub const BYTES_PER_CACHE_LINE: f64 = 64.0;
-pub const DEFAULT_MAX_SLICE: Duration = Duration::from_millis(100);
 pub const SKX_IIO_STACK_COUNT: usize = 6;
 pub const SKX_UNCORE_COUNTER_WIDTH: u32 = 48;
 

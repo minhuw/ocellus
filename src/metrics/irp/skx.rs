@@ -10,10 +10,11 @@ use tokio::sync::mpsc;
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::arch::skx::pmon;
 use crate::metal::msr::Msr;
+use crate::metrics::common::BYTES_PER_CACHE_LINE;
 use crate::metrics::uncore::skx::{
-    BYTES_PER_CACHE_LINE, SKX_UNCORE_COUNTER_WIDTH, SkxIioStack, UncoreScope, events_per_second,
-    frequency_hz, mask_counter, measurement_round_count, queue_residency_seconds, ratio,
-    scale_to_enabled, uncore_leaders,
+    SKX_UNCORE_COUNTER_WIDTH, SkxIioStack, UncoreScope, events_per_second, frequency_hz,
+    mask_counter, measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled,
+    uncore_leaders,
 };
 use crate::metrics::{MetricEvent, MetricUpdate};
 

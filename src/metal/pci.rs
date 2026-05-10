@@ -99,7 +99,10 @@ impl fmt::Display for PciLocation {
     }
 }
 
-pub fn find_intel_device_on_bus(spec: PciDeviceSpec, bus: PciBus) -> Result<PciLocation, String> {
+pub fn find_intel_device_matching_spec_on_bus(
+    spec: PciDeviceSpec,
+    bus: PciBus,
+) -> Result<PciLocation, String> {
     let location = PciLocation {
         bus: bus.bus,
         device: spec.device,
@@ -116,7 +119,34 @@ pub fn find_intel_device_on_bus(spec: PciDeviceSpec, bus: PciBus) -> Result<PciL
     }
 }
 
-pub fn find_intel_devices(spec: PciDeviceSpec) -> Result<Vec<PciLocation>, String> {
+pub fn find_intel_device_at_address_on_bus(
+    device: u8,
+    function: u8,
+    bus: PciBus,
+) -> Result<PciLocation, String> {
+    let location = PciLocation {
+        bus: bus.bus,
+        device,
+        function,
+        group: bus.group,
+    };
+
+    if is_intel_device(location) {
+        Ok(location)
+    } else {
+        Err(format!(
+            "failed to find Intel PCI device {device:02x}.{function:x} on bus {bus}"
+        ))
+    }
+}
+
+pub fn find_intel_devices_matching_spec(spec: PciDeviceSpec) -> Result<Vec<PciLocation>, String> {
+    find_intel_devices_matching_any_spec(&[spec])
+}
+
+pub fn find_intel_devices_matching_any_spec(
+    specs: &[PciDeviceSpec],
+) -> Result<Vec<PciLocation>, String> {
     let mut locations = Vec::new();
 
     for entry in std::fs::read_dir(PCI_CONFIG_ROOT)
@@ -135,19 +165,30 @@ pub fn find_intel_devices(spec: PciDeviceSpec) -> Result<Vec<PciLocation>, Strin
         let Some(bus) = parse_pci_bus_dir(&entry.file_name()) else {
             continue;
         };
-        let location = PciLocation {
-            bus: bus.bus,
-            device: spec.device,
-            function: spec.function,
-            group: bus.group,
-        };
+        for spec in specs {
+            let location = PciLocation {
+                bus: bus.bus,
+                device: spec.device,
+                function: spec.function,
+                group: bus.group,
+            };
 
-        if is_matching_intel_device(location, spec.device_id) {
-            locations.push(location);
+            if is_matching_intel_device(location, spec.device_id) {
+                locations.push(location);
+                break;
+            }
         }
     }
 
     locations.sort_by_key(|location| (location.group, location.bus));
+    locations.dedup_by_key(|location| {
+        (
+            location.group,
+            location.bus,
+            location.device,
+            location.function,
+        )
+    });
     Ok(locations)
 }
 
@@ -158,17 +199,28 @@ impl fmt::Display for PciBus {
 }
 
 fn is_matching_intel_device(location: PciLocation, expected_device_id: u16) -> bool {
-    let Ok(device) = PciDevice::open_readonly(location) else {
+    let Some((vendor_id, device_id)) = vendor_device_ids(location) else {
         return false;
     };
+
+    vendor_id == INTEL_VENDOR_ID && device_id == expected_device_id
+}
+
+fn is_intel_device(location: PciLocation) -> bool {
+    vendor_device_ids(location).is_some_and(|(vendor_id, _)| vendor_id == INTEL_VENDOR_ID)
+}
+
+fn vendor_device_ids(location: PciLocation) -> Option<(u16, u16)> {
+    let Ok(device) = PciDevice::open_readonly(location) else {
+        return None;
+    };
     let Ok(vendor_device) = device.read_u32(PCI_VENDOR_DEVICE_OFFSET) else {
-        return false;
+        return None;
     };
 
     let vendor_id = (vendor_device & 0xffff) as u16;
     let device_id = (vendor_device >> 16) as u16;
-
-    vendor_id == INTEL_VENDOR_ID && device_id == expected_device_id
+    Some((vendor_id, device_id))
 }
 
 fn parse_pci_bus_dir(name: &std::ffi::OsStr) -> Option<PciBus> {

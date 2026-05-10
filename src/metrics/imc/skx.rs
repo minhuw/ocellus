@@ -5,17 +5,14 @@ use std::time::{Duration, Instant};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
-use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::arch::skx::pmon;
 use crate::metal::pci::PciDevice;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
-use crate::metrics::{MetricEvent, MetricUpdate};
+use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE};
 
-const BYTES_PER_CACHE_LINE: f64 = 64.0;
-const DEFAULT_MAX_SLICE: Duration = Duration::from_millis(100);
 const IMC_COUNTER_WIDTH: u32 = 48;
 const IMC_CTL_OFFSETS: [u64; 4] = [0xd8, 0xdc, 0xe0, 0xe4];
 const IMC_CTR_OFFSETS: [u64; 4] = [0xa0, 0xa8, 0xb0, 0xb8];
@@ -139,24 +136,17 @@ impl ImcMetrics {
 }
 
 #[derive(Debug)]
-pub struct ImcCollector {
+pub struct SkxImcCollector {
     channels: Vec<ImcChannel>,
     next_group: usize,
 }
 
-impl ImcCollector {
+impl SkxImcCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         Ok(Self {
             channels: discover_channels(architecture.intel_server_model())?,
             next_group: 0,
         })
-    }
-
-    pub fn is_supported(architecture: &Architecture) -> bool {
-        matches!(
-            architecture.intel_server_model(),
-            IntelServerCpuModel::SkylakeXeon
-        )
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<ImcMetrics, String> {
@@ -220,48 +210,6 @@ impl ImcCollector {
 struct ImcMeasurementSlice {
     duration: Duration,
     group: ImcEventGroup,
-}
-
-#[derive(Debug)]
-pub struct ImcTask {
-    collector: ImcCollector,
-    events: mpsc::Sender<MetricEvent>,
-    interval: Duration,
-}
-
-impl ImcTask {
-    pub fn new(
-        collector: ImcCollector,
-        interval: Duration,
-        events: mpsc::Sender<MetricEvent>,
-    ) -> Self {
-        Self {
-            collector,
-            events,
-            interval,
-        }
-    }
-
-    pub async fn run(mut self) {
-        loop {
-            match self.collector.sample(self.interval).await {
-                Ok(imc) => {
-                    if self
-                        .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Imc(imc))))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    let _ = self.events.send(MetricEvent::Failure(error)).await;
-                    return;
-                }
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -630,7 +578,7 @@ fn discover_channel_specs(model: IntelServerCpuModel) -> Result<Vec<ImcChannelSp
     for (bus, scope) in bus_scopes {
         for spec in metal::arch::skx::pci::IMC_CHANNELS {
             channels.push(ImcChannelSpec {
-                location: metal::pci::find_intel_device_on_bus(spec, bus)?,
+                location: metal::pci::find_intel_device_matching_spec_on_bus(spec, bus)?,
                 scope,
             });
         }
@@ -915,12 +863,6 @@ mod tests {
     }
 
     #[test]
-    fn supports_only_skylake_xeon_uncore_spec() {
-        assert!(ImcCollector::is_supported(&test_architecture(0x55)));
-        assert!(!ImcCollector::is_supported(&test_architecture(0xcf)));
-    }
-
-    #[test]
     fn wraps_48_bit_counters() {
         assert_eq!(mask_counter((1_u64 << 50) | 7), 7);
     }
@@ -999,8 +941,8 @@ mod tests {
         slices.into_iter().map(|slice| slice.group).collect()
     }
 
-    fn test_collector() -> ImcCollector {
-        ImcCollector {
+    fn test_collector() -> SkxImcCollector {
+        SkxImcCollector {
             channels: Vec::new(),
             next_group: 0,
         }
@@ -1011,16 +953,6 @@ mod tests {
             die_group_id: 0,
             die_id: 0,
             package_id: 0,
-        }
-    }
-
-    fn test_architecture(model: u8) -> Architecture {
-        Architecture {
-            brand: "test".to_string(),
-            family: 6,
-            features: crate::arch::ArchitectureFeatures::default(),
-            model,
-            vendor: "GenuineIntel".to_string(),
         }
     }
 }

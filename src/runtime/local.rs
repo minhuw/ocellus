@@ -10,7 +10,7 @@ use tokio::time::MissedTickBehavior;
 use crate::metrics::MetricsState;
 use crate::runtime::sampler::SamplerReader;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize)]
 struct LocalMetadata {

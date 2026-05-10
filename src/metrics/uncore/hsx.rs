@@ -65,13 +65,12 @@ impl HsxUncoreUnit {
     }
 
     pub fn freeze(&self) -> Result<(), String> {
-        self.device
-            .write_u32_required(UNIT_CTL_OFFSET, pmon::UNIT_FREEZE)
+        self.device.write_u32(UNIT_CTL_OFFSET, pmon::UNIT_FREEZE)
     }
 
     pub fn freeze_and_reset(&self) -> Result<(), String> {
         self.device
-            .write_u32_required(UNIT_CTL_OFFSET, pmon::UNIT_FREEZE_AND_RESET)
+            .write_u32(UNIT_CTL_OFFSET, pmon::UNIT_FREEZE_AND_RESET)
     }
 
     pub fn program_counter(
@@ -80,7 +79,7 @@ impl HsxUncoreUnit {
         event: u8,
         umask: u8,
     ) -> Result<(), String> {
-        self.device.write_u32_required(
+        self.device.write_u32(
             CTL_OFFSETS[counter_index],
             pmon::counter_control(event, umask, true),
         )
@@ -88,24 +87,21 @@ impl HsxUncoreUnit {
 
     pub fn read_counter(&self, counter_index: usize) -> Result<u64, String> {
         self.device
-            .read_u64_required(CTR_OFFSETS[counter_index])
+            .read_u64(CTR_OFFSETS[counter_index])
             .map(mask_counter)
     }
 
     pub fn read_fixed_counter(&self) -> Result<u64, String> {
-        self.device
-            .read_u64_required(DCLK_CTR_OFFSET)
-            .map(mask_counter)
+        self.device.read_u64(DCLK_CTR_OFFSET).map(mask_counter)
     }
 
     pub fn reset_and_enable_fixed_counter(&self) -> Result<(), String> {
         self.device
-            .write_u32_required(DCLK_CTL_OFFSET, pmon::FIXED_COUNTER_RESET_AND_ENABLE)
+            .write_u32(DCLK_CTL_OFFSET, pmon::FIXED_COUNTER_RESET_AND_ENABLE)
     }
 
     pub fn unfreeze(&self) -> Result<(), String> {
-        self.device
-            .write_u32_required(UNIT_CTL_OFFSET, pmon::UNIT_UNFREEZE)
+        self.device.write_u32(UNIT_CTL_OFFSET, pmon::UNIT_UNFREEZE)
     }
 }
 
@@ -161,6 +157,22 @@ pub fn bus_scopes(spec: HsxUncoreSpec) -> Result<Vec<HsxSocketBusScope>, String>
         .collect()
 }
 
+pub fn package_scopes() -> Result<Vec<HsxUncoreScope>, String> {
+    let mut scopes = BTreeMap::new();
+
+    for topology in metal::topology::cpu_topologies()? {
+        scopes
+            .entry(HsxUncoreScope::from_topology(&topology)?)
+            .or_insert(topology.cpu);
+    }
+
+    if scopes.is_empty() {
+        return Err("failed to discover any Haswell/Broadwell uncore scopes".to_string());
+    }
+
+    Ok(scopes.into_keys().collect())
+}
+
 pub fn events_per_second(events: u64, duration: Duration) -> f64 {
     let elapsed = duration.as_secs_f64();
 
@@ -193,22 +205,6 @@ pub fn scale_to_enabled(value: u64, enabled: Duration, running: Duration) -> u64
     }
 
     (value as f64 * enabled.as_secs_f64() / running.as_secs_f64()) as u64
-}
-
-fn package_scopes() -> Result<Vec<HsxUncoreScope>, String> {
-    let mut scopes = BTreeMap::new();
-
-    for topology in metal::topology::cpu_topologies()? {
-        scopes
-            .entry(HsxUncoreScope::from_topology(&topology)?)
-            .or_insert(topology.cpu);
-    }
-
-    if scopes.is_empty() {
-        return Err("failed to discover any Haswell/Broadwell uncore scopes".to_string());
-    }
-
-    Ok(scopes.into_keys().collect())
 }
 
 #[cfg(test)]

@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
-use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::arch::skx::pmon;
@@ -16,7 +15,6 @@ use crate::metrics::uncore::skx::{
     mask_counter, measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled,
     uncore_leaders,
 };
-use crate::metrics::{MetricEvent, MetricUpdate};
 
 const IRP_COUNTER_COUNT: usize = 2;
 
@@ -31,8 +29,8 @@ enum IrpEventKind {
     Clockticks,
     CoreRead,
     DemandRead,
+    FafInserts,
     FafOccupancy,
-    FafTransactions,
     LostFwd,
     PciDcaHint,
     PciItoM,
@@ -106,7 +104,7 @@ const SKX_IRP_EVENT_GROUPS: [IrpEventGroup; 7] = [
     },
     IrpEventGroup {
         events: [
-            IrpEventSpec::sum(IrpEventKind::FafTransactions, 0x16, 0x00),
+            IrpEventSpec::sum(IrpEventKind::FafInserts, 0x18, 0x00),
             IrpEventSpec::sum(IrpEventKind::Clockticks, 0x01, 0x00),
         ],
     },
@@ -143,8 +141,8 @@ impl IrpScopeMetrics {
         let clockticks = required_measurement(measurements, IrpEventKind::Clockticks)?;
         let core_read = required_measurement(measurements, IrpEventKind::CoreRead)?;
         let demand_read = required_measurement(measurements, IrpEventKind::DemandRead)?;
+        let faf_inserts = required_measurement(measurements, IrpEventKind::FafInserts)?;
         let faf_occupancy = required_measurement(measurements, IrpEventKind::FafOccupancy)?;
-        let faf_transactions = required_measurement(measurements, IrpEventKind::FafTransactions)?;
         let lost_fwd = required_measurement(measurements, IrpEventKind::LostFwd)?;
         let pci_dca_hint = required_measurement(measurements, IrpEventKind::PciDcaHint)?;
         let pci_itom = required_measurement(measurements, IrpEventKind::PciItoM)?;
@@ -168,7 +166,7 @@ impl IrpScopeMetrics {
             core_read_bytes_per_second: bytes_per_second(core_read),
             demand_read_bytes_per_second: bytes_per_second(demand_read),
             faf_occupancy_entries: occupancy_entries(faf_occupancy, clockticks),
-            pcie_inbound_reads_per_second: event_rate(faf_transactions),
+            pcie_inbound_reads_per_second: event_rate(faf_inserts),
             frequency_hz: frequency_hz(clockticks.value, clockticks.running),
             io_write_conflict_ratio: ratio(lost_fwd_count, write_insert_count),
             pci_dca_hint_bytes_per_second: bytes_per_second(pci_dca_hint),
@@ -197,11 +195,11 @@ impl IrpScopeMetrics {
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub struct IrpMetrics {
+pub struct SkxIrpMetrics {
     pub scopes: Vec<IrpScopeMetrics>,
 }
 
-impl IrpMetrics {
+impl SkxIrpMetrics {
     fn from_measurements(
         measurements: BTreeMap<IrpStackScope, BTreeMap<IrpEventKind, IrpEventMeasurement>>,
     ) -> Result<Self, String> {
@@ -219,12 +217,12 @@ impl IrpMetrics {
 }
 
 #[derive(Debug)]
-pub struct IrpCollector {
+pub struct SkxIrpCollector {
     next_group: usize,
     packages: Vec<IrpPackage>,
 }
 
-impl IrpCollector {
+impl SkxIrpCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         let packages = discover_packages(architecture.intel_server_model())?;
         probe_writable_msrs(&packages)?;
@@ -235,14 +233,7 @@ impl IrpCollector {
         })
     }
 
-    pub fn is_supported(architecture: &Architecture) -> bool {
-        matches!(
-            architecture.intel_server_model(),
-            IntelServerCpuModel::SkylakeXeon
-        )
-    }
-
-    pub async fn sample(&mut self, interval: Duration) -> Result<IrpMetrics, String> {
+    pub async fn sample(&mut self, interval: Duration) -> Result<SkxIrpMetrics, String> {
         if interval.is_zero() {
             return Err("IRP measure interval must be non-zero".to_string());
         }
@@ -271,7 +262,7 @@ impl IrpCollector {
 
         self.rotate_group();
 
-        IrpMetrics::from_measurements(measurements.into_measurements())
+        SkxIrpMetrics::from_measurements(measurements.into_measurements())
     }
 
     fn rotate_group(&mut self) {
@@ -305,48 +296,6 @@ struct IrpMeasurementSlice {
     group: IrpEventGroup,
 }
 
-#[derive(Debug)]
-pub struct IrpTask {
-    collector: IrpCollector,
-    events: mpsc::Sender<MetricEvent>,
-    interval: Duration,
-}
-
-impl IrpTask {
-    pub fn new(
-        collector: IrpCollector,
-        interval: Duration,
-        events: mpsc::Sender<MetricEvent>,
-    ) -> Self {
-        Self {
-            collector,
-            events,
-            interval,
-        }
-    }
-
-    pub async fn run(mut self) {
-        loop {
-            match self.collector.sample(self.interval).await {
-                Ok(irp) => {
-                    if self
-                        .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Irp(irp))))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    let _ = self.events.send(MetricEvent::Failure(error)).await;
-                    return;
-                }
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct IrpScopeLabels {
     die: String,
@@ -367,7 +316,7 @@ impl IrpScopeLabels {
 }
 
 #[derive(Debug)]
-pub struct IrpPrometheusMetrics {
+pub struct SkxIrpPrometheusMetrics {
     clflush_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     core_read_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
     demand_read_bytes_per_second: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
@@ -385,7 +334,7 @@ pub struct IrpPrometheusMetrics {
     pcie_inbound_write_latency_seconds: Family<IrpScopeLabels, Gauge<f64, AtomicU64>>,
 }
 
-impl IrpPrometheusMetrics {
+impl SkxIrpPrometheusMetrics {
     pub fn register(registry: &mut Registry) -> Self {
         let metrics = Self {
             clflush_bytes_per_second: Family::<IrpScopeLabels, Gauge<f64, AtomicU64>>::default(),
@@ -491,7 +440,7 @@ impl IrpPrometheusMetrics {
         metrics
     }
 
-    pub fn update(&self, metrics: IrpMetrics) {
+    pub fn update(&self, metrics: SkxIrpMetrics) {
         for scope in metrics.scopes {
             let labels = IrpScopeLabels::from_scope(scope.scope, scope.stack);
 
@@ -847,15 +796,15 @@ mod tests {
     #[test]
     fn computes_irp_metrics() {
         let scope = test_scope();
-        let metrics = IrpMetrics::from_measurements(BTreeMap::from([(
+        let metrics = SkxIrpMetrics::from_measurements(BTreeMap::from([(
             test_stack_scope(scope, SkxIioStack::Pcie0),
             BTreeMap::from([
                 measurement(IrpEventKind::ClFlush, 100, 100),
                 measurement(IrpEventKind::Clockticks, 1_000, 100),
                 measurement(IrpEventKind::CoreRead, 200, 100),
                 measurement(IrpEventKind::DemandRead, 300, 100),
+                measurement(IrpEventKind::FafInserts, 250, 100),
                 measurement(IrpEventKind::FafOccupancy, 200, 100),
-                measurement(IrpEventKind::FafTransactions, 250, 100),
                 measurement(IrpEventKind::LostFwd, 150, 100),
                 measurement(IrpEventKind::PciDcaHint, 400, 100),
                 measurement(IrpEventKind::PciItoM, 200, 100),
@@ -921,9 +870,32 @@ mod tests {
     }
 
     #[test]
-    fn supports_only_skylake_xeon_uncore_spec() {
-        assert!(IrpCollector::is_supported(&test_architecture(0x55)));
-        assert!(!IrpCollector::is_supported(&test_architecture(0xcf)));
+    fn uses_skx_irp_event_encodings() {
+        assert_event(IrpEventKind::PcieReadCurrent, 0x10, 0x01);
+        assert_event(IrpEventKind::CoreRead, 0x10, 0x02);
+        assert_event(IrpEventKind::DemandRead, 0x10, 0x04);
+        assert_event(IrpEventKind::ReadForOwnership, 0x10, 0x08);
+        assert_event(IrpEventKind::PciItoM, 0x10, 0x10);
+        assert_event(IrpEventKind::PciDcaHint, 0x10, 0x20);
+        assert_event(IrpEventKind::WbMtoI, 0x10, 0x40);
+        assert_event(IrpEventKind::ClFlush, 0x10, 0x80);
+        assert_event(IrpEventKind::TotalIrpOccupancy, 0x0f, 0x04);
+        assert_event(IrpEventKind::FafOccupancy, 0x19, 0x00);
+        assert_event(IrpEventKind::WriteInserts, 0x11, 0x08);
+        assert_event(IrpEventKind::LostFwd, 0x1d, 0x10);
+        assert_event(IrpEventKind::FafInserts, 0x18, 0x00);
+        assert_event(IrpEventKind::Clockticks, 0x01, 0x00);
+    }
+
+    fn assert_event(kind: IrpEventKind, event: u8, umask: u8) {
+        let event_spec = SKX_IRP_EVENT_GROUPS
+            .iter()
+            .flat_map(|group| group.events)
+            .find(|event_spec| event_spec.kind == kind)
+            .unwrap();
+
+        assert_eq!(event_spec.event, event);
+        assert_eq!(event_spec.umask, umask);
     }
 
     fn measurement(
@@ -945,18 +917,8 @@ mod tests {
         slices.into_iter().map(|slice| slice.group).collect()
     }
 
-    fn test_architecture(model: u8) -> Architecture {
-        Architecture {
-            brand: "test".to_string(),
-            family: 6,
-            features: crate::arch::ArchitectureFeatures::default(),
-            model,
-            vendor: "GenuineIntel".to_string(),
-        }
-    }
-
-    fn test_collector() -> IrpCollector {
-        IrpCollector {
+    fn test_collector() -> SkxIrpCollector {
+        SkxIrpCollector {
             next_group: 0,
             packages: Vec::new(),
         }

@@ -40,29 +40,18 @@ impl PciDevice {
         Self::open_with_options(location, true)
     }
 
-    pub fn read_u32(&self, offset: u64) -> io::Result<u32> {
-        let mut bytes = [0_u8; 4];
-        self.file.read_exact_at(&mut bytes, offset)?;
-        Ok(u32::from_le_bytes(bytes))
-    }
-
-    pub fn read_u64(&self, offset: u64) -> io::Result<u64> {
-        let mut bytes = [0_u8; 8];
-        self.file.read_exact_at(&mut bytes, offset)?;
-        Ok(u64::from_le_bytes(bytes))
-    }
-
-    pub fn read_u64_required(&self, offset: u64) -> Result<u64, String> {
-        self.read_u64(offset)
+    pub fn read_u32(&self, offset: u64) -> Result<u32, String> {
+        self.read_u32_raw(offset)
             .map_err(|error| format!("failed to read PCI {self} offset 0x{offset:x}: {error}"))
     }
 
-    pub fn write_u32(&self, offset: u64, value: u32) -> io::Result<()> {
-        self.file.write_all_at(&value.to_le_bytes(), offset)
+    pub fn read_u64(&self, offset: u64) -> Result<u64, String> {
+        self.read_u64_raw(offset)
+            .map_err(|error| format!("failed to read PCI {self} offset 0x{offset:x}: {error}"))
     }
 
-    pub fn write_u32_required(&self, offset: u64, value: u32) -> Result<(), String> {
-        self.write_u32(offset, value).map_err(|error| {
+    pub fn write_u32(&self, offset: u64, value: u32) -> Result<(), String> {
+        self.write_u32_raw(offset, value).map_err(|error| {
             format!("failed to write PCI {self} offset 0x{offset:x} value 0x{value:x}: {error}")
         })
     }
@@ -80,6 +69,22 @@ impl PciDevice {
             .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
 
         Ok(Self { file, location })
+    }
+
+    fn read_u32_raw(&self, offset: u64) -> io::Result<u32> {
+        let mut bytes = [0_u8; 4];
+        self.file.read_exact_at(&mut bytes, offset)?;
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn read_u64_raw(&self, offset: u64) -> io::Result<u64> {
+        let mut bytes = [0_u8; 8];
+        self.file.read_exact_at(&mut bytes, offset)?;
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn write_u32_raw(&self, offset: u64, value: u32) -> io::Result<()> {
+        self.file.write_all_at(&value.to_le_bytes(), offset)
     }
 }
 

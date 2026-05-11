@@ -81,7 +81,9 @@ impl ImcTask {
                 Ok(imc) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Imc(imc))))
+                        .send(MetricEvent::Update(Box::new(MetricUpdate::Imc(Box::new(
+                            imc,
+                        )))))
                         .await
                         .is_err()
                     {

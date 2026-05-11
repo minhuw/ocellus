@@ -5,19 +5,26 @@ use std::time::{Duration, Instant};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
-use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::arch::skx::pmon;
 use crate::metal::msr::Msr;
-use crate::metrics::common::BYTES_PER_CACHE_LINE;
-use crate::metrics::uncore::skx::{
-    SKX_UNCORE_COUNTER_WIDTH, UncoreScope, events_per_second, frequency_hz, mask_counter,
-    measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled, uncore_leaders,
+use crate::metrics::cha::{
+    CHA_COUNTER_COUNT, ChaEventKind, ChaEventMeasurement, ChaTransactionLabel, bytes_per_second,
+    event_rate, llc_victim_metrics, required_measurement, scale_measurement_value,
 };
-use crate::metrics::{MetricEvent, MetricUpdate};
+pub use crate::metrics::cha::{
+    ChaCacheState, ChaEvictionMetrics, ChaHaRequestLocality, ChaHaRequestMetrics,
+    ChaLlcLookupMetrics, ChaLlcVictimMetrics, ChaLookupOperation, ChaMultiplexMode,
+    ChaNoCreditDirection, ChaNoCreditMetrics, ChaRequestOperation, ChaRequestQueueMetrics,
+    ChaRequestSource, ChaRxcMetrics, ChaRxcQueue, ChaScopeMetrics, ChaSfEvictionMetrics,
+    ChaTransactionMetrics, ChaTransactionResult, ChaTransactionResultMetrics,
+};
+use crate::metrics::uncore::skx::{
+    SKX_UNCORE_COUNTER_WIDTH, UncoreScope, frequency_hz, mask_counter, measurement_round_count,
+    queue_residency_seconds, ratio, uncore_leaders,
+};
 
-const CHA_COUNTER_COUNT: usize = 4;
 const SKX_CHA_EVENT_GROUP_COUNT: usize = 37;
 const SKX_MAX_CHA_COUNT: usize = 28;
 
@@ -37,161 +44,8 @@ const CHA_FILTER1_NOT_NEAR_MEMORY_BIT: u32 = 1 << 5;
 const CHA_FILTER1_OPCODE0_SHIFT: u32 = 9;
 const CHA_FILTER1_OPCODE1_SHIFT: u32 = 19;
 
-const CHA_REQUEST_HIT_IA_UMASK: u8 = 0x11;
-const CHA_REQUEST_HIT_IO_UMASK: u8 = 0x14;
-const CHA_REQUEST_MISS_IA_UMASK: u8 = 0x21;
-const CHA_REQUEST_MISS_IO_UMASK: u8 = 0x24;
-const CHA_REQUEST_ALL_IA_UMASK: u8 = 0x31;
-const CHA_REQUEST_ALL_IO_UMASK: u8 = 0x34;
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaCacheState {
-    E,
-    F,
-    I,
-    M,
-    S,
-    SfE,
-    SfM,
-    SfS,
-}
-
-impl ChaCacheState {
-    fn label(self) -> &'static str {
-        match self {
-            Self::E => "e",
-            Self::F => "f",
-            Self::I => "i",
-            Self::M => "m",
-            Self::S => "s",
-            Self::SfE => "sf_e",
-            Self::SfM => "sf_m",
-            Self::SfS => "sf_s",
-        }
-    }
-
-    const fn filter0_bits(self) -> u16 {
-        match self {
-            Self::I => 0x01,
-            Self::SfS => 0x02,
-            Self::SfE => 0x04,
-            Self::SfM => 0x08,
-            Self::S => 0x10,
-            Self::E => 0x20,
-            Self::M => 0x40,
-            Self::F => 0x80,
-        }
-    }
-
-    #[cfg(test)]
-    const fn llc_lookup_any_state_bits() -> u16 {
-        0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40 | 0x80
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaLookupOperation {
-    Any,
-    Read,
-    RemoteSnoop,
-    Write,
-}
-
-impl ChaLookupOperation {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Any => "any",
-            Self::Read => "read",
-            Self::RemoteSnoop => "remote_snoop",
-            Self::Write => "write",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaHaRequestLocality {
-    Local,
-    Remote,
-}
-
-impl ChaHaRequestLocality {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Local => "local",
-            Self::Remote => "remote",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaNoCreditDirection {
-    Read,
-    Write,
-}
-
-impl ChaNoCreditDirection {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Read => "read",
-            Self::Write => "write",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaRequestOperation {
-    Read,
-    Write,
-}
-
-impl ChaRequestOperation {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Read => "read",
-            Self::Write => "write",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaRequestSource {
-    Ia,
-    Io,
-}
-
-impl ChaRequestSource {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Ia => "ia",
-            Self::Io => "io",
-        }
-    }
-
-    const fn all_umask(self) -> u8 {
-        match self {
-            Self::Ia => CHA_REQUEST_ALL_IA_UMASK,
-            Self::Io => CHA_REQUEST_ALL_IO_UMASK,
-        }
-    }
-
-    const fn result_umask(self, result: ChaTransactionResult) -> u8 {
-        match (self, result) {
-            (Self::Ia, ChaTransactionResult::Hit) => CHA_REQUEST_HIT_IA_UMASK,
-            (Self::Io, ChaTransactionResult::Hit) => CHA_REQUEST_HIT_IO_UMASK,
-            (Self::Ia, ChaTransactionResult::Miss) => CHA_REQUEST_MISS_IA_UMASK,
-            (Self::Io, ChaTransactionResult::Miss) => CHA_REQUEST_MISS_IO_UMASK,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ChaTransactionKind {
+enum ChaTransactionKind {
     IaClFlush,
     IaDrd,
     IaItoM,
@@ -205,66 +59,18 @@ pub enum ChaTransactionKind {
 }
 
 impl ChaTransactionKind {
-    fn label(self) -> &'static str {
+    const fn label(self) -> ChaTransactionLabel {
         match self {
-            Self::IaClFlush => "ia_clflush",
-            Self::IaWbMtoI => "ia_wbmtoi",
-            Self::IaDrd => "ia_drd",
-            Self::IaItoM => "ia_itom",
-            Self::IaRfo => "ia_rfo",
-            Self::IoClFlush => "io_clflush",
-            Self::IoItoM => "io_itom",
-            Self::IoItoMCacheNear => "io_itomcachenear",
-            Self::IoPciRdCur => "io_pcirdcur",
-            Self::IoWbMtoI => "io_wbmtoi",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaRxcQueue {
-    Irq,
-    Prq,
-}
-
-impl ChaRxcQueue {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Irq => "irq",
-            Self::Prq => "prq",
-        }
-    }
-
-    const fn umask(self) -> u8 {
-        match self {
-            Self::Irq => 0x01,
-            Self::Prq => 0x10,
-        }
-    }
-}
-
-impl serde::Serialize for ChaTransactionKind {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.label())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaTransactionResult {
-    Hit,
-    Miss,
-}
-
-impl ChaTransactionResult {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Hit => "hit",
-            Self::Miss => "miss",
+            Self::IaClFlush => ChaTransactionLabel::new("ia_clflush"),
+            Self::IaWbMtoI => ChaTransactionLabel::new("ia_wbmtoi"),
+            Self::IaDrd => ChaTransactionLabel::new("ia_drd"),
+            Self::IaItoM => ChaTransactionLabel::new("ia_itom"),
+            Self::IaRfo => ChaTransactionLabel::new("ia_rfo"),
+            Self::IoClFlush => ChaTransactionLabel::new("io_clflush"),
+            Self::IoItoM => ChaTransactionLabel::new("io_itom"),
+            Self::IoItoMCacheNear => ChaTransactionLabel::new("io_itomcachenear"),
+            Self::IoPciRdCur => ChaTransactionLabel::new("io_pcirdcur"),
+            Self::IoWbMtoI => ChaTransactionLabel::new("io_wbmtoi"),
         }
     }
 }
@@ -344,42 +150,6 @@ impl ChaFilter1 {
             | CHA_FILTER1_NOT_NEAR_MEMORY_BIT
             | ((self.opcode0 as u32) << CHA_FILTER1_OPCODE0_SHIFT)
             | ((self.opcode1 as u32) << CHA_FILTER1_OPCODE1_SHIFT)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum ChaEventKind {
-    EvictionClockticks,
-    EvictionInsert,
-    EvictionOccupancy,
-    HaRequest(ChaHaRequestLocality, ChaRequestOperation),
-    LlcLookup(ChaCacheState, ChaLookupOperation),
-    LlcVictim(ChaCacheState),
-    NoCredits(ChaNoCreditDirection),
-    NoCreditsClockticks,
-    RequestQueueClockticks(ChaRequestSource),
-    RequestQueueInsert(ChaRequestSource),
-    RequestQueueOccupancy(ChaRequestSource),
-    RxcClockticks(ChaRxcQueue),
-    RxcInsert(ChaRxcQueue),
-    RxcOccupancy(ChaRxcQueue),
-    SfEviction(ChaCacheState),
-    TransactionClockticks(ChaTransactionKind, ChaTransactionResult),
-    TransactionInsert(ChaTransactionKind, ChaTransactionResult),
-    TransactionOccupancy(ChaTransactionKind, ChaTransactionResult),
-    Unused,
-}
-
-impl ChaEventKind {
-    fn is_clockticks(self) -> bool {
-        matches!(
-            self,
-            Self::EvictionClockticks
-                | Self::NoCreditsClockticks
-                | Self::RequestQueueClockticks(_)
-                | Self::RxcClockticks(_)
-                | Self::TransactionClockticks(_, _)
-        )
     }
 }
 
@@ -582,6 +352,7 @@ impl ChaEventGroup {
         opcode0: u16,
     ) -> Self {
         let umask = source.result_umask(result);
+        let transaction = transaction.label();
 
         Self {
             filter0: ChaFilter0::none(),
@@ -839,20 +610,12 @@ impl ChaPackage {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct ChaEventMeasurement {
-    enabled: Duration,
-    running: Duration,
-    represented_unit_count: u64,
-    value: u64,
-}
-
-impl ChaEventMeasurement {
-    fn add(&mut self, value: u64, running: Duration, represented_unit_count: u64) {
-        self.running += running;
-        self.represented_unit_count = represented_unit_count;
-        self.value += value;
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ChaMeasurementSlice {
+    duration: Duration,
+    groups: [Option<ChaEventGroup>; CHA_COUNTER_COUNT],
+    partition_offset: usize,
+    partition_width: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -916,123 +679,14 @@ impl ChaMeasurementAccumulator {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ChaMeasurementSlice {
-    duration: Duration,
-    groups: [Option<ChaEventGroup>; CHA_COUNTER_COUNT],
-    partition_offset: usize,
-    partition_width: usize,
-}
-
 #[derive(Debug)]
 struct ChaTransactionScopeMetrics {
     results: Vec<ChaTransactionResultMetrics>,
     totals: Vec<ChaTransactionMetrics>,
 }
 
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaEvictionMetrics {
-    pub bandwidth_bytes_per_second: f64,
-    pub latency_seconds: f64,
-    pub occupancy_entries: f64,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaHaRequestMetrics {
-    pub local_read_bytes_per_second: f64,
-    pub local_read_ratio: f64,
-    pub local_write_bytes_per_second: f64,
-    pub local_write_ratio: f64,
-    pub remote_read_bytes_per_second: f64,
-    pub remote_write_bytes_per_second: f64,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaLlcLookupMetrics {
-    pub bytes_per_second: f64,
-    pub operation: ChaLookupOperation,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-    pub state: ChaCacheState,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaLlcVictimMetrics {
-    pub per_second: f64,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-    pub state: ChaCacheState,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaNoCreditMetrics {
-    pub direction: ChaNoCreditDirection,
-    pub ratio: f64,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaRequestQueueMetrics {
-    pub occupancy_entries: f64,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-    pub source: ChaRequestSource,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaRxcMetrics {
-    pub inserts_per_second: f64,
-    pub latency_seconds: f64,
-    pub occupancy_entries: f64,
-    pub queue: ChaRxcQueue,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaScopeMetrics {
-    pub frequency_hz: f64,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaSfEvictionMetrics {
-    pub bytes_per_second: f64,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-    pub state: ChaCacheState,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaTransactionMetrics {
-    pub bandwidth_bytes_per_second: f64,
-    pub hit_rate: f64,
-    pub latency_seconds: f64,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-    pub transaction: ChaTransactionKind,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct ChaTransactionResultMetrics {
-    pub bandwidth_bytes_per_second: f64,
-    pub inserts_per_second: f64,
-    pub latency_seconds: f64,
-    pub occupancy_entries: f64,
-    pub result: ChaTransactionResult,
-    #[serde(flatten)]
-    pub scope: UncoreScope,
-    pub transaction: ChaTransactionKind,
-}
-
 #[derive(Clone, Debug, serde::Serialize)]
-pub struct ChaMetrics {
+pub struct SkxChaMetrics {
     pub evictions: Vec<ChaEvictionMetrics>,
     pub ha_requests: Vec<ChaHaRequestMetrics>,
     pub llc_lookups: Vec<ChaLlcLookupMetrics>,
@@ -1046,7 +700,7 @@ pub struct ChaMetrics {
     pub transactions: Vec<ChaTransactionMetrics>,
 }
 
-impl ChaMetrics {
+impl SkxChaMetrics {
     fn from_measurements(
         measurements: BTreeMap<UncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>>,
     ) -> Result<Self, String> {
@@ -1100,37 +754,15 @@ impl ChaMetrics {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ChaMultiplexMode {
-    #[default]
-    Temporal,
-    Spatial {
-        partitions: usize,
-    },
-}
-
-impl ChaMultiplexMode {
-    pub const fn spatial(partitions: usize) -> Self {
-        Self::Spatial { partitions }
-    }
-
-    const fn partitions(self) -> usize {
-        match self {
-            Self::Temporal => 1,
-            Self::Spatial { partitions } => partitions,
-        }
-    }
-}
-
 #[derive(Debug)]
-pub struct ChaCollector {
+pub struct SkxChaCollector {
     multiplex_mode: ChaMultiplexMode,
     next_group: usize,
     next_partition_offset: usize,
     packages: Vec<ChaPackage>,
 }
 
-impl ChaCollector {
+impl SkxChaCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         let packages = discover_packages(architecture.intel_server_model())?;
         probe_writable_msrs(&packages)?;
@@ -1143,7 +775,8 @@ impl ChaCollector {
         })
     }
 
-    pub fn is_supported(architecture: &Architecture) -> bool {
+    #[cfg(test)]
+    fn is_supported(architecture: &Architecture) -> bool {
         matches!(
             architecture.intel_server_model(),
             IntelServerCpuModel::SkylakeXeon
@@ -1160,7 +793,7 @@ impl ChaCollector {
         self.multiplex_mode = mode;
     }
 
-    pub async fn sample(&mut self, interval: Duration) -> Result<ChaMetrics, String> {
+    pub async fn sample(&mut self, interval: Duration) -> Result<SkxChaMetrics, String> {
         if interval.is_zero() {
             return Err("CHA measure interval must be non-zero".to_string());
         }
@@ -1187,7 +820,7 @@ impl ChaCollector {
 
         self.rotate_schedule();
 
-        ChaMetrics::from_measurements(measurements.into_measurements())
+        SkxChaMetrics::from_measurements(measurements.into_measurements())
     }
 
     fn rotate_schedule(&mut self) {
@@ -1266,50 +899,6 @@ impl ChaCollector {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ChaTask {
-    collector: ChaCollector,
-    events: mpsc::Sender<MetricEvent>,
-    interval: Duration,
-}
-
-impl ChaTask {
-    pub fn new(
-        collector: ChaCollector,
-        interval: Duration,
-        events: mpsc::Sender<MetricEvent>,
-    ) -> Self {
-        Self {
-            collector,
-            events,
-            interval,
-        }
-    }
-
-    pub async fn run(mut self) {
-        loop {
-            match self.collector.sample(self.interval).await {
-                Ok(cha) => {
-                    if self
-                        .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Cha(Box::new(
-                            cha,
-                        )))))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    let _ = self.events.send(MetricEvent::Failure(error)).await;
-                    return;
-                }
-            }
-        }
     }
 }
 
@@ -1494,7 +1083,7 @@ impl ChaTransactionLabels {
             die: metric.scope.die_id.to_string(),
             die_group: metric.scope.die_group_id.to_string(),
             package: metric.scope.package_id.to_string(),
-            transaction: metric.transaction.label().to_string(),
+            transaction: metric.transaction.as_str().to_string(),
         }
     }
 }
@@ -1515,13 +1104,13 @@ impl ChaTransactionResultLabels {
             die_group: metric.scope.die_group_id.to_string(),
             package: metric.scope.package_id.to_string(),
             result: metric.result.label().to_string(),
-            transaction: metric.transaction.label().to_string(),
+            transaction: metric.transaction.as_str().to_string(),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct ChaPrometheusMetrics {
+pub struct SkxChaPrometheusMetrics {
     eviction_bandwidth_bytes_per_second: Family<ChaScopeLabels, Gauge<f64, AtomicU64>>,
     eviction_latency_seconds: Family<ChaScopeLabels, Gauge<f64, AtomicU64>>,
     eviction_occupancy_entries: Family<ChaScopeLabels, Gauge<f64, AtomicU64>>,
@@ -1548,7 +1137,7 @@ pub struct ChaPrometheusMetrics {
     transaction_result_occupancy_entries: Family<ChaTransactionResultLabels, Gauge<f64, AtomicU64>>,
 }
 
-impl ChaPrometheusMetrics {
+impl SkxChaPrometheusMetrics {
     pub fn register(registry: &mut Registry) -> Self {
         let metrics = Self {
             eviction_bandwidth_bytes_per_second:
@@ -1709,7 +1298,7 @@ impl ChaPrometheusMetrics {
         metrics
     }
 
-    pub fn update(&self, metrics: ChaMetrics) {
+    pub fn update(&self, metrics: SkxChaMetrics) {
         for scope in metrics.scopes {
             self.frequency_hz
                 .get_or_create(&ChaScopeLabels::from_scope(scope.scope))
@@ -1850,18 +1439,6 @@ impl ChaPrometheusMetrics {
     }
 }
 
-fn bytes_per_second(measurement: &ChaEventMeasurement) -> f64 {
-    event_rate(measurement) * BYTES_PER_CACHE_LINE
-}
-
-fn event_rate(measurement: &ChaEventMeasurement) -> f64 {
-    events_per_second(scale_measurement_value(measurement), measurement.enabled)
-}
-
-fn scale_measurement_value(measurement: &ChaEventMeasurement) -> u64 {
-    scale_to_enabled(measurement.value, measurement.enabled, measurement.running)
-}
-
 fn discover_packages(model: IntelServerCpuModel) -> Result<Vec<ChaPackage>, String> {
     if !matches!(model, IntelServerCpuModel::SkylakeXeon) {
         return Err(format!("CHA collection is not supported for {model:?}"));
@@ -1962,7 +1539,7 @@ fn ha_request_metrics(
     })
 }
 
-fn llc_lookup_metrics(
+pub(crate) fn llc_lookup_metrics(
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
 ) -> Result<Vec<ChaLlcLookupMetrics>, String> {
@@ -1994,31 +1571,6 @@ fn llc_lookup_metrics(
                 state,
             });
         }
-    }
-
-    Ok(metrics)
-}
-
-fn llc_victim_metrics(
-    scope: UncoreScope,
-    measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
-) -> Result<Vec<ChaLlcVictimMetrics>, String> {
-    let mut metrics = Vec::new();
-
-    for state in [
-        ChaCacheState::M,
-        ChaCacheState::E,
-        ChaCacheState::S,
-        ChaCacheState::F,
-    ] {
-        metrics.push(ChaLlcVictimMetrics {
-            per_second: event_rate(required_measurement(
-                measurements,
-                ChaEventKind::LlcVictim(state),
-            )?),
-            scope,
-            state,
-        });
     }
 
     Ok(metrics)
@@ -2150,11 +1702,11 @@ fn transaction_metrics(
         )?;
         let hit_inserts = required_measurement(
             measurements,
-            ChaEventKind::TransactionInsert(transaction, ChaTransactionResult::Hit),
+            ChaEventKind::TransactionInsert(transaction.label(), ChaTransactionResult::Hit),
         )?;
         let miss_inserts = required_measurement(
             measurements,
-            ChaEventKind::TransactionInsert(transaction, ChaTransactionResult::Miss),
+            ChaEventKind::TransactionInsert(transaction.label(), ChaTransactionResult::Miss),
         )?;
         let hit_insert_count = scale_measurement_value(hit_inserts) as f64;
         let miss_insert_count = scale_measurement_value(miss_inserts) as f64;
@@ -2173,7 +1725,7 @@ fn transaction_metrics(
                     / total_insert_count
             },
             scope,
-            transaction,
+            transaction: transaction.label(),
         });
         results.push(hit);
         results.push(miss);
@@ -2190,15 +1742,15 @@ fn transaction_result_metrics(
 ) -> Result<ChaTransactionResultMetrics, String> {
     let clockticks = required_measurement(
         measurements,
-        ChaEventKind::TransactionClockticks(transaction, result),
+        ChaEventKind::TransactionClockticks(transaction.label(), result),
     )?;
     let inserts = required_measurement(
         measurements,
-        ChaEventKind::TransactionInsert(transaction, result),
+        ChaEventKind::TransactionInsert(transaction.label(), result),
     )?;
     let occupancy = required_measurement(
         measurements,
-        ChaEventKind::TransactionOccupancy(transaction, result),
+        ChaEventKind::TransactionOccupancy(transaction.label(), result),
     )?;
     let clocktick_count = scale_measurement_value(clockticks);
     let insert_count = scale_measurement_value(inserts);
@@ -2216,7 +1768,7 @@ fn transaction_result_metrics(
         occupancy_entries: ratio(occupancy_count, clocktick_count),
         result,
         scope,
-        transaction,
+        transaction: transaction.label(),
     })
 }
 
@@ -2356,15 +1908,6 @@ fn cha_partition(unit_index: usize, slice: ChaMeasurementSlice, unit_count: usiz
     rotated_unit_index * slice.partition_width / unit_count
 }
 
-fn required_measurement(
-    measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
-    kind: ChaEventKind,
-) -> Result<&ChaEventMeasurement, String> {
-    measurements
-        .get(&kind)
-        .ok_or_else(|| format!("CHA measurement {kind:?} is missing"))
-}
-
 fn unfreeze_packages(packages: &[ChaPackage]) -> Result<(), String> {
     for package in packages {
         for unit in &package.units {
@@ -2383,7 +1926,8 @@ mod tests {
     fn computes_cha_metrics() {
         let scope = test_scope();
         let metrics =
-            ChaMetrics::from_measurements(BTreeMap::from([(scope, test_measurements())])).unwrap();
+            SkxChaMetrics::from_measurements(BTreeMap::from([(scope, test_measurements())]))
+                .unwrap();
 
         assert_eq!(metrics.scopes[0].frequency_hz, 10_000.0);
         assert_eq!(metrics.evictions[0].bandwidth_bytes_per_second, 128_000.0);
@@ -2485,25 +2029,25 @@ mod tests {
             SKX_CHA_EVENT_GROUPS[17],
             ChaTransactionKind::IaClFlush,
             ChaTransactionResult::Hit,
-            CHA_REQUEST_HIT_IA_UMASK,
+            0x11,
         );
         assert_transaction_group(
             SKX_CHA_EVENT_GROUPS[18],
             ChaTransactionKind::IaClFlush,
             ChaTransactionResult::Miss,
-            CHA_REQUEST_MISS_IA_UMASK,
+            0x21,
         );
         assert_transaction_group(
             SKX_CHA_EVENT_GROUPS[19],
             ChaTransactionKind::IoClFlush,
             ChaTransactionResult::Hit,
-            CHA_REQUEST_HIT_IO_UMASK,
+            0x14,
         );
         assert_transaction_group(
             SKX_CHA_EVENT_GROUPS[20],
             ChaTransactionKind::IoClFlush,
             ChaTransactionResult::Miss,
-            CHA_REQUEST_MISS_IO_UMASK,
+            0x24,
         );
     }
 
@@ -2579,8 +2123,8 @@ mod tests {
 
     #[test]
     fn supports_only_skylake_xeon_uncore_spec() {
-        assert!(ChaCollector::is_supported(&test_architecture(0x55)));
-        assert!(!ChaCollector::is_supported(&test_architecture(0xcf)));
+        assert!(SkxChaCollector::is_supported(&test_architecture(0x55)));
+        assert!(!SkxChaCollector::is_supported(&test_architecture(0xcf)));
     }
 
     fn measurement(
@@ -2629,6 +2173,8 @@ mod tests {
         result: ChaTransactionResult,
         umask: u8,
     ) {
+        let transaction = transaction.label();
+
         assert_eq!(
             group.events,
             [
@@ -2648,12 +2194,12 @@ mod tests {
         );
     }
 
-    fn test_collector() -> ChaCollector {
+    fn test_collector() -> SkxChaCollector {
         test_collector_with_units(CHA_COUNTER_COUNT)
     }
 
-    fn test_collector_with_units(unit_count: usize) -> ChaCollector {
-        ChaCollector {
+    fn test_collector_with_units(unit_count: usize) -> SkxChaCollector {
+        SkxChaCollector {
             multiplex_mode: ChaMultiplexMode::default(),
             next_group: 0,
             next_partition_offset: 0,
@@ -2800,6 +2346,8 @@ mod tests {
         }
 
         for transaction in CHA_TRANSACTIONS {
+            let transaction = transaction.label();
+
             measurements.extend([
                 measurement(
                     ChaEventKind::TransactionClockticks(transaction, ChaTransactionResult::Hit),

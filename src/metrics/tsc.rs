@@ -68,7 +68,9 @@ impl TscTask {
                 Ok(Some(tsc)) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Tsc(tsc))))
+                        .send(MetricEvent::Update(Box::new(MetricUpdate::Tsc(Box::new(
+                            tsc,
+                        )))))
                         .await
                         .is_err()
                     {

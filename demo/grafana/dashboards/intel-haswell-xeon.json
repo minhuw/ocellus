@@ -1652,6 +1652,4608 @@
             }
           }
         }
+      },
+      "panel-15": {
+        "kind": "Panel",
+        "spec": {
+          "id": 15,
+          "title": "CHA Frequency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_frequency_hz{package=\"$package\",die_group=\"0\",die=\"0\"}",
+                        "legendFormat": "CHA",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "hertz"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-16": {
+        "kind": "Panel",
+        "spec": {
+          "id": 16,
+          "title": "CHA LLC Victims",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_llc_victims_per_second{package=\"$package\",die_group=\"0\",die=\"0\"}",
+                        "legendFormat": "{{state}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-17": {
+        "kind": "Panel",
+        "spec": {
+          "id": 17,
+          "title": "CHA LLC Lookup I",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"i\"}) / 1073741824) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"i\"}) * 8 / 1000000000) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-18": {
+        "kind": "Panel",
+        "spec": {
+          "id": 18,
+          "title": "CHA LLC Lookup S",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"s\"}) / 1073741824) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"s\"}) * 8 / 1000000000) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-19": {
+        "kind": "Panel",
+        "spec": {
+          "id": 19,
+          "title": "CHA LLC Lookup E",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"e\"}) / 1073741824) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"e\"}) * 8 / 1000000000) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-20": {
+        "kind": "Panel",
+        "spec": {
+          "id": 20,
+          "title": "CHA LLC Lookup M",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"m\"}) / 1073741824) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"m\"}) * 8 / 1000000000) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-21": {
+        "kind": "Panel",
+        "spec": {
+          "id": 21,
+          "title": "CHA LLC Lookup F",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"f\"}) / 1073741824) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",state=\"f\"}) * 8 / 1000000000) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-22": {
+        "kind": "Panel",
+        "spec": {
+          "id": 22,
+          "title": "CHA io_pcirdcur Traffic",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"io_pcirdcur\"}) and on() (vector(${traffic_view}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"io_pcirdcur\"}) / 1073741824) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"io_pcirdcur\"}) * 8 / 1000000000) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-23": {
+        "kind": "Panel",
+        "spec": {
+          "id": 23,
+          "title": "CHA io_pcirdcur Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"io_pcirdcur\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-24": {
+        "kind": "Panel",
+        "spec": {
+          "id": 24,
+          "title": "CHA io_pcirdcur Latency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"io_pcirdcur\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "s"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-25": {
+        "kind": "Panel",
+        "spec": {
+          "id": 25,
+          "title": "CHA io_pcirdcur Hit Rate",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"io_pcirdcur\"}",
+                        "legendFormat": "Hit Rate",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "percentunit"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-26": {
+        "kind": "Panel",
+        "spec": {
+          "id": 26,
+          "title": "CHA pcie_itom Traffic",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_itom\"}) and on() (vector(${traffic_view}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_itom\"}) / 1073741824) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_itom\"}) * 8 / 1000000000) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-27": {
+        "kind": "Panel",
+        "spec": {
+          "id": 27,
+          "title": "CHA pcie_itom Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_itom\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-28": {
+        "kind": "Panel",
+        "spec": {
+          "id": 28,
+          "title": "CHA pcie_itom Latency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_itom\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "s"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-29": {
+        "kind": "Panel",
+        "spec": {
+          "id": 29,
+          "title": "CHA pcie_itom Hit Rate",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_itom\"}",
+                        "legendFormat": "Hit Rate",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "percentunit"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-30": {
+        "kind": "Panel",
+        "spec": {
+          "id": 30,
+          "title": "CHA pcie_rfo Traffic",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_rfo\"}) and on() (vector(${traffic_view}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_rfo\"}) / 1073741824) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_rfo\"}) * 8 / 1000000000) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-31": {
+        "kind": "Panel",
+        "spec": {
+          "id": 31,
+          "title": "CHA pcie_rfo Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_rfo\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-32": {
+        "kind": "Panel",
+        "spec": {
+          "id": 32,
+          "title": "CHA pcie_rfo Latency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_rfo\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "s"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-33": {
+        "kind": "Panel",
+        "spec": {
+          "id": 33,
+          "title": "CHA pcie_rfo Hit Rate",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"pcie_rfo\"}",
+                        "legendFormat": "Hit Rate",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "percentunit"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-34": {
+        "kind": "Panel",
+        "spec": {
+          "id": 34,
+          "title": "CHA ia_drd Traffic",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_drd\"}) and on() (vector(${traffic_view}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_drd\"}) / 1073741824) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_drd\"}) * 8 / 1000000000) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-35": {
+        "kind": "Panel",
+        "spec": {
+          "id": 35,
+          "title": "CHA ia_drd Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_drd\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-36": {
+        "kind": "Panel",
+        "spec": {
+          "id": 36,
+          "title": "CHA ia_drd Latency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_drd\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "s"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-37": {
+        "kind": "Panel",
+        "spec": {
+          "id": 37,
+          "title": "CHA ia_drd Hit Rate",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_drd\"}",
+                        "legendFormat": "Hit Rate",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "percentunit"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-38": {
+        "kind": "Panel",
+        "spec": {
+          "id": 38,
+          "title": "CHA ia_rfo Traffic",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_rfo\"}) and on() (vector(${traffic_view}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_rfo\"}) / 1073741824) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_rfo\"}) * 8 / 1000000000) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-39": {
+        "kind": "Panel",
+        "spec": {
+          "id": 39,
+          "title": "CHA ia_rfo Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_rfo\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-40": {
+        "kind": "Panel",
+        "spec": {
+          "id": 40,
+          "title": "CHA ia_rfo Latency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_rfo\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "s"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-41": {
+        "kind": "Panel",
+        "spec": {
+          "id": 41,
+          "title": "CHA ia_rfo Hit Rate",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_rfo\"}",
+                        "legendFormat": "Hit Rate",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "percentunit"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-42": {
+        "kind": "Panel",
+        "spec": {
+          "id": 42,
+          "title": "CHA ia_crd Traffic",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_crd\"}) and on() (vector(${traffic_view}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_crd\"}) / 1073741824) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_crd\"}) * 8 / 1000000000) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-43": {
+        "kind": "Panel",
+        "spec": {
+          "id": 43,
+          "title": "CHA ia_crd Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_crd\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-44": {
+        "kind": "Panel",
+        "spec": {
+          "id": 44,
+          "title": "CHA ia_crd Latency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_crd\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "s"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-45": {
+        "kind": "Panel",
+        "spec": {
+          "id": 45,
+          "title": "CHA ia_crd Hit Rate",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_crd\"}",
+                        "legendFormat": "Hit Rate",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "percentunit"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-46": {
+        "kind": "Panel",
+        "spec": {
+          "id": 46,
+          "title": "CHA ia_itom Traffic",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_itom\"}) and on() (vector(${traffic_view}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_itom\"}) / 1073741824) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 0)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_itom\"}) * 8 / 1000000000) and on() (vector(${traffic_view}) == 1) and on() (vector(${bandwidth_unit}) == 1)",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-47": {
+        "kind": "Panel",
+        "spec": {
+          "id": 47,
+          "title": "CHA ia_itom Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_itom\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-48": {
+        "kind": "Panel",
+        "spec": {
+          "id": 48,
+          "title": "CHA ia_itom Latency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_itom\"}",
+                        "legendFormat": "{{result}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "s"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-49": {
+        "kind": "Panel",
+        "spec": {
+          "id": 49,
+          "title": "CHA ia_itom Hit Rate",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"0\",die=\"0\",transaction=\"ia_itom\"}",
+                        "legendFormat": "Hit Rate",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "percentunit"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
       }
     },
     "layout": {
@@ -1728,6 +6330,19 @@
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-2"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 12,
+                        "y": 0,
+                        "width": 6,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-15"
                         }
                       }
                     }
@@ -1878,6 +6493,516 @@
                 }
               }
             }
+          },
+          {
+            "kind": "TabsLayoutTab",
+            "spec": {
+              "title": "CHA",
+              "layout": {
+                "kind": "RowsLayout",
+                "spec": {
+                  "rows": [
+                    {
+                      "kind": "RowsLayoutRow",
+                      "spec": {
+                        "title": "CHA Transactions",
+                        "collapse": false,
+                        "layout": {
+                          "kind": "GridLayout",
+                          "spec": {
+                            "items": [
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-22"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-23"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-24"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-25"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-30"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-31"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-32"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-33"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 16,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-26"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 16,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-27"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 16,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-28"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 16,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-29"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 24,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-38"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 24,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-39"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 24,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-40"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 24,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-41"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 32,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-42"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 32,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-43"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 32,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-44"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 32,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-45"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 40,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-34"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 40,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-35"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 40,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-36"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 40,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-37"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 48,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-46"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 48,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-47"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 48,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-48"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 48,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-49"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "RowsLayoutRow",
+                      "spec": {
+                        "title": "CHA LLC and Snoop Filter",
+                        "collapse": false,
+                        "layout": {
+                          "kind": "GridLayout",
+                          "spec": {
+                            "items": [
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-17"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-18"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-19"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-20"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-21"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-16"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "RowsLayoutRow",
+                      "spec": {
+                        "title": "CHA Evictions and Frequency",
+                        "collapse": false,
+                        "layout": {
+                          "kind": "GridLayout",
+                          "spec": {
+                            "items": [
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-15"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           }
         ]
       }
@@ -1910,7 +7035,7 @@
             "group": "prometheus",
             "version": "v0",
             "spec": {
-              "query": "label_values(ocellus_haswell_imc_frequency_hz, package)",
+              "query": "label_values({__name__=~\"ocellus_(haswell_imc_frequency_hz|cha_frequency_hz)\"}, package)",
               "refId": "PackageVariableQuery"
             },
             "datasource": {
@@ -1930,9 +7055,28 @@
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values(ocellus_haswell_imc_frequency_hz, package)",
+          "definition": "label_values({__name__=~\"ocellus_(haswell_imc_frequency_hz|cha_frequency_hz)\"}, package)",
           "options": [],
           "allowCustomValue": true
+        }
+      },
+      {
+        "kind": "CustomVariable",
+        "spec": {
+          "name": "traffic_view",
+          "current": {
+            "selected": false,
+            "text": "Rate",
+            "value": "0"
+          },
+          "label": "Traffic View",
+          "hide": "dontHide",
+          "skipUrlSync": true,
+          "query": "Rate : 0, Bandwidth : 1",
+          "options": [],
+          "multi": false,
+          "includeAll": false,
+          "allowCustomValue": false
         }
       },
       {

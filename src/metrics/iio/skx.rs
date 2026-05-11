@@ -338,7 +338,9 @@ impl IioTask {
                 Ok(iio) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Iio(iio))))
+                        .send(MetricEvent::Update(Box::new(MetricUpdate::Iio(Box::new(
+                            iio,
+                        )))))
                         .await
                         .is_err()
                     {

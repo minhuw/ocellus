@@ -32,11 +32,11 @@ impl MetricsState {
     pub fn apply(&mut self, update: MetricUpdate) {
         match update {
             MetricUpdate::Cha(cha) => self.cha = Some(*cha),
-            MetricUpdate::Iio(iio) => self.iio = Some(iio),
-            MetricUpdate::Imc(imc) => self.imc = Some(imc),
-            MetricUpdate::Irp(irp) => self.irp = Some(irp),
-            MetricUpdate::Rapl(rapl) => self.rapl = Some(rapl),
-            MetricUpdate::Tsc(tsc) => self.tsc = Some(tsc),
+            MetricUpdate::Iio(iio) => self.iio = Some(*iio),
+            MetricUpdate::Imc(imc) => self.imc = Some(*imc),
+            MetricUpdate::Irp(irp) => self.irp = Some(*irp),
+            MetricUpdate::Rapl(rapl) => self.rapl = Some(*rapl),
+            MetricUpdate::Tsc(tsc) => self.tsc = Some(*tsc),
         }
     }
 }
@@ -88,11 +88,11 @@ pub enum MetricEvent {
 #[derive(Clone, Debug)]
 pub enum MetricUpdate {
     Cha(Box<cha::ChaMetrics>),
-    Iio(iio::IioMetrics),
-    Imc(imc::ImcMetrics),
-    Irp(irp::IrpMetrics),
-    Rapl(rapl::RaplMetrics),
-    Tsc(tsc::TscMetrics),
+    Iio(Box<iio::IioMetrics>),
+    Imc(Box<imc::ImcMetrics>),
+    Irp(Box<irp::IrpMetrics>),
+    Rapl(Box<rapl::RaplMetrics>),
+    Tsc(Box<tsc::TscMetrics>),
 }
 
 #[derive(Debug)]
@@ -107,10 +107,10 @@ pub struct MetricsRegistry {
 
 impl MetricsRegistry {
     pub fn register(registry: &mut Registry, metadata: InfoMetadata) -> Self {
-        info::register(registry, metadata);
+        info::register(registry, metadata.clone());
 
         Self {
-            cha: cha::ChaPrometheusMetrics::register(registry),
+            cha: cha::ChaPrometheusMetrics::register(registry, &metadata),
             iio: iio::IioPrometheusMetrics::register(registry),
             imc: imc::ImcPrometheusMetrics::register(registry),
             irp: irp::IrpPrometheusMetrics::register(registry),
@@ -122,11 +122,11 @@ impl MetricsRegistry {
     pub fn update(&self, update: MetricUpdate) {
         match update {
             MetricUpdate::Cha(cha) => self.cha.update(*cha),
-            MetricUpdate::Iio(iio) => self.iio.update(iio),
-            MetricUpdate::Imc(imc) => self.imc.update(imc),
-            MetricUpdate::Irp(irp) => self.irp.update(irp),
-            MetricUpdate::Rapl(rapl) => self.rapl.update(rapl),
-            MetricUpdate::Tsc(tsc) => self.tsc.update(tsc),
+            MetricUpdate::Iio(iio) => self.iio.update(*iio),
+            MetricUpdate::Imc(imc) => self.imc.update(*imc),
+            MetricUpdate::Irp(irp) => self.irp.update(*irp),
+            MetricUpdate::Rapl(rapl) => self.rapl.update(*rapl),
+            MetricUpdate::Tsc(tsc) => self.tsc.update(*tsc),
         }
     }
 

@@ -233,7 +233,9 @@ impl RaplTask {
                 Ok(Some(rapl)) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Rapl(rapl))))
+                        .send(MetricEvent::Update(Box::new(MetricUpdate::Rapl(Box::new(
+                            rapl,
+                        )))))
                         .await
                         .is_err()
                     {

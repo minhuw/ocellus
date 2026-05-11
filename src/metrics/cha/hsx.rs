@@ -70,16 +70,16 @@ const HSX_CBO_EVENT_GROUPS: [HsxChaEventGroup; HSX_CBO_EVENT_GROUP_COUNT] = [
     HsxChaEventGroup::transaction(HsxTransactionKind::IoPciRdCur, 0x19e, false, true),
     HsxChaEventGroup::transaction(HsxTransactionKind::PciRfo, 0x180, true, false),
     HsxChaEventGroup::transaction(HsxTransactionKind::PciRfo, 0x180, true, true),
-    HsxChaEventGroup::transaction(HsxTransactionKind::PciItoM, 0x19c, false, false),
-    HsxChaEventGroup::transaction(HsxTransactionKind::PciItoM, 0x19c, false, true),
+    HsxChaEventGroup::transaction(HsxTransactionKind::PciItoM, 0x1c8, true, false),
+    HsxChaEventGroup::transaction(HsxTransactionKind::PciItoM, 0x1c8, true, true),
     HsxChaEventGroup::transaction(HsxTransactionKind::TotalRfo, 0x180, false, false),
     HsxChaEventGroup::transaction(HsxTransactionKind::TotalRfo, 0x180, false, true),
     HsxChaEventGroup::transaction(HsxTransactionKind::IaCrd, 0x181, false, false),
     HsxChaEventGroup::transaction(HsxTransactionKind::IaCrd, 0x181, false, true),
     HsxChaEventGroup::transaction(HsxTransactionKind::IaDrd, 0x182, false, false),
     HsxChaEventGroup::transaction(HsxTransactionKind::IaDrd, 0x182, false, true),
-    HsxChaEventGroup::transaction(HsxTransactionKind::IaItoM, 0x1c8, false, false),
-    HsxChaEventGroup::transaction(HsxTransactionKind::IaItoM, 0x1c8, false, true),
+    HsxChaEventGroup::transaction(HsxTransactionKind::TotalItoM, 0x1c8, false, false),
+    HsxChaEventGroup::transaction(HsxTransactionKind::TotalItoM, 0x1c8, false, true),
     HsxChaEventGroup::llc_victims(),
 ];
 
@@ -912,6 +912,7 @@ enum HsxTransactionKind {
     IoPciRdCur,
     PciItoM,
     PciRfo,
+    TotalItoM,
     TotalRfo,
 }
 
@@ -925,6 +926,7 @@ impl HsxTransactionKind {
             Self::IoPciRdCur => ChaTransactionLabel::new("io_pcirdcur"),
             Self::PciItoM => ChaTransactionLabel::new("pcie_itom"),
             Self::PciRfo => ChaTransactionLabel::new("pcie_rfo"),
+            Self::TotalItoM => ChaTransactionLabel::new("total_itom"),
             Self::TotalRfo => ChaTransactionLabel::new("total_rfo"),
         }
     }
@@ -1007,17 +1009,54 @@ impl HsxChaMeasurementAccumulator {
     fn into_measurements(
         mut self,
     ) -> BTreeMap<HsxUncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>> {
-        self.derive_ia_rfo_measurements();
+        self.derive_ia_transaction_measurements();
         self.export_transaction_measurements();
 
         self.exported_measurements
     }
 
-    fn derive_ia_rfo_measurements(&mut self) {
+    fn derive_ia_transaction_measurements(&mut self) {
         for counter_kind in [HsxTorCounterKind::Total, HsxTorCounterKind::Miss] {
-            derive_ia_rfo_clockticks(&mut self.transaction_clockticks, counter_kind);
-            derive_ia_rfo_counts(&mut self.transaction_inserts, counter_kind);
-            derive_ia_rfo_counts(&mut self.transaction_occupancy, counter_kind);
+            derive_transaction_clockticks(
+                &mut self.transaction_clockticks,
+                HsxTransactionKind::TotalRfo,
+                HsxTransactionKind::IaRfo,
+                counter_kind,
+            );
+            derive_transaction_counts(
+                &mut self.transaction_inserts,
+                HsxTransactionKind::TotalRfo,
+                HsxTransactionKind::PciRfo,
+                HsxTransactionKind::IaRfo,
+                counter_kind,
+            );
+            derive_transaction_counts(
+                &mut self.transaction_occupancy,
+                HsxTransactionKind::TotalRfo,
+                HsxTransactionKind::PciRfo,
+                HsxTransactionKind::IaRfo,
+                counter_kind,
+            );
+            derive_transaction_clockticks(
+                &mut self.transaction_clockticks,
+                HsxTransactionKind::TotalItoM,
+                HsxTransactionKind::IaItoM,
+                counter_kind,
+            );
+            derive_transaction_counts(
+                &mut self.transaction_inserts,
+                HsxTransactionKind::TotalItoM,
+                HsxTransactionKind::PciItoM,
+                HsxTransactionKind::IaItoM,
+                counter_kind,
+            );
+            derive_transaction_counts(
+                &mut self.transaction_occupancy,
+                HsxTransactionKind::TotalItoM,
+                HsxTransactionKind::PciItoM,
+                HsxTransactionKind::IaItoM,
+                counter_kind,
+            );
         }
     }
 
@@ -1163,17 +1202,19 @@ impl HsxChaMeasurementAccumulator {
     }
 }
 
-fn derive_ia_rfo_clockticks(
+fn derive_transaction_clockticks(
     measurements: &mut BTreeMap<
         (HsxUncoreScope, HsxTransactionKind, HsxTorCounterKind),
         ChaEventMeasurement,
     >,
+    total_transaction: HsxTransactionKind,
+    derived_transaction: HsxTransactionKind,
     counter_kind: HsxTorCounterKind,
 ) {
     let totals: Vec<_> = measurements
         .iter()
         .filter_map(|(&(scope, transaction, kind), &measurement)| {
-            if transaction == HsxTransactionKind::TotalRfo && kind == counter_kind {
+            if transaction == total_transaction && kind == counter_kind {
                 Some((scope, measurement))
             } else {
                 None
@@ -1182,21 +1223,24 @@ fn derive_ia_rfo_clockticks(
         .collect();
 
     for (scope, total) in totals {
-        measurements.insert((scope, HsxTransactionKind::IaRfo, counter_kind), total);
+        measurements.insert((scope, derived_transaction, counter_kind), total);
     }
 }
 
-fn derive_ia_rfo_counts(
+fn derive_transaction_counts(
     measurements: &mut BTreeMap<
         (HsxUncoreScope, HsxTransactionKind, HsxTorCounterKind),
         ChaEventMeasurement,
     >,
+    total_transaction: HsxTransactionKind,
+    excluded_transaction: HsxTransactionKind,
+    derived_transaction: HsxTransactionKind,
     counter_kind: HsxTorCounterKind,
 ) {
     let totals: Vec<_> = measurements
         .iter()
         .filter_map(|(&(scope, transaction, kind), &measurement)| {
-            if transaction == HsxTransactionKind::TotalRfo && kind == counter_kind {
+            if transaction == total_transaction && kind == counter_kind {
                 Some((scope, measurement))
             } else {
                 None
@@ -1206,14 +1250,14 @@ fn derive_ia_rfo_counts(
 
     for (scope, total) in totals {
         let Some(excluded) = measurements
-            .get(&(scope, HsxTransactionKind::PciRfo, counter_kind))
+            .get(&(scope, excluded_transaction, counter_kind))
             .copied()
         else {
             continue;
         };
 
         measurements.insert(
-            (scope, HsxTransactionKind::IaRfo, counter_kind),
+            (scope, derived_transaction, counter_kind),
             derived_measurement(total, excluded),
         );
     }
@@ -1658,7 +1702,7 @@ mod tests {
     }
 
     #[test]
-    fn derives_ia_rfo_from_total_and_io_rfo() {
+    fn derives_ia_transactions_from_total_and_pcie_transactions() {
         let scope = HsxUncoreScope { package_id: 0 };
         let mut measurements = HsxChaMeasurementAccumulator::new();
         let measurement = HsxChaMeasurement {
@@ -1671,6 +1715,8 @@ mod tests {
         for (transaction, total_insert, miss_insert, total_occupancy, miss_occupancy) in [
             (HsxTransactionKind::TotalRfo, 1_000, 600, 1_500, 900),
             (HsxTransactionKind::PciRfo, 250, 100, 500, 400),
+            (HsxTransactionKind::TotalItoM, 2_000, 1_200, 3_000, 1_800),
+            (HsxTransactionKind::PciItoM, 500, 200, 700, 300),
         ] {
             measurements.add(
                 scope,
@@ -1743,6 +1789,38 @@ mod tests {
             )]
                 .value,
             500
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionInsert(
+                HsxTransactionKind::IaItoM.label(),
+                ChaTransactionResult::Hit,
+            )]
+                .value,
+            500
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionInsert(
+                HsxTransactionKind::IaItoM.label(),
+                ChaTransactionResult::Miss,
+            )]
+                .value,
+            1_000
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionOccupancy(
+                HsxTransactionKind::IaItoM.label(),
+                ChaTransactionResult::Hit,
+            )]
+                .value,
+            800
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionOccupancy(
+                HsxTransactionKind::IaItoM.label(),
+                ChaTransactionResult::Miss,
+            )]
+                .value,
+            1_500
         );
     }
 
@@ -1917,10 +1995,14 @@ mod tests {
     }
 
     #[test]
-    fn uses_distinct_hsx_io_and_ia_itom_opcodes() {
+    fn uses_hsx_pcm_style_pcie_itom_filtering() {
         assert_eq!(
             HSX_CBO_EVENT_GROUPS[10].filter1,
-            HsxChaFilter1::opcode(0x19c)
+            HsxChaFilter1::opcode(0x1c8)
+        );
+        assert_eq!(
+            HSX_CBO_EVENT_GROUPS[10].filter0,
+            HsxChaFilter0::thread_filter(true)
         );
         assert_eq!(
             HSX_CBO_EVENT_GROUPS[18].filter1,
@@ -1929,8 +2011,8 @@ mod tests {
     }
 
     #[test]
-    fn tid_filters_only_shared_hsx_rfo_opcode() {
-        for group_index in [6, 7, 10, 11] {
+    fn tid_filters_hsx_pcie_rfo_and_itom_only() {
+        for group_index in [6, 7, 12, 13, 18, 19] {
             assert_eq!(
                 HSX_CBO_EVENT_GROUPS[group_index].filter0,
                 HsxChaFilter0::none()
@@ -1943,7 +2025,7 @@ mod tests {
             );
         }
 
-        for group_index in [8, 9] {
+        for group_index in [8, 9, 10, 11] {
             assert_eq!(
                 HSX_CBO_EVENT_GROUPS[group_index].filter0,
                 HsxChaFilter0::thread_filter(true)

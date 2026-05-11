@@ -149,6 +149,19 @@ pub fn find_intel_devices_matching_spec(spec: PciDeviceSpec) -> Result<Vec<PciLo
     find_intel_devices_matching_any_spec(&[spec])
 }
 
+pub fn find_intel_devices_matching_device_id(device_id: u16) -> Result<Vec<PciLocation>, String> {
+    let mut locations = Vec::new();
+
+    scan_pci_devices(|location, vendor_device_id| {
+        if vendor_device_id == device_id {
+            locations.push(location);
+        }
+    })?;
+
+    sort_and_dedup_locations(&mut locations);
+    Ok(locations)
+}
+
 pub fn find_intel_devices_matching_any_spec(
     specs: &[PciDeviceSpec],
 ) -> Result<Vec<PciLocation>, String> {
@@ -185,7 +198,85 @@ pub fn find_intel_devices_matching_any_spec(
         }
     }
 
-    locations.sort_by_key(|location| (location.group, location.bus));
+    sort_and_dedup_locations(&mut locations);
+    Ok(locations)
+}
+
+impl fmt::Display for PciBus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{:04x}:{:02x}", self.group, self.bus)
+    }
+}
+
+fn scan_pci_devices(mut on_intel_device: impl FnMut(PciLocation, u16)) -> Result<(), String> {
+    for entry in std::fs::read_dir(PCI_CONFIG_ROOT)
+        .map_err(|error| format!("failed to read {PCI_CONFIG_ROOT}: {error}"))?
+    {
+        let entry =
+            entry.map_err(|error| format!("failed to read {PCI_CONFIG_ROOT} entry: {error}"))?;
+        if !entry
+            .file_type()
+            .map_err(|error| format!("failed to read PCI entry type: {error}"))?
+            .is_dir()
+        {
+            continue;
+        }
+
+        let Some(bus) = parse_pci_bus_dir(&entry.file_name()) else {
+            continue;
+        };
+
+        for device_entry in std::fs::read_dir(entry.path()).map_err(|error| {
+            format!(
+                "failed to read PCI bus directory {}: {error}",
+                entry.path().display()
+            )
+        })? {
+            let device_entry = device_entry.map_err(|error| {
+                format!(
+                    "failed to read PCI bus directory {} entry: {error}",
+                    entry.path().display()
+                )
+            })?;
+            if !device_entry
+                .file_type()
+                .map_err(|error| format!("failed to read PCI device entry type: {error}"))?
+                .is_file()
+            {
+                continue;
+            }
+
+            let Some((device, function)) = parse_pci_device_file(&device_entry.file_name()) else {
+                continue;
+            };
+
+            let location = PciLocation {
+                bus: bus.bus,
+                device,
+                function,
+                group: bus.group,
+            };
+
+            if let Some((vendor_id, device_id)) = vendor_device_ids(location)
+                && vendor_id == INTEL_VENDOR_ID
+            {
+                on_intel_device(location, device_id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn sort_and_dedup_locations(locations: &mut Vec<PciLocation>) {
+    locations.sort_by_key(|location| {
+        (
+            location.group,
+            location.bus,
+            location.device,
+            location.function,
+        )
+    });
     locations.dedup_by_key(|location| {
         (
             location.group,
@@ -194,13 +285,6 @@ pub fn find_intel_devices_matching_any_spec(
             location.function,
         )
     });
-    Ok(locations)
-}
-
-impl fmt::Display for PciBus {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{:04x}:{:02x}", self.group, self.bus)
-    }
 }
 
 fn is_matching_intel_device(location: PciLocation, expected_device_id: u16) -> bool {
@@ -239,6 +323,16 @@ fn parse_pci_bus_dir(name: &std::ffi::OsStr) -> Option<PciBus> {
         bus: u8::from_str_radix(bus, 16).ok()?,
         group,
     })
+}
+
+fn parse_pci_device_file(name: &std::ffi::OsStr) -> Option<(u8, u8)> {
+    let name = name.to_str()?;
+    let (device, function) = name.split_once('.')?;
+
+    Some((
+        u8::from_str_radix(device, 16).ok()?,
+        u8::from_str_radix(function, 16).ok()?,
+    ))
 }
 
 fn pci_config_path(location: PciLocation) -> PathBuf {
@@ -301,5 +395,18 @@ mod tests {
             })
         );
         assert_eq!(parse_pci_bus_dir(std::ffi::OsStr::new("devices")), None);
+    }
+
+    #[test]
+    fn parses_pci_device_file_names() {
+        assert_eq!(
+            parse_pci_device_file(std::ffi::OsStr::new("05.6")),
+            Some((5, 6))
+        );
+        assert_eq!(
+            parse_pci_device_file(std::ffi::OsStr::new("1f.3")),
+            Some((0x1f, 3))
+        );
+        assert_eq!(parse_pci_device_file(std::ffi::OsStr::new("devices")), None);
     }
 }

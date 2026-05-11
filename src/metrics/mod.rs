@@ -113,7 +113,7 @@ impl MetricsRegistry {
             cha: cha::ChaPrometheusMetrics::register(registry, &metadata),
             iio: iio::IioPrometheusMetrics::register(registry),
             imc: imc::ImcPrometheusMetrics::register(registry),
-            irp: irp::IrpPrometheusMetrics::register(registry),
+            irp: irp::IrpPrometheusMetrics::register(registry, &metadata),
             rapl: rapl::RaplPrometheusMetrics::register(registry),
             tsc: tsc::TscPrometheusMetrics::register(registry),
         }

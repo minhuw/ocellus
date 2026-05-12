@@ -470,10 +470,12 @@ impl ChaCollector {
 
     pub fn is_supported(architecture: &Architecture) -> bool {
         matches!(
-            architecture.intel_server_model(),
-            IntelServerCpuModel::HaswellXeon
-                | IntelServerCpuModel::BroadwellXeon
-                | IntelServerCpuModel::SkylakeXeon
+            IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
+            Some(
+                IntelServerCpuModel::HaswellXeon
+                    | IntelServerCpuModel::BroadwellXeon
+                    | IntelServerCpuModel::SkylakeXeon
+            )
         )
     }
 
@@ -543,15 +545,18 @@ pub enum ChaPrometheusMetrics {
 }
 
 impl ChaPrometheusMetrics {
-    pub fn register(registry: &mut Registry, metadata: &InfoMetadata) -> Self {
+    pub fn register(registry: &mut Registry, metadata: &InfoMetadata) -> Option<Self> {
         match IntelServerCpuModel::from_family_model(
             metadata.processor.family,
             metadata.processor.model,
         ) {
             Some(IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon) => {
-                Self::Hsx(hsx::HsxChaPrometheusMetrics::register(registry))
+                Some(Self::Hsx(hsx::HsxChaPrometheusMetrics::register(registry)))
             }
-            _ => Self::Skx(skx::SkxChaPrometheusMetrics::register(registry)),
+            Some(IntelServerCpuModel::SkylakeXeon) => {
+                Some(Self::Skx(skx::SkxChaPrometheusMetrics::register(registry)))
+            }
+            _ => None,
         }
     }
 
@@ -559,7 +564,12 @@ impl ChaPrometheusMetrics {
         match (self, metrics) {
             (Self::Hsx(prometheus), ChaMetrics::Hsx(metrics)) => prometheus.update(metrics),
             (Self::Skx(prometheus), ChaMetrics::Skx(metrics)) => prometheus.update(metrics),
-            (Self::Hsx(_), ChaMetrics::Skx(_)) | (Self::Skx(_), ChaMetrics::Hsx(_)) => {}
+            (prometheus, metrics) => {
+                debug_assert!(
+                    false,
+                    "mismatched CHA Prometheus updater {prometheus:?} for metrics {metrics:?}"
+                );
+            }
         }
     }
 }

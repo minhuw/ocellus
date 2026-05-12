@@ -169,6 +169,25 @@ mod tests {
         metadata
     }
 
+    fn unsupported_info_metadata() -> crate::metrics::InfoMetadata {
+        crate::metrics::InfoMetadata {
+            collectors: crate::metrics::CollectorMetadata {
+                cha_supported: false,
+                iio_supported: false,
+                imc_supported: false,
+                irp_supported: false,
+            },
+            processor: crate::metrics::ProcessorMetadata {
+                brand: "unsupported".to_string(),
+                family: 6,
+                invariant_tsc_supported: false,
+                model: 0xcf,
+                package_rapl_supported: false,
+                vendor: "GenuineIntel".to_string(),
+            },
+        }
+    }
+
     #[test]
     fn renders_prometheus_text() {
         let sampler = SamplerReader::new_for_test(
@@ -208,6 +227,27 @@ mod tests {
     }
 
     #[test]
+    fn skips_unsupported_optional_metric_families() {
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: unsupported_info_metadata(),
+            },
+            crate::metrics::MetricsState::default(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("cha_supported=\"false\""));
+        assert!(!metrics.contains("ocellus_cha_"));
+        assert!(!metrics.contains("ocellus_iio_"));
+        assert!(!metrics.contains("ocellus_imc_"));
+        assert!(!metrics.contains("ocellus_irp_"));
+        assert!(!metrics.contains("ocellus_rapl_"));
+    }
+
+    #[test]
     fn renders_tsc_metric_after_first_sample() {
         let state = crate::metrics::MetricsState {
             cha: None,
@@ -223,7 +263,7 @@ mod tests {
         let sampler = SamplerReader::new_for_test(
             crate::runtime::sampler::SamplerMetadata {
                 measure_interval: std::time::Duration::from_millis(1),
-                info: haswell_info_metadata(),
+                info: info_metadata(),
             },
             state.clone(),
         );
@@ -728,7 +768,7 @@ mod tests {
         let sampler = SamplerReader::new_for_test(
             crate::runtime::sampler::SamplerMetadata {
                 measure_interval: std::time::Duration::from_millis(1),
-                info: info_metadata(),
+                info: haswell_info_metadata(),
             },
             state.clone(),
         );

@@ -13,7 +13,7 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
-use crate::metrics::{MetricEvent, MetricUpdate};
+use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 const ENERGY_STATUS_WIDTH: u32 = 32;
 const MSR_DRAM_ENERGY_STATUS: u64 = 0x619;
@@ -267,7 +267,28 @@ pub struct RaplPrometheusMetrics {
 }
 
 impl RaplPrometheusMetrics {
-    pub fn register(registry: &mut Registry) -> Self {
+    pub fn register(registry: &mut Registry, metadata: &InfoMetadata) -> Option<Self> {
+        match IntelServerCpuModel::from_family_model(
+            metadata.processor.family,
+            metadata.processor.model,
+        ) {
+            Some(
+                IntelServerCpuModel::SandyBridgeEp
+                | IntelServerCpuModel::IvyTown
+                | IntelServerCpuModel::HaswellXeon
+                | IntelServerCpuModel::BroadwellXeon
+                | IntelServerCpuModel::BroadwellDe
+                | IntelServerCpuModel::KnightsLanding
+                | IntelServerCpuModel::SkylakeXeon
+                | IntelServerCpuModel::IceLakeXeon
+                | IntelServerCpuModel::SapphireRapids
+                | IntelServerCpuModel::EmeraldRapids,
+            ) => Some(Self::register_supported(registry)),
+            None => None,
+        }
+    }
+
+    fn register_supported(registry: &mut Registry) -> Self {
         let energy_joules = Family::<RaplDomainLabels, Counter<f64, AtomicU64>>::default();
         let power_watts = Family::<RaplDomainLabels, Gauge<f64, AtomicU64>>::default();
 

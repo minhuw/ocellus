@@ -1,5 +1,7 @@
 pub mod hsx;
+pub mod icx;
 pub mod skx;
+pub mod spr;
 
 use std::time::Duration;
 
@@ -10,19 +12,25 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 pub use hsx::HsxIrpMetrics;
+pub use icx::IcxIrpMetrics;
 pub use skx::SkxIrpMetrics;
+pub use spr::SprIrpMetrics;
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "architecture")]
 pub enum IrpMetrics {
     Hsx(HsxIrpMetrics),
+    Icx(IcxIrpMetrics),
     Skx(SkxIrpMetrics),
+    Spr(SprIrpMetrics),
 }
 
 #[derive(Debug)]
 pub enum IrpCollector {
     Hsx(hsx::HsxIrpCollector),
+    Icx(icx::IcxIrpCollector),
     Skx(skx::SkxIrpCollector),
+    Spr(spr::SprIrpCollector),
 }
 
 impl IrpCollector {
@@ -31,8 +39,14 @@ impl IrpCollector {
             IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => {
                 hsx::HsxIrpCollector::new(architecture).map(Self::Hsx)
             }
+            IntelServerCpuModel::IceLakeXeon => {
+                icx::IcxIrpCollector::new(architecture).map(Self::Icx)
+            }
             IntelServerCpuModel::SkylakeXeon => {
                 skx::SkxIrpCollector::new(architecture).map(Self::Skx)
+            }
+            IntelServerCpuModel::SapphireRapids => {
+                spr::SprIrpCollector::new(architecture).map(Self::Spr)
             }
             model => Err(format!("IRP collection is not supported for {model:?}")),
         }
@@ -40,17 +54,23 @@ impl IrpCollector {
 
     pub fn is_supported(architecture: &Architecture) -> bool {
         matches!(
-            architecture.intel_server_model(),
-            IntelServerCpuModel::HaswellXeon
-                | IntelServerCpuModel::BroadwellXeon
-                | IntelServerCpuModel::SkylakeXeon
+            IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
+            Some(
+                IntelServerCpuModel::HaswellXeon
+                    | IntelServerCpuModel::BroadwellXeon
+                    | IntelServerCpuModel::SkylakeXeon
+                    | IntelServerCpuModel::IceLakeXeon
+                    | IntelServerCpuModel::SapphireRapids
+            )
         )
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<IrpMetrics, String> {
         match self {
             Self::Hsx(collector) => collector.sample(interval).await.map(IrpMetrics::Hsx),
+            Self::Icx(collector) => collector.sample(interval).await.map(IrpMetrics::Icx),
             Self::Skx(collector) => collector.sample(interval).await.map(IrpMetrics::Skx),
+            Self::Spr(collector) => collector.sample(interval).await.map(IrpMetrics::Spr),
         }
     }
 }
@@ -102,27 +122,45 @@ impl IrpTask {
 #[derive(Debug)]
 pub enum IrpPrometheusMetrics {
     Hsx(hsx::HsxIrpPrometheusMetrics),
+    Icx(icx::IcxIrpPrometheusMetrics),
     Skx(skx::SkxIrpPrometheusMetrics),
+    Spr(spr::SprIrpPrometheusMetrics),
 }
 
 impl IrpPrometheusMetrics {
-    pub fn register(registry: &mut Registry, metadata: &InfoMetadata) -> Self {
+    pub fn register(registry: &mut Registry, metadata: &InfoMetadata) -> Option<Self> {
         match IntelServerCpuModel::from_family_model(
             metadata.processor.family,
             metadata.processor.model,
         ) {
             Some(IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon) => {
-                Self::Hsx(hsx::HsxIrpPrometheusMetrics::register(registry))
+                Some(Self::Hsx(hsx::HsxIrpPrometheusMetrics::register(registry)))
             }
-            _ => Self::Skx(skx::SkxIrpPrometheusMetrics::register(registry)),
+            Some(IntelServerCpuModel::IceLakeXeon) => {
+                Some(Self::Icx(icx::IcxIrpPrometheusMetrics::register(registry)))
+            }
+            Some(IntelServerCpuModel::SkylakeXeon) => {
+                Some(Self::Skx(skx::SkxIrpPrometheusMetrics::register(registry)))
+            }
+            Some(IntelServerCpuModel::SapphireRapids) => {
+                Some(Self::Spr(spr::SprIrpPrometheusMetrics::register(registry)))
+            }
+            _ => None,
         }
     }
 
     pub fn update(&self, metrics: IrpMetrics) {
         match (self, metrics) {
             (Self::Hsx(prometheus), IrpMetrics::Hsx(metrics)) => prometheus.update(metrics),
+            (Self::Icx(prometheus), IrpMetrics::Icx(metrics)) => prometheus.update(metrics),
             (Self::Skx(prometheus), IrpMetrics::Skx(metrics)) => prometheus.update(metrics),
-            (Self::Hsx(_), IrpMetrics::Skx(_)) | (Self::Skx(_), IrpMetrics::Hsx(_)) => {}
+            (Self::Spr(prometheus), IrpMetrics::Spr(metrics)) => prometheus.update(metrics),
+            (prometheus, metrics) => {
+                debug_assert!(
+                    false,
+                    "mismatched IRP Prometheus updater {prometheus:?} for metrics {metrics:?}"
+                );
+            }
         }
     }
 }
@@ -136,6 +174,9 @@ mod tests {
         assert!(IrpCollector::is_supported(&test_architecture(0x3f)));
         assert!(IrpCollector::is_supported(&test_architecture(0x4f)));
         assert!(IrpCollector::is_supported(&test_architecture(0x55)));
+        assert!(IrpCollector::is_supported(&test_architecture(0x6a)));
+        assert!(!IrpCollector::is_supported(&test_architecture(0x6c)));
+        assert!(IrpCollector::is_supported(&test_architecture(0x8f)));
         assert!(!IrpCollector::is_supported(&test_architecture(0xcf)));
     }
 

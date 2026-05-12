@@ -7,7 +7,7 @@ use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
-use crate::metrics::{MetricEvent, MetricUpdate};
+use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 pub use hsx::HsxImcMetrics;
 pub use skx::ImcMetrics as SkxImcMetrics;
@@ -40,10 +40,12 @@ impl ImcCollector {
 
     pub fn is_supported(architecture: &Architecture) -> bool {
         matches!(
-            architecture.intel_server_model(),
-            IntelServerCpuModel::HaswellXeon
-                | IntelServerCpuModel::BroadwellXeon
-                | IntelServerCpuModel::SkylakeXeon
+            IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
+            Some(
+                IntelServerCpuModel::HaswellXeon
+                    | IntelServerCpuModel::BroadwellXeon
+                    | IntelServerCpuModel::SkylakeXeon
+            )
         )
     }
 
@@ -100,23 +102,37 @@ impl ImcTask {
 }
 
 #[derive(Debug)]
-pub struct ImcPrometheusMetrics {
-    hsx: hsx::HsxImcPrometheusMetrics,
-    skx: skx::ImcPrometheusMetrics,
+pub enum ImcPrometheusMetrics {
+    Hsx(hsx::HsxImcPrometheusMetrics),
+    Skx(skx::ImcPrometheusMetrics),
 }
 
 impl ImcPrometheusMetrics {
-    pub fn register(registry: &mut Registry) -> Self {
-        Self {
-            hsx: hsx::HsxImcPrometheusMetrics::register(registry),
-            skx: skx::ImcPrometheusMetrics::register(registry),
+    pub fn register(registry: &mut Registry, metadata: &InfoMetadata) -> Option<Self> {
+        match IntelServerCpuModel::from_family_model(
+            metadata.processor.family,
+            metadata.processor.model,
+        ) {
+            Some(IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon) => {
+                Some(Self::Hsx(hsx::HsxImcPrometheusMetrics::register(registry)))
+            }
+            Some(IntelServerCpuModel::SkylakeXeon) => {
+                Some(Self::Skx(skx::ImcPrometheusMetrics::register(registry)))
+            }
+            _ => None,
         }
     }
 
     pub fn update(&self, metrics: ImcMetrics) {
-        match metrics {
-            ImcMetrics::Hsx(metrics) => self.hsx.update(metrics),
-            ImcMetrics::Skx(metrics) => self.skx.update(metrics),
+        match (self, metrics) {
+            (Self::Hsx(prometheus), ImcMetrics::Hsx(metrics)) => prometheus.update(metrics),
+            (Self::Skx(prometheus), ImcMetrics::Skx(metrics)) => prometheus.update(metrics),
+            (prometheus, metrics) => {
+                debug_assert!(
+                    false,
+                    "mismatched IMC Prometheus updater {prometheus:?} for metrics {metrics:?}"
+                );
+            }
         }
     }
 }

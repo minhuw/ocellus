@@ -115,7 +115,7 @@ impl IntelServerCpuModel {
             0x55 => Some(Self::SkylakeXeon),
             0x56 => Some(Self::BroadwellDe),
             0x57 => Some(Self::KnightsLanding),
-            0x6a | 0x6c => Some(Self::IceLakeXeon),
+            0x6a => Some(Self::IceLakeXeon),
             0x85 => Some(Self::KnightsLanding),
             0x8f => Some(Self::SapphireRapids),
             0xcf => Some(Self::EmeraldRapids),
@@ -161,6 +161,11 @@ mod tests {
             IntelServerCpuModel::from_family_model(6, 0x8f),
             Some(IntelServerCpuModel::SapphireRapids)
         );
+        assert_eq!(
+            IntelServerCpuModel::from_family_model(6, 0x6a),
+            Some(IntelServerCpuModel::IceLakeXeon)
+        );
+        assert_eq!(IntelServerCpuModel::from_family_model(6, 0x6c), None);
         assert_eq!(
             IntelServerCpuModel::from_family_model(6, 0xcf),
             Some(IntelServerCpuModel::EmeraldRapids)

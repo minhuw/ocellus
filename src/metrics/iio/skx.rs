@@ -242,8 +242,8 @@ impl IioCollector {
 
     pub fn is_supported(architecture: &Architecture) -> bool {
         matches!(
-            architecture.intel_server_model(),
-            IntelServerCpuModel::SkylakeXeon
+            IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
+            Some(IntelServerCpuModel::SkylakeXeon)
         )
     }
 

@@ -97,11 +97,11 @@ pub enum MetricUpdate {
 
 #[derive(Debug)]
 pub struct MetricsRegistry {
-    cha: cha::ChaPrometheusMetrics,
-    iio: iio::IioPrometheusMetrics,
-    imc: imc::ImcPrometheusMetrics,
-    irp: irp::IrpPrometheusMetrics,
-    rapl: rapl::RaplPrometheusMetrics,
+    cha: Option<cha::ChaPrometheusMetrics>,
+    iio: Option<iio::IioPrometheusMetrics>,
+    imc: Option<imc::ImcPrometheusMetrics>,
+    irp: Option<irp::IrpPrometheusMetrics>,
+    rapl: Option<rapl::RaplPrometheusMetrics>,
     tsc: tsc::TscPrometheusMetrics,
 }
 
@@ -111,21 +111,21 @@ impl MetricsRegistry {
 
         Self {
             cha: cha::ChaPrometheusMetrics::register(registry, &metadata),
-            iio: iio::IioPrometheusMetrics::register(registry),
-            imc: imc::ImcPrometheusMetrics::register(registry),
+            iio: iio::IioPrometheusMetrics::register(registry, &metadata),
+            imc: imc::ImcPrometheusMetrics::register(registry, &metadata),
             irp: irp::IrpPrometheusMetrics::register(registry, &metadata),
-            rapl: rapl::RaplPrometheusMetrics::register(registry),
+            rapl: rapl::RaplPrometheusMetrics::register(registry, &metadata),
             tsc: tsc::TscPrometheusMetrics::register(registry),
         }
     }
 
     pub fn update(&self, update: MetricUpdate) {
         match update {
-            MetricUpdate::Cha(cha) => self.cha.update(*cha),
-            MetricUpdate::Iio(iio) => self.iio.update(*iio),
-            MetricUpdate::Imc(imc) => self.imc.update(*imc),
-            MetricUpdate::Irp(irp) => self.irp.update(*irp),
-            MetricUpdate::Rapl(rapl) => self.rapl.update(*rapl),
+            MetricUpdate::Cha(cha) => expect_registered(&self.cha, "CHA").update(*cha),
+            MetricUpdate::Iio(iio) => expect_registered(&self.iio, "IIO").update(*iio),
+            MetricUpdate::Imc(imc) => expect_registered(&self.imc, "IMC").update(*imc),
+            MetricUpdate::Irp(irp) => expect_registered(&self.irp, "IRP").update(*irp),
+            MetricUpdate::Rapl(rapl) => expect_registered(&self.rapl, "RAPL").update(*rapl),
             MetricUpdate::Tsc(tsc) => self.tsc.update(*tsc),
         }
     }
@@ -133,22 +133,28 @@ impl MetricsRegistry {
     #[cfg(test)]
     pub fn update_state(&self, state: MetricsState) {
         if let Some(cha) = state.cha {
-            self.cha.update(cha);
+            expect_registered(&self.cha, "CHA").update(cha);
         }
         if let Some(iio) = state.iio {
-            self.iio.update(iio);
+            expect_registered(&self.iio, "IIO").update(iio);
         }
         if let Some(imc) = state.imc {
-            self.imc.update(imc);
+            expect_registered(&self.imc, "IMC").update(imc);
         }
         if let Some(irp) = state.irp {
-            self.irp.update(irp);
+            expect_registered(&self.irp, "IRP").update(irp);
         }
         if let Some(rapl) = state.rapl {
-            self.rapl.update(rapl);
+            expect_registered(&self.rapl, "RAPL").update(rapl);
         }
         if let Some(tsc) = state.tsc {
             self.tsc.update(tsc);
         }
     }
+}
+
+fn expect_registered<'a, T>(prometheus: &'a Option<T>, name: &str) -> &'a T {
+    prometheus
+        .as_ref()
+        .unwrap_or_else(|| panic!("received {name} update without registered {name} metrics"))
 }

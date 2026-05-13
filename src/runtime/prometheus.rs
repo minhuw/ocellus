@@ -169,6 +169,20 @@ mod tests {
         metadata
     }
 
+    fn ice_lake_info_metadata() -> crate::metrics::InfoMetadata {
+        let mut metadata = info_metadata();
+        metadata.processor.brand = "Intel(R) Xeon(R) Platinum 8380 CPU @ 2.30GHz".to_string();
+        metadata.processor.model = 0x6a;
+        metadata
+    }
+
+    fn sapphire_rapids_info_metadata() -> crate::metrics::InfoMetadata {
+        let mut metadata = info_metadata();
+        metadata.processor.brand = "Intel(R) Xeon(R) Platinum 8480+ CPU @ 2.00GHz".to_string();
+        metadata.processor.model = 0x8f;
+        metadata
+    }
+
     fn unsupported_info_metadata() -> crate::metrics::InfoMetadata {
         crate::metrics::InfoMetadata {
             collectors: crate::metrics::CollectorMetadata {
@@ -323,31 +337,55 @@ mod tests {
 
     #[test]
     fn renders_imc_metrics() {
+        assert_renders_server_imc_metrics(
+            info_metadata(),
+            crate::metrics::imc::ImcMetrics::Skx(crate::metrics::imc::skx::ImcMetrics {
+                scopes: vec![crate::metrics::imc::skx::ImcScopeMetrics {
+                    activate_commands_per_second: 128.0,
+                    frequency_hz: 1_000_000_000.0,
+                    page_miss_precharge_commands_per_second: 512.0,
+                    read_cas_commands_per_second: 1024.0,
+                    read_bytes_per_second: 1024.0,
+                    rpq_residency_seconds: 0.000001,
+                    rpq_occupancy_entries: 0.5,
+                    scope: crate::metrics::imc::skx::ImcScope {
+                        die_group_id: 0,
+                        die_id: 0,
+                        package_id: 0,
+                    },
+                    write_cas_commands_per_second: 2048.0,
+                    write_bytes_per_second: 2048.0,
+                    wpq_residency_seconds: 0.000002,
+                    wpq_occupancy_entries: 0.75,
+                }],
+            }),
+        );
+    }
+
+    #[test]
+    fn renders_ice_lake_imc_metrics() {
+        assert_renders_server_imc_metrics(
+            ice_lake_info_metadata(),
+            crate::metrics::imc::ImcMetrics::Icx(icx_imc_metrics()),
+        );
+    }
+
+    #[test]
+    fn renders_sapphire_rapids_imc_metrics() {
+        assert_renders_server_imc_metrics(
+            sapphire_rapids_info_metadata(),
+            crate::metrics::imc::ImcMetrics::Spr(spr_imc_metrics()),
+        );
+    }
+
+    fn assert_renders_server_imc_metrics(
+        metadata: crate::metrics::InfoMetadata,
+        imc: crate::metrics::imc::ImcMetrics,
+    ) {
         let state = crate::metrics::MetricsState {
             cha: None,
             iio: None,
-            imc: Some(crate::metrics::imc::ImcMetrics::Skx(
-                crate::metrics::imc::skx::ImcMetrics {
-                    scopes: vec![crate::metrics::imc::skx::ImcScopeMetrics {
-                        activate_commands_per_second: 128.0,
-                        frequency_hz: 1_000_000_000.0,
-                        page_miss_precharge_commands_per_second: 512.0,
-                        read_cas_commands_per_second: 1024.0,
-                        read_bytes_per_second: 1024.0,
-                        rpq_residency_seconds: 0.000001,
-                        rpq_occupancy_entries: 0.5,
-                        scope: crate::metrics::imc::skx::ImcScope {
-                            die_group_id: 0,
-                            die_id: 0,
-                            package_id: 0,
-                        },
-                        write_cas_commands_per_second: 2048.0,
-                        write_bytes_per_second: 2048.0,
-                        wpq_residency_seconds: 0.000002,
-                        wpq_occupancy_entries: 0.75,
-                    }],
-                },
-            )),
+            imc: Some(imc),
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             rapl: None,
@@ -356,7 +394,7 @@ mod tests {
         let sampler = SamplerReader::new_for_test(
             crate::runtime::sampler::SamplerMetadata {
                 measure_interval: std::time::Duration::from_millis(1),
-                info: info_metadata(),
+                info: metadata,
             },
             state.clone(),
         );
@@ -389,6 +427,52 @@ mod tests {
         assert!(metrics.contains("ocellus_imc_wpq_residency_seconds"));
         assert!(metrics.contains("# TYPE ocellus_imc_wpq_occupancy_entries gauge"));
         assert!(metrics.contains("ocellus_imc_wpq_occupancy_entries"));
+    }
+
+    fn icx_imc_metrics() -> crate::metrics::imc::icx::IcxImcMetrics {
+        crate::metrics::imc::icx::IcxImcMetrics {
+            scopes: vec![crate::metrics::imc::icx::IcxImcScopeMetrics {
+                activate_commands_per_second: 128.0,
+                frequency_hz: 1_000_000_000.0,
+                page_miss_precharge_commands_per_second: 512.0,
+                read_cas_commands_per_second: 1024.0,
+                read_bytes_per_second: 1024.0,
+                rpq_residency_seconds: 0.000001,
+                rpq_occupancy_entries: 0.5,
+                scope: crate::metrics::imc::icx::IcxImcScope {
+                    die_group_id: 0,
+                    die_id: 0,
+                    package_id: 0,
+                },
+                write_cas_commands_per_second: 2048.0,
+                write_bytes_per_second: 2048.0,
+                wpq_residency_seconds: 0.000002,
+                wpq_occupancy_entries: 0.75,
+            }],
+        }
+    }
+
+    fn spr_imc_metrics() -> crate::metrics::imc::spr::SprImcMetrics {
+        crate::metrics::imc::spr::SprImcMetrics {
+            scopes: vec![crate::metrics::imc::spr::SprImcScopeMetrics {
+                activate_commands_per_second: 128.0,
+                frequency_hz: 1_000_000_000.0,
+                page_miss_precharge_commands_per_second: 512.0,
+                read_cas_commands_per_second: 1024.0,
+                read_bytes_per_second: 1024.0,
+                rpq_residency_seconds: 0.000001,
+                rpq_occupancy_entries: 0.5,
+                scope: crate::metrics::imc::spr::SprImcScope {
+                    die_group_id: 0,
+                    die_id: 0,
+                    package_id: 0,
+                },
+                write_cas_commands_per_second: 2048.0,
+                write_bytes_per_second: 2048.0,
+                wpq_residency_seconds: 0.000002,
+                wpq_occupancy_entries: 0.75,
+            }],
+        }
     }
 
     #[test]

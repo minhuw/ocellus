@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 const INTEL_VENDOR_ID: u16 = 0x8086;
 const PCI_CONFIG_ROOT: &str = "/proc/bus/pci";
+const PCI_SYSFS_ROOT: &str = "/sys/bus/pci/devices";
 const PCI_VENDOR_DEVICE_OFFSET: u64 = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +20,12 @@ pub struct PciDeviceSpec {
     pub device: u8,
     pub device_id: u16,
     pub function: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PciVendorDevice {
+    pub device_id: u16,
+    pub location: PciLocation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +156,36 @@ pub fn find_intel_devices_matching_spec(spec: PciDeviceSpec) -> Result<Vec<PciLo
     find_intel_devices_matching_any_spec(&[spec])
 }
 
+pub fn find_intel_devices() -> Result<Vec<PciVendorDevice>, String> {
+    let mut devices = Vec::new();
+
+    scan_pci_devices(|location, vendor_device_id| {
+        devices.push(PciVendorDevice {
+            device_id: vendor_device_id,
+            location,
+        });
+    })?;
+
+    devices.sort_by_key(|device| {
+        (
+            device.location.group,
+            device.location.bus,
+            device.location.device,
+            device.location.function,
+            device.device_id,
+        )
+    });
+    devices.dedup_by_key(|device| {
+        (
+            device.location.group,
+            device.location.bus,
+            device.location.device,
+            device.location.function,
+        )
+    });
+    Ok(devices)
+}
+
 pub fn find_intel_devices_matching_device_id(device_id: u16) -> Result<Vec<PciLocation>, String> {
     let mut locations = Vec::new();
 
@@ -159,6 +196,45 @@ pub fn find_intel_devices_matching_device_id(device_id: u16) -> Result<Vec<PciLo
     })?;
 
     sort_and_dedup_locations(&mut locations);
+    Ok(locations)
+}
+
+pub fn find_intel_devices_at_address_matching_device_ids(
+    device: u8,
+    function: u8,
+    device_ids: &[u16],
+) -> Result<Vec<PciVendorDevice>, String> {
+    let mut locations = Vec::new();
+
+    scan_pci_devices(|location, vendor_device_id| {
+        if location.device == device
+            && location.function == function
+            && device_ids.contains(&vendor_device_id)
+        {
+            locations.push(PciVendorDevice {
+                device_id: vendor_device_id,
+                location,
+            });
+        }
+    })?;
+
+    locations.sort_by_key(|device| {
+        (
+            device.location.group,
+            device.location.bus,
+            device.location.device,
+            device.location.function,
+            device.device_id,
+        )
+    });
+    locations.dedup_by_key(|device| {
+        (
+            device.location.group,
+            device.location.bus,
+            device.location.device,
+            device.location.function,
+        )
+    });
     Ok(locations)
 }
 
@@ -200,6 +276,18 @@ pub fn find_intel_devices_matching_any_spec(
 
     sort_and_dedup_locations(&mut locations);
     Ok(locations)
+}
+
+pub fn local_cpus(location: PciLocation) -> Result<Vec<u32>, String> {
+    let path = pci_sysfs_path(location).join("local_cpulist");
+    let cpulist = std::fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    parse_cpu_list(&cpulist).map_err(|error| {
+        format!(
+            "failed to parse {} value {cpulist:?}: {error}",
+            path.display()
+        )
+    })
 }
 
 impl fmt::Display for PciBus {
@@ -348,6 +436,38 @@ fn pci_config_path(location: PciLocation) -> PathBuf {
     path
 }
 
+fn pci_sysfs_path(location: PciLocation) -> PathBuf {
+    PathBuf::from(PCI_SYSFS_ROOT).join(location.to_string())
+}
+
+fn parse_cpu_list(cpulist: &str) -> Result<Vec<u32>, String> {
+    let mut cpus = Vec::new();
+
+    for item in cpulist.trim().split(',').filter(|item| !item.is_empty()) {
+        match item.split_once('-') {
+            Some((start, end)) => {
+                let start = parse_cpu_id(start)?;
+                let end = parse_cpu_id(end)?;
+                if end < start {
+                    return Err(format!("invalid descending CPU range {item}"));
+                }
+                cpus.extend(start..=end);
+            }
+            None => cpus.push(parse_cpu_id(item)?),
+        }
+    }
+
+    cpus.sort_unstable();
+    cpus.dedup();
+    Ok(cpus)
+}
+
+fn parse_cpu_id(value: &str) -> Result<u32, String> {
+    value
+        .parse()
+        .map_err(|error| format!("invalid CPU id {value:?}: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,6 +495,19 @@ mod tests {
                 group: 1,
             }),
             PathBuf::from("/proc/bus/pci/0001:ff/0d.6")
+        );
+    }
+
+    #[test]
+    fn builds_pci_sysfs_path() {
+        assert_eq!(
+            pci_sysfs_path(PciLocation {
+                bus: 0xff,
+                device: 0x0d,
+                function: 6,
+                group: 1,
+            }),
+            PathBuf::from("/sys/bus/pci/devices/0001:ff:0d.6")
         );
     }
 
@@ -408,5 +541,12 @@ mod tests {
             Some((0x1f, 3))
         );
         assert_eq!(parse_pci_device_file(std::ffi::OsStr::new("devices")), None);
+    }
+
+    #[test]
+    fn parses_cpu_lists() {
+        assert_eq!(parse_cpu_list("0-2,4,6-7\n"), Ok(vec![0, 1, 2, 4, 6, 7]));
+        assert_eq!(parse_cpu_list("\n"), Ok(vec![]));
+        assert!(parse_cpu_list("3-1").is_err());
     }
 }

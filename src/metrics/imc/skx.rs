@@ -746,12 +746,13 @@ fn frequency_hz(measurement: &ImcEventMeasurement) -> f64 {
 }
 
 fn queue_residency_seconds(occupancy: &ImcEventMeasurement, insert: &ImcEventMeasurement) -> f64 {
-    if insert.ticks == 0 || insert.value == 0 {
+    if occupancy.ticks == 0 || insert.value == 0 || insert.running.is_zero() {
         return 0.0;
     }
 
-    let seconds_per_tick = insert.running.as_secs_f64() / insert.ticks as f64;
-    seconds_per_tick * ratio(occupancy.value, insert.value)
+    let average_occupancy = ratio(occupancy.value, occupancy.ticks);
+    let insert_rate = insert.value as f64 / insert.running.as_secs_f64();
+    average_occupancy / insert_rate
 }
 
 fn mask_counter(counter: u64) -> u64 {
@@ -818,8 +819,26 @@ mod tests {
         assert_eq!(scope_metrics.write_bytes_per_second, 1_920_000.0);
         assert_eq!(scope_metrics.rpq_occupancy_entries, 0.4);
         assert_eq!(scope_metrics.wpq_occupancy_entries, 0.6);
-        assert_eq!(scope_metrics.rpq_residency_seconds, 0.0002);
-        assert_eq!(scope_metrics.wpq_residency_seconds, 0.0002);
+        assert_close(scope_metrics.rpq_residency_seconds, 0.0002);
+        assert_close(scope_metrics.wpq_residency_seconds, 0.0002);
+    }
+
+    #[test]
+    fn computes_residency_from_occupancy_dclk_and_insert_rate() {
+        let occupancy = ImcEventMeasurement {
+            enabled: Duration::from_secs(1),
+            running: Duration::from_millis(400),
+            ticks: 400,
+            value: 800,
+        };
+        let insert = ImcEventMeasurement {
+            enabled: Duration::from_secs(1),
+            running: Duration::from_millis(200),
+            ticks: 200,
+            value: 2_000_000,
+        };
+
+        assert_close(queue_residency_seconds(&occupancy, &insert), 0.0000002);
     }
 
     #[test]
@@ -927,6 +946,13 @@ mod tests {
                 value,
             },
         )
+    }
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "expected {expected}, got {actual}"
+        );
     }
 
     fn test_measurement(enabled: Duration, running: Duration) -> ImcMeasurement {

@@ -816,6 +816,157 @@ mod tests {
     }
 
     #[test]
+    fn renders_ice_lake_cha_metrics() {
+        assert_renders_server_cha_metrics(
+            ice_lake_info_metadata(),
+            crate::metrics::cha::ChaMetrics::Icx(ice_lake_cha_metrics()),
+            "io_pcirdcur",
+        );
+    }
+
+    #[test]
+    fn renders_sapphire_rapids_cha_metrics() {
+        assert_renders_server_cha_metrics(
+            sapphire_rapids_info_metadata(),
+            crate::metrics::cha::ChaMetrics::Spr(sapphire_rapids_cha_metrics()),
+            "io_pcirdcur",
+        );
+    }
+
+    fn assert_renders_server_cha_metrics(
+        metadata: crate::metrics::InfoMetadata,
+        cha: crate::metrics::cha::ChaMetrics,
+        transaction: &str,
+    ) {
+        let state = crate::metrics::MetricsState {
+            cha: Some(cha),
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: metadata,
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_cha_frequency_hz gauge"));
+        assert!(metrics.contains("ocellus_cha_ha_request_bandwidth_bytes_per_second"));
+        assert!(metrics.contains("ocellus_cha_ha_request_local_ratio"));
+        assert!(metrics.contains("ocellus_cha_transaction_result_inserts_per_second"));
+        assert!(metrics.contains("ocellus_cha_transaction_result_occupancy_entries"));
+        assert!(metrics.contains("ocellus_cha_transaction_hit_rate"));
+        assert!(metrics.contains("locality=\"local\""));
+        assert!(metrics.contains("operation=\"read\""));
+        assert!(metrics.contains(&format!("transaction=\"{transaction}\"")));
+    }
+
+    fn ice_lake_cha_metrics() -> crate::metrics::cha::icx::IcxChaMetrics {
+        let metrics = server_cha_metric_fields();
+
+        crate::metrics::cha::icx::IcxChaMetrics {
+            ha_requests: metrics.0,
+            llc_victims: Vec::new(),
+            request_queues: metrics.1,
+            scopes: metrics.2,
+            sf_evictions: metrics.3,
+            transaction_results: metrics.4,
+            transactions: metrics.5,
+        }
+    }
+
+    fn sapphire_rapids_cha_metrics() -> crate::metrics::cha::spr::SprChaMetrics {
+        let metrics = server_cha_metric_fields();
+
+        crate::metrics::cha::spr::SprChaMetrics {
+            ha_requests: metrics.0,
+            llc_victims: Vec::new(),
+            request_queues: metrics.1,
+            scopes: metrics.2,
+            sf_evictions: metrics.3,
+            transaction_results: metrics.4,
+            transactions: metrics.5,
+        }
+    }
+
+    fn server_cha_metric_fields() -> (
+        Vec<crate::metrics::cha::ChaHaRequestMetrics>,
+        Vec<crate::metrics::cha::ChaRequestQueueMetrics>,
+        Vec<crate::metrics::cha::ChaScopeMetrics>,
+        Vec<crate::metrics::cha::ChaSfEvictionMetrics>,
+        Vec<crate::metrics::cha::ChaTransactionResultMetrics>,
+        Vec<crate::metrics::cha::ChaTransactionMetrics>,
+    ) {
+        let scope = crate::metrics::uncore::skx::UncoreScope {
+            die_group_id: 0,
+            die_id: 0,
+            package_id: 0,
+        };
+
+        (
+            vec![crate::metrics::cha::ChaHaRequestMetrics {
+                local_read_bytes_per_second: 1.0,
+                local_read_ratio: 0.5,
+                local_write_bytes_per_second: 2.0,
+                local_write_ratio: 0.75,
+                remote_read_bytes_per_second: 3.0,
+                remote_write_bytes_per_second: 4.0,
+                scope,
+            }],
+            vec![crate::metrics::cha::ChaRequestQueueMetrics {
+                occupancy_entries: 11.0,
+                scope,
+                source: crate::metrics::cha::ChaRequestSource::Ia,
+            }],
+            vec![crate::metrics::cha::ChaScopeMetrics {
+                frequency_hz: 1_000_000_000.0,
+                scope,
+            }],
+            vec![crate::metrics::cha::ChaSfEvictionMetrics {
+                bytes_per_second: 12.0,
+                scope,
+                state: crate::metrics::cha::ChaCacheState::M,
+            }],
+            vec![
+                crate::metrics::cha::ChaTransactionResultMetrics {
+                    bandwidth_bytes_per_second: 5.0,
+                    inserts_per_second: 6.0,
+                    latency_seconds: 0.000001,
+                    occupancy_entries: 7.0,
+                    result: crate::metrics::cha::ChaTransactionResult::Hit,
+                    scope,
+                    transaction: crate::metrics::cha::ChaTransactionLabel::new("io_pcirdcur"),
+                },
+                crate::metrics::cha::ChaTransactionResultMetrics {
+                    bandwidth_bytes_per_second: 8.0,
+                    inserts_per_second: 9.0,
+                    latency_seconds: 0.000002,
+                    occupancy_entries: 10.0,
+                    result: crate::metrics::cha::ChaTransactionResult::Miss,
+                    scope,
+                    transaction: crate::metrics::cha::ChaTransactionLabel::new("io_pcirdcur"),
+                },
+            ],
+            vec![crate::metrics::cha::ChaTransactionMetrics {
+                bandwidth_bytes_per_second: 13.0,
+                hit_rate: 0.4,
+                latency_seconds: 0.0000015,
+                scope,
+                transaction: crate::metrics::cha::ChaTransactionLabel::new("io_pcirdcur"),
+            }],
+        )
+    }
+
+    #[test]
     fn renders_hsx_ha_and_imc_metrics() {
         let scope = crate::metrics::uncore::hsx::HsxUncoreScope { package_id: 0 };
         let state = crate::metrics::MetricsState {

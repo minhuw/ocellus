@@ -1,5 +1,7 @@
 pub mod hsx;
+pub mod icx;
 pub mod skx;
+pub mod spr;
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -17,6 +19,7 @@ pub const CHA_COUNTER_COUNT: usize = 4;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChaCacheState {
+    All,
     E,
     F,
     I,
@@ -30,6 +33,7 @@ pub enum ChaCacheState {
 impl ChaCacheState {
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::All => "all",
             Self::E => "e",
             Self::F => "f",
             Self::I => "i",
@@ -43,6 +47,7 @@ impl ChaCacheState {
 
     pub(crate) const fn filter0_bits(self) -> u16 {
         match self {
+            Self::All => 0x00,
             Self::I => 0x01,
             Self::SfS => 0x02,
             Self::SfE => 0x04,
@@ -152,6 +157,8 @@ impl ChaRequestSource {
 
     pub(crate) const fn result_umask(self, result: ChaTransactionResult) -> u8 {
         match (self, result) {
+            (Self::Ia, ChaTransactionResult::All) => 0x31,
+            (Self::Io, ChaTransactionResult::All) => 0x34,
             (Self::Ia, ChaTransactionResult::Hit) => 0x11,
             (Self::Io, ChaTransactionResult::Hit) => 0x14,
             (Self::Ia, ChaTransactionResult::Miss) => 0x21,
@@ -186,6 +193,7 @@ impl ChaRxcQueue {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChaTransactionResult {
+    All,
     Hit,
     Miss,
 }
@@ -193,6 +201,7 @@ pub enum ChaTransactionResult {
 impl ChaTransactionResult {
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::All => "all",
             Self::Hit => "hit",
             Self::Miss => "miss",
         }
@@ -411,15 +420,11 @@ pub(crate) fn scale_measurement_value(measurement: &ChaEventMeasurement) -> u64 
 pub(crate) fn llc_victim_metrics(
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+    states: &[ChaCacheState],
 ) -> Result<Vec<ChaLlcVictimMetrics>, String> {
     let mut metrics = Vec::new();
 
-    for state in [
-        ChaCacheState::M,
-        ChaCacheState::E,
-        ChaCacheState::S,
-        ChaCacheState::F,
-    ] {
+    for &state in states {
         metrics.push(ChaLlcVictimMetrics {
             per_second: event_rate(required_measurement(
                 measurements,
@@ -446,13 +451,17 @@ pub(crate) fn required_measurement(
 #[serde(rename_all = "snake_case", tag = "architecture")]
 pub enum ChaMetrics {
     Hsx(hsx::HsxChaMetrics),
+    Icx(icx::IcxChaMetrics),
     Skx(skx::SkxChaMetrics),
+    Spr(spr::SprChaMetrics),
 }
 
 #[derive(Debug)]
 pub enum ChaCollector {
     Hsx(hsx::HsxChaCollector),
+    Icx(icx::IcxChaCollector),
     Skx(skx::SkxChaCollector),
+    Spr(spr::SprChaCollector),
 }
 
 impl ChaCollector {
@@ -461,8 +470,14 @@ impl ChaCollector {
             IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => {
                 hsx::HsxChaCollector::new(architecture).map(Self::Hsx)
             }
+            IntelServerCpuModel::IceLakeXeon => {
+                icx::IcxChaCollector::new(architecture).map(Self::Icx)
+            }
             IntelServerCpuModel::SkylakeXeon => {
                 skx::SkxChaCollector::new(architecture).map(Self::Skx)
+            }
+            IntelServerCpuModel::SapphireRapids => {
+                spr::SprChaCollector::new(architecture).map(Self::Spr)
             }
             model => Err(format!("CHA collection is not supported for {model:?}")),
         }
@@ -474,7 +489,9 @@ impl ChaCollector {
             Some(
                 IntelServerCpuModel::HaswellXeon
                     | IntelServerCpuModel::BroadwellXeon
+                    | IntelServerCpuModel::IceLakeXeon
                     | IntelServerCpuModel::SkylakeXeon
+                    | IntelServerCpuModel::SapphireRapids
             )
         )
     }
@@ -482,14 +499,18 @@ impl ChaCollector {
     pub fn set_multiplex_mode(&mut self, mode: ChaMultiplexMode) {
         match self {
             Self::Hsx(collector) => collector.set_multiplex_mode(mode),
+            Self::Icx(collector) => collector.set_multiplex_mode(mode),
             Self::Skx(collector) => collector.set_multiplex_mode(mode),
+            Self::Spr(collector) => collector.set_multiplex_mode(mode),
         }
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<ChaMetrics, String> {
         match self {
             Self::Hsx(collector) => collector.sample(interval).await.map(ChaMetrics::Hsx),
+            Self::Icx(collector) => collector.sample(interval).await.map(ChaMetrics::Icx),
             Self::Skx(collector) => collector.sample(interval).await.map(ChaMetrics::Skx),
+            Self::Spr(collector) => collector.sample(interval).await.map(ChaMetrics::Spr),
         }
     }
 }
@@ -541,7 +562,9 @@ impl ChaTask {
 #[derive(Debug)]
 pub enum ChaPrometheusMetrics {
     Hsx(hsx::HsxChaPrometheusMetrics),
+    Icx(icx::IcxChaPrometheusMetrics),
     Skx(skx::SkxChaPrometheusMetrics),
+    Spr(spr::SprChaPrometheusMetrics),
 }
 
 impl ChaPrometheusMetrics {
@@ -553,8 +576,14 @@ impl ChaPrometheusMetrics {
             Some(IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon) => {
                 Some(Self::Hsx(hsx::HsxChaPrometheusMetrics::register(registry)))
             }
+            Some(IntelServerCpuModel::IceLakeXeon) => {
+                Some(Self::Icx(icx::IcxChaPrometheusMetrics::register(registry)))
+            }
             Some(IntelServerCpuModel::SkylakeXeon) => {
                 Some(Self::Skx(skx::SkxChaPrometheusMetrics::register(registry)))
+            }
+            Some(IntelServerCpuModel::SapphireRapids) => {
+                Some(Self::Spr(spr::SprChaPrometheusMetrics::register(registry)))
             }
             _ => None,
         }
@@ -563,7 +592,9 @@ impl ChaPrometheusMetrics {
     pub fn update(&self, metrics: ChaMetrics) {
         match (self, metrics) {
             (Self::Hsx(prometheus), ChaMetrics::Hsx(metrics)) => prometheus.update(metrics),
+            (Self::Icx(prometheus), ChaMetrics::Icx(metrics)) => prometheus.update(metrics),
             (Self::Skx(prometheus), ChaMetrics::Skx(metrics)) => prometheus.update(metrics),
+            (Self::Spr(prometheus), ChaMetrics::Spr(metrics)) => prometheus.update(metrics),
             (prometheus, metrics) => {
                 debug_assert!(
                     false,
@@ -583,6 +614,9 @@ mod tests {
         assert!(ChaCollector::is_supported(&test_architecture(0x3f)));
         assert!(ChaCollector::is_supported(&test_architecture(0x4f)));
         assert!(ChaCollector::is_supported(&test_architecture(0x55)));
+        assert!(ChaCollector::is_supported(&test_architecture(0x6a)));
+        assert!(!ChaCollector::is_supported(&test_architecture(0x6c)));
+        assert!(ChaCollector::is_supported(&test_architecture(0x8f)));
         assert!(!ChaCollector::is_supported(&test_architecture(0xcf)));
     }
 

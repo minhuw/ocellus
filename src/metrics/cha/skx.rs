@@ -727,7 +727,16 @@ impl SkxChaMetrics {
             evictions.push(eviction_metrics(scope, &scope_measurements)?);
             ha_requests.push(ha_request_metrics(scope, &scope_measurements)?);
             llc_lookups.extend(llc_lookup_metrics(scope, &scope_measurements)?);
-            llc_victims.extend(llc_victim_metrics(scope, &scope_measurements)?);
+            llc_victims.extend(llc_victim_metrics(
+                scope,
+                &scope_measurements,
+                &[
+                    ChaCacheState::M,
+                    ChaCacheState::E,
+                    ChaCacheState::S,
+                    ChaCacheState::F,
+                ],
+            )?);
             no_credits.extend(no_credit_metrics(scope, &scope_measurements)?);
             request_queues.extend(request_queue_metrics(scope, &scope_measurements)?);
             rxc.extend(rxc_metrics(scope, &scope_measurements)?);
@@ -2049,6 +2058,158 @@ mod tests {
             ChaTransactionResult::Miss,
             0x24,
         );
+    }
+
+    #[test]
+    fn uses_documented_skx_transaction_filters() {
+        let cases = [
+            (
+                9,
+                ChaTransactionKind::IoPciRdCur,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Io,
+                0x21e,
+            ),
+            (
+                10,
+                ChaTransactionKind::IoPciRdCur,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Io,
+                0x21e,
+            ),
+            (
+                11,
+                ChaTransactionKind::IoItoM,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Io,
+                0x248,
+            ),
+            (
+                12,
+                ChaTransactionKind::IoItoM,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Io,
+                0x248,
+            ),
+            (
+                13,
+                ChaTransactionKind::IoWbMtoI,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Io,
+                0x244,
+            ),
+            (
+                14,
+                ChaTransactionKind::IoWbMtoI,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Io,
+                0x244,
+            ),
+            (
+                15,
+                ChaTransactionKind::IaWbMtoI,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Ia,
+                0x244,
+            ),
+            (
+                16,
+                ChaTransactionKind::IaWbMtoI,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Ia,
+                0x244,
+            ),
+            (
+                17,
+                ChaTransactionKind::IaClFlush,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Ia,
+                0x218,
+            ),
+            (
+                18,
+                ChaTransactionKind::IaClFlush,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Ia,
+                0x218,
+            ),
+            (
+                19,
+                ChaTransactionKind::IoClFlush,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Io,
+                0x218,
+            ),
+            (
+                20,
+                ChaTransactionKind::IoClFlush,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Io,
+                0x218,
+            ),
+            (
+                21,
+                ChaTransactionKind::IoItoMCacheNear,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Io,
+                0x200,
+            ),
+            (
+                22,
+                ChaTransactionKind::IoItoMCacheNear,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Io,
+                0x200,
+            ),
+            (
+                23,
+                ChaTransactionKind::IaDrd,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Ia,
+                0x202,
+            ),
+            (
+                24,
+                ChaTransactionKind::IaDrd,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Ia,
+                0x202,
+            ),
+            (
+                25,
+                ChaTransactionKind::IaItoM,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Ia,
+                0x248,
+            ),
+            (
+                26,
+                ChaTransactionKind::IaItoM,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Ia,
+                0x248,
+            ),
+            (
+                27,
+                ChaTransactionKind::IaRfo,
+                ChaTransactionResult::Hit,
+                ChaRequestSource::Ia,
+                0x200,
+            ),
+            (
+                28,
+                ChaTransactionKind::IaRfo,
+                ChaTransactionResult::Miss,
+                ChaRequestSource::Ia,
+                0x200,
+            ),
+        ];
+
+        for (index, transaction, result, source, opcode) in cases {
+            let group = SKX_CHA_EVENT_GROUPS[index];
+            assert_eq!(group.filter1, ChaFilter1::total_opcode(opcode));
+            assert_transaction_group(group, transaction, result, source.result_umask(result));
+        }
     }
 
     #[test]

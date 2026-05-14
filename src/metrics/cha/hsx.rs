@@ -113,7 +113,16 @@ impl HsxChaMetrics {
             });
 
             llc_lookups.extend(hsx_llc_lookup_metrics(scope, &scope_measurements)?);
-            llc_victims.extend(llc_victim_metrics(scope, &scope_measurements)?);
+            llc_victims.extend(llc_victim_metrics(
+                scope,
+                &scope_measurements,
+                &[
+                    ChaCacheState::M,
+                    ChaCacheState::E,
+                    ChaCacheState::S,
+                    ChaCacheState::F,
+                ],
+            )?);
 
             let transaction_scope_metrics = hsx_transaction_metrics(scope, &scope_measurements)?;
             transaction_results.extend(transaction_scope_metrics.results);
@@ -1623,7 +1632,7 @@ const fn hsx_llc_lookup_state_bits(state: ChaCacheState) -> u16 {
         ChaCacheState::E => 0x04,
         ChaCacheState::M => 0x08,
         ChaCacheState::F => 0x10,
-        ChaCacheState::SfE | ChaCacheState::SfM | ChaCacheState::SfS => 0x00,
+        ChaCacheState::All | ChaCacheState::SfE | ChaCacheState::SfM | ChaCacheState::SfS => 0x00,
     }
 }
 
@@ -2008,6 +2017,140 @@ mod tests {
             HSX_CBO_EVENT_GROUPS[18].filter1,
             HsxChaFilter1::opcode(0x1c8)
         );
+    }
+
+    #[test]
+    fn uses_documented_hsx_transaction_filters() {
+        let cases = [
+            (
+                6,
+                HsxTransactionKind::IoPciRdCur,
+                0x19e,
+                false,
+                HsxTorCounterKind::Total,
+            ),
+            (
+                7,
+                HsxTransactionKind::IoPciRdCur,
+                0x19e,
+                false,
+                HsxTorCounterKind::Miss,
+            ),
+            (
+                8,
+                HsxTransactionKind::PciRfo,
+                0x180,
+                true,
+                HsxTorCounterKind::Total,
+            ),
+            (
+                9,
+                HsxTransactionKind::PciRfo,
+                0x180,
+                true,
+                HsxTorCounterKind::Miss,
+            ),
+            (
+                10,
+                HsxTransactionKind::PciItoM,
+                0x1c8,
+                true,
+                HsxTorCounterKind::Total,
+            ),
+            (
+                11,
+                HsxTransactionKind::PciItoM,
+                0x1c8,
+                true,
+                HsxTorCounterKind::Miss,
+            ),
+            (
+                12,
+                HsxTransactionKind::TotalRfo,
+                0x180,
+                false,
+                HsxTorCounterKind::Total,
+            ),
+            (
+                13,
+                HsxTransactionKind::TotalRfo,
+                0x180,
+                false,
+                HsxTorCounterKind::Miss,
+            ),
+            (
+                14,
+                HsxTransactionKind::IaCrd,
+                0x181,
+                false,
+                HsxTorCounterKind::Total,
+            ),
+            (
+                15,
+                HsxTransactionKind::IaCrd,
+                0x181,
+                false,
+                HsxTorCounterKind::Miss,
+            ),
+            (
+                16,
+                HsxTransactionKind::IaDrd,
+                0x182,
+                false,
+                HsxTorCounterKind::Total,
+            ),
+            (
+                17,
+                HsxTransactionKind::IaDrd,
+                0x182,
+                false,
+                HsxTorCounterKind::Miss,
+            ),
+            (
+                18,
+                HsxTransactionKind::TotalItoM,
+                0x1c8,
+                false,
+                HsxTorCounterKind::Total,
+            ),
+            (
+                19,
+                HsxTransactionKind::TotalItoM,
+                0x1c8,
+                false,
+                HsxTorCounterKind::Miss,
+            ),
+        ];
+
+        for (index, transaction, opcode, thread_filter, counter_kind) in cases {
+            let group = HSX_CBO_EVENT_GROUPS[index];
+            let expected_umask = match counter_kind {
+                HsxTorCounterKind::Total => TOR_OPCODE_UMASK,
+                HsxTorCounterKind::Miss => TOR_MISS_OPCODE_UMASK,
+            };
+
+            assert_eq!(group.filter0, HsxChaFilter0::thread_filter(thread_filter));
+            assert_eq!(group.filter1, HsxChaFilter1::opcode(opcode));
+            assert_eq!(
+                group.events,
+                [
+                    HsxChaEventSpec::new(
+                        HsxChaEventKind::TransactionOccupancy(transaction, counter_kind),
+                        TOR_OCCUPANCY_EVENT,
+                        expected_umask,
+                        thread_filter,
+                    ),
+                    HsxChaEventSpec::new(
+                        HsxChaEventKind::TransactionInsert(transaction, counter_kind),
+                        TOR_INSERTS_EVENT,
+                        expected_umask,
+                        thread_filter,
+                    ),
+                    HsxChaEventSpec::transaction_clockticks(transaction, counter_kind),
+                    HsxChaEventSpec::unused(),
+                ]
+            );
+        }
     }
 
     #[test]

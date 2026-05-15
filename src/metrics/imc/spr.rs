@@ -8,7 +8,6 @@ use prometheus_client::registry::Registry;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
-use crate::metal::topology::{CpuTopology, TopologyLevelKind};
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE};
 
 const COUNTER_COUNT: usize = 4;
@@ -18,11 +17,10 @@ const FIXED_COUNTER_RESET_BIT: u32 = 1 << 19;
 const SERVER_MC_CH_PMON_FIXED_CTR_OFFSET: u64 = 0x38;
 const SERVER_MC_CH_PMON_FIXED_CTL_OFFSET: u64 = 0x54;
 const SPR_IMC_BOX_TYPE: u16 = 6;
+const SPR_IMC_DISCOVERY_ACCESS_TYPE_MMIO: u8 = 1;
 const SPR_UNIT_COUNTER_RESET_BIT: u32 = 1 << 9;
 const SPR_UNIT_CONTROL_RESET_BIT: u32 = 1 << 8;
 const SPR_UNIT_FREEZE_BIT: u32 = 1 << 0;
-const UNCORE_DISCOVERY_DVSEC_ID_PMON: u16 = 1;
-const UNCORE_EXT_CAP_ID_DISCOVERY: u16 = 0x23;
 
 const FIXED_COUNTER_RESET_AND_ENABLE: u32 = FIXED_COUNTER_RESET_BIT | FIXED_COUNTER_ENABLE_BIT;
 const SPR_UNIT_FREEZE: u32 = SPR_UNIT_FREEZE_BIT;
@@ -65,14 +63,12 @@ pub struct SprImcScope {
 }
 
 impl SprImcScope {
-    fn from_topology(topology: &CpuTopology) -> Result<Self, String> {
-        Ok(Self {
-            die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
-            die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
-            package_id: topology
-                .level_id(TopologyLevelKind::Package)
-                .ok_or_else(|| "CPU topology is missing package level".to_string())?,
-        })
+    fn from_uncore_scope(scope: crate::metrics::uncore::skx::UncoreScope) -> Self {
+        Self {
+            die_group_id: scope.die_group_id,
+            die_id: scope.die_id,
+            package_id: scope.package_id,
+        }
     }
 }
 
@@ -615,71 +611,6 @@ enum SprImcChannels {
     Discovery { box_type: u16 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct UncoreDiscoveryVsec {
-    address: u32,
-    cap_id: u16,
-    cap_next: u16,
-    entry_id: u16,
-    tbir: u8,
-}
-
-impl UncoreDiscoveryVsec {
-    fn from_words(first: u64, second: u64) -> Self {
-        Self {
-            address: ((second >> 35) & ((1_u64 << 29) - 1)) as u32,
-            cap_id: (first & 0xffff) as u16,
-            cap_next: ((first >> 20) & 0x0fff) as u16,
-            entry_id: (second & 0xffff) as u16,
-            tbir: ((second >> 32) & 0x07) as u8,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct UncoreGlobalDiscovery {
-    max_units: u16,
-    stride: u8,
-}
-
-impl UncoreGlobalDiscovery {
-    fn from_words(words: [u64; 3]) -> Self {
-        Self {
-            max_units: ((words[0] >> 16) & 0x03ff) as u16,
-            stride: ((words[0] >> 8) & 0xff) as u8,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct UncoreBoxDiscovery {
-    access_type: u8,
-    bit_width: u8,
-    box_control: u64,
-    box_type: u16,
-    counter_offset: u8,
-    control_offset: u8,
-    num_registers: u8,
-}
-
-impl UncoreBoxDiscovery {
-    fn from_words(words: [u64; 3]) -> Self {
-        Self {
-            access_type: ((words[0] >> 62) & 0x03) as u8,
-            bit_width: ((words[0] >> 16) & 0xff) as u8,
-            box_control: words[1],
-            box_type: (words[2] & 0xffff) as u16,
-            counter_offset: ((words[0] >> 24) & 0xff) as u8,
-            control_offset: ((words[0] >> 8) & 0xff) as u8,
-            num_registers: (words[0] & 0xff) as u8,
-        }
-    }
-
-    fn is_valid(self) -> bool {
-        self.num_registers != 0 && self.box_control != 0
-    }
-}
-
 fn bytes_per_second(cache_lines: u64, duration: Duration) -> f64 {
     events_per_second(cache_lines, duration) * BYTES_PER_CACHE_LINE
 }
@@ -706,18 +637,18 @@ fn discover_channels(spec: SprImcSpec) -> Result<Vec<SprImcChannel>, String> {
 }
 
 fn discover_channels_from_discovery(box_type: u16) -> Result<Vec<SprImcChannel>, String> {
-    let socket_boxes = discover_uncore_boxes(box_type)?;
+    let socket_boxes = crate::metrics::uncore::spr::discover_uncore_boxes(box_type)?;
 
     let mut channels = Vec::new();
     for socket_boxes in socket_boxes {
-        for box_pmu in socket_boxes.boxes {
+        for box_pmu in socket_boxes.boxes.into_iter().filter(is_spr_imc_mmio_box) {
             channels.push(SprImcChannel {
                 pmon: SprImcPmon::discovered(
                     box_pmu.box_control,
                     box_pmu.control_offset,
                     box_pmu.counter_offset,
                 )?,
-                scope: socket_boxes.scope,
+                scope: SprImcScope::from_uncore_scope(socket_boxes.scope),
             });
         }
     }
@@ -729,120 +660,8 @@ fn discover_channels_from_discovery(box_type: u16) -> Result<Vec<SprImcChannel>,
     Ok(channels)
 }
 
-fn discover_uncore_boxes(box_type: u16) -> Result<Vec<UncoreDiscoverySocketBoxes>, String> {
-    let topologies = metal::topology::cpu_topologies()?;
-    let mut sockets = Vec::new();
-    for discovered_device in metal::pci::find_intel_devices()? {
-        let Ok(device) = metal::pci::PciDevice::open_readonly(discovered_device.location) else {
-            continue;
-        };
-
-        let mut offset = 0x100;
-        loop {
-            let Ok(first_word) = device.read_u64(offset) else {
-                break;
-            };
-            if first_word == 0 {
-                break;
-            }
-            let Ok(second_word) = device.read_u64(offset + 8) else {
-                break;
-            };
-            let vsec = UncoreDiscoveryVsec::from_words(first_word, second_word);
-
-            if vsec.cap_id == UNCORE_EXT_CAP_ID_DISCOVERY
-                && vsec.entry_id == UNCORE_DISCOVERY_DVSEC_ID_PMON
-            {
-                let bar_offset = 0x10 + u64::from(vsec.tbir) * 4;
-                let bar = discovery_bar(&device, bar_offset)?;
-                if bar != 0 {
-                    let scope = pci_device_scope(discovered_device.location, &topologies)?;
-                    sockets.push(UncoreDiscoverySocketBoxes {
-                        boxes: discover_uncore_boxes_from_bar(bar, box_type)?,
-                        scope,
-                    });
-                }
-            }
-
-            let next_offset = u64::from(vsec.cap_next & !0x03);
-            if next_offset == 0 || next_offset == offset {
-                break;
-            }
-            offset = next_offset;
-        }
-    }
-
-    Ok(sockets)
-}
-
-#[derive(Clone, Debug)]
-struct UncoreDiscoverySocketBoxes {
-    boxes: Vec<UncoreBoxDiscovery>,
-    scope: SprImcScope,
-}
-
-fn pci_device_scope(
-    location: metal::pci::PciLocation,
-    topologies: &[CpuTopology],
-) -> Result<SprImcScope, String> {
-    let local_cpus = metal::pci::local_cpus(location)?;
-    scope_from_local_cpus(&local_cpus, topologies).ok_or_else(|| {
-        format!("failed to map PCI device {location} local CPUs to a CPU topology scope")
-    })
-}
-
-fn scope_from_local_cpus(local_cpus: &[u32], topologies: &[CpuTopology]) -> Option<SprImcScope> {
-    for cpu in local_cpus {
-        if let Some(topology) = topologies.iter().find(|topology| topology.cpu == *cpu) {
-            return SprImcScope::from_topology(topology).ok();
-        }
-    }
-
-    None
-}
-
-fn discovery_bar(device: &metal::pci::PciDevice, offset: u64) -> Result<u64, String> {
-    let low = device.read_u32(offset)?;
-    let high = if low & 0x04 != 0 {
-        device.read_u32(offset + 4)?
-    } else {
-        0
-    };
-
-    Ok(decode_discovery_bar(low, high))
-}
-
-fn decode_discovery_bar(low: u32, high: u32) -> u64 {
-    (u64::from(low) | (u64::from(high) << 32)) & !0xfff
-}
-
-fn discover_uncore_boxes_from_bar(
-    bar: u64,
-    box_type: u16,
-) -> Result<Vec<UncoreBoxDiscovery>, String> {
-    let mmio = metal::mmio::Mmio::open(bar)?;
-    let global = UncoreGlobalDiscovery::from_words(read_discovery_words(&mmio, 0)?);
-    let stride = u64::from(global.stride) * 8;
-    let mut boxes = Vec::new();
-
-    for unit_index in 0..global.max_units {
-        let words = read_discovery_words(&mmio, u64::from(unit_index + 1) * stride)?;
-        if words[0] == 0 && words[1] == 0 {
-            continue;
-        }
-
-        let box_pmu = UncoreBoxDiscovery::from_words(words);
-        if box_pmu.is_valid()
-            && box_pmu.access_type == 1
-            && box_pmu.bit_width <= 64
-            && box_pmu.num_registers >= COUNTER_COUNT as u8
-            && box_pmu.box_type == box_type
-        {
-            boxes.push(box_pmu);
-        }
-    }
-
-    Ok(boxes)
+fn is_spr_imc_mmio_box(box_pmu: &crate::metrics::uncore::spr::UncoreBoxDiscovery) -> bool {
+    box_pmu.access_type == SPR_IMC_DISCOVERY_ACCESS_TYPE_MMIO
 }
 
 fn events_per_second(events: u64, duration: Duration) -> f64 {
@@ -952,14 +771,6 @@ fn read_channels(
     Ok(())
 }
 
-fn read_discovery_words(mmio: &metal::mmio::Mmio, offset: u64) -> Result<[u64; 3], String> {
-    Ok([
-        mmio.read_u64(offset)?,
-        mmio.read_u64(offset + 8)?,
-        mmio.read_u64(offset + 16)?,
-    ])
-}
-
 fn required_measurement(
     measurements: &BTreeMap<SprImcEventKind, SprImcEventMeasurement>,
     kind: SprImcEventKind,
@@ -1010,7 +821,6 @@ fn average_u64(values: impl Iterator<Item = u64>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metal::topology::TopologyLevel;
 
     #[test]
     fn uses_imc_event_encodings() {
@@ -1059,61 +869,6 @@ mod tests {
             0x03,
             0x33,
         );
-    }
-
-    #[test]
-    fn decodes_uncore_discovery_vsec() {
-        let first = UNCORE_EXT_CAP_ID_DISCOVERY as u64 | (0x120_u64 << 20);
-        let second = UNCORE_DISCOVERY_DVSEC_ID_PMON as u64
-            | (0x24_u64 << 16)
-            | (0x03_u64 << 24)
-            | (3_u64 << 32)
-            | (0x12345_u64 << 35);
-        let vsec = UncoreDiscoveryVsec::from_words(first, second);
-
-        assert_eq!(vsec.address, 0x12345);
-        assert_eq!(vsec.cap_id, UNCORE_EXT_CAP_ID_DISCOVERY);
-        assert_eq!(vsec.cap_next, 0x120);
-        assert_eq!(vsec.entry_id, UNCORE_DISCOVERY_DVSEC_ID_PMON);
-        assert_eq!(vsec.tbir, 3);
-    }
-
-    #[test]
-    fn decodes_64_bit_discovery_bar() {
-        assert_eq!(
-            decode_discovery_bar(0x1234_5004, 0x0000_0078),
-            0x78_1234_5000
-        );
-    }
-
-    #[test]
-    fn maps_pci_device_scope_from_local_cpu_topology() {
-        let topologies = [
-            topology(0, 0, 0, 0),
-            topology(1, 0, 0, 0),
-            topology(8, 1, 0, 0),
-        ];
-        let scope = scope_from_local_cpus(&[8], &topologies).unwrap();
-
-        assert_eq!(scope.package_id, 1);
-    }
-
-    #[test]
-    fn decodes_uncore_discovery_box() {
-        let words = [
-            4_u64 | (0x40_u64 << 8) | (64_u64 << 16) | (0x08_u64 << 24) | (1_u64 << 62),
-            0x1234_5000,
-            SPR_IMC_BOX_TYPE as u64,
-        ];
-        let box_pmu = UncoreBoxDiscovery::from_words(words);
-
-        assert_eq!(box_pmu.access_type, 1);
-        assert_eq!(box_pmu.bit_width, 64);
-        assert_eq!(box_pmu.box_control, 0x1234_5000);
-        assert_eq!(box_pmu.box_type, SPR_IMC_BOX_TYPE);
-        assert_eq!(box_pmu.counter_offset, 0x08);
-        assert_eq!(box_pmu.control_offset, 0x40);
-        assert_eq!(box_pmu.num_registers, 4);
     }
 
     #[test]
@@ -1174,6 +929,13 @@ mod tests {
         assert_close(queue_residency_seconds(&occupancy, &insert), 0.0000002);
     }
 
+    #[test]
+    fn discovery_uses_only_mmio_imc_boxes() {
+        assert!(!is_spr_imc_mmio_box(&discovered_box_with_access_type(0)));
+        assert!(is_spr_imc_mmio_box(&discovered_box_with_access_type(1)));
+        assert!(!is_spr_imc_mmio_box(&discovered_box_with_access_type(2)));
+    }
+
     fn assert_event(groups: &[SprImcEventGroup], kind: SprImcEventKind, event: u8, umask: u8) {
         let event_spec = groups
             .iter()
@@ -1206,34 +968,20 @@ mod tests {
         )
     }
 
+    fn discovered_box_with_access_type(
+        access_type: u8,
+    ) -> crate::metrics::uncore::spr::UncoreBoxDiscovery {
+        crate::metrics::uncore::spr::UncoreBoxDiscovery::from_words([
+            (u64::from(access_type) & 0x03) << 62 | 1,
+            0x1000,
+            u64::from(SPR_IMC_BOX_TYPE),
+        ])
+    }
+
     fn assert_close(actual: f64, expected: f64) {
         assert!(
             (actual - expected).abs() < 1e-12,
             "expected {expected}, got {actual}"
         );
-    }
-
-    fn topology(cpu: u32, package_id: u32, die_id: u32, die_group_id: u32) -> CpuTopology {
-        CpuTopology {
-            cpu,
-            levels: vec![
-                TopologyLevel {
-                    id: die_group_id,
-                    kind: TopologyLevelKind::DieGroup,
-                    shift: 0,
-                },
-                TopologyLevel {
-                    id: die_id,
-                    kind: TopologyLevelKind::Die,
-                    shift: 0,
-                },
-                TopologyLevel {
-                    id: package_id,
-                    kind: TopologyLevelKind::Package,
-                    shift: 0,
-                },
-            ],
-            x2apic_id: 0,
-        }
     }
 }

@@ -479,39 +479,41 @@ mod tests {
     fn renders_iio_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
-            iio: Some(crate::metrics::iio::skx::IioMetrics {
-                ports: vec![crate::metrics::iio::skx::IioPciePortMetrics {
-                    port_id: 1,
-                    read_bytes_per_second: 1024.0,
-                    scope: crate::metrics::uncore::skx::UncoreScope {
-                        die_group_id: 0,
-                        die_id: 0,
-                        package_id: 0,
-                    },
-                    stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
-                    write_bytes_per_second: 2048.0,
-                }],
-                scopes: vec![crate::metrics::iio::skx::IioScopeMetrics {
-                    completion_inserts_per_second: 1.0,
-                    completion_latency_seconds: 0.000002,
-                    completion_occupancy_entries: 2.0,
-                    frequency_hz: 1_000_000_000.0,
-                    l1_misses_per_second: 4.0,
-                    l2_misses_per_second: 5.0,
-                    l3_misses_per_second: 6.0,
-                    scope: crate::metrics::uncore::skx::UncoreScope {
-                        die_group_id: 0,
-                        die_id: 0,
-                        package_id: 0,
-                    },
-                    stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
-                    tlb_hits_per_second: 10.0,
-                    tlb_misses_per_second: 11.0,
-                    vtd_accesses_per_second: 12.0,
-                    vtd_latency_seconds: 0.000001,
-                    vtd_occupancy_entries: 13.0,
-                }],
-            }),
+            iio: Some(crate::metrics::iio::IioMetrics::Skx(
+                crate::metrics::iio::skx::SkxIioMetrics {
+                    ports: vec![crate::metrics::iio::skx::IioPciePortMetrics {
+                        port_id: 1,
+                        read_bytes_per_second: 1024.0,
+                        scope: crate::metrics::uncore::skx::UncoreScope {
+                            die_group_id: 0,
+                            die_id: 0,
+                            package_id: 0,
+                        },
+                        stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
+                        write_bytes_per_second: 2048.0,
+                    }],
+                    scopes: vec![crate::metrics::iio::skx::IioScopeMetrics {
+                        completion_inserts_per_second: 1.0,
+                        completion_latency_seconds: 0.000002,
+                        completion_occupancy_entries: 2.0,
+                        frequency_hz: 1_000_000_000.0,
+                        l1_misses_per_second: 4.0,
+                        l2_misses_per_second: 5.0,
+                        l3_misses_per_second: 6.0,
+                        scope: crate::metrics::uncore::skx::UncoreScope {
+                            die_group_id: 0,
+                            die_id: 0,
+                            package_id: 0,
+                        },
+                        stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
+                        tlb_hits_per_second: 10.0,
+                        tlb_misses_per_second: 11.0,
+                        vtd_accesses_per_second: 12.0,
+                        vtd_latency_seconds: 0.000001,
+                        vtd_occupancy_entries: 13.0,
+                    }],
+                },
+            )),
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
@@ -542,6 +544,65 @@ mod tests {
         assert!(metrics.contains("ocellus_iio_pcie_read_bytes_per_second"));
         assert!(metrics.contains("stack=\"pcie1\""));
         assert!(metrics.contains("port=\"1\""));
+    }
+
+    #[test]
+    fn renders_sapphire_rapids_iio_metrics() {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: Some(crate::metrics::iio::IioMetrics::Spr(
+                crate::metrics::iio::spr::SprIioMetrics {
+                    ports: vec![crate::metrics::iio::spr::SprIioPciePortMetrics {
+                        port_id: 1,
+                        read_bytes_per_second: 1024.0,
+                        scope: crate::metrics::uncore::skx::UncoreScope {
+                            die_group_id: 0,
+                            die_id: 0,
+                            package_id: 0,
+                        },
+                        stack: crate::metrics::iio::spr::SPR_IIO_STACKS[10],
+                        write_bytes_per_second: 2048.0,
+                    }],
+                    scopes: vec![crate::metrics::iio::spr::SprIioScopeMetrics {
+                        frequency_hz: 1_000_000_000.0,
+                        scope: crate::metrics::uncore::skx::UncoreScope {
+                            die_group_id: 0,
+                            die_id: 0,
+                            package_id: 0,
+                        },
+                        stack: crate::metrics::iio::spr::SPR_IIO_STACKS[10],
+                        inbound_read_bytes_per_second: 1024.0,
+                        inbound_reads_per_second: 2.0,
+                        inbound_write_bytes_per_second: 2048.0,
+                        inbound_writes_per_second: 4.0,
+                    }],
+                },
+            )),
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: sapphire_rapids_info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_iio_frequency_hz gauge"));
+        assert!(metrics.contains("# TYPE ocellus_iio_inbound_read_bytes_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_iio_inbound_write_bytes_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_iio_pcie_read_bytes_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_iio_pcie_write_bytes_per_second gauge"));
+        assert!(metrics.contains("stack=\"m2iosf10\""));
+        assert!(!metrics.contains("ocellus_iio_completion_inserts_per_second"));
     }
 
     #[test]

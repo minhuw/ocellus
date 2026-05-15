@@ -7,48 +7,57 @@ use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
-use crate::metal::arch::skx::pmon;
 use crate::metal::msr::Msr;
 use crate::metrics::uncore::skx::{
-    SKX_IIO_STACK_COUNT, SKX_UNCORE_COUNTER_WIDTH, SkxIioStack, UncoreScope, events_per_second,
-    frequency_hz, mask_counter, measurement_round_count, queue_residency_seconds, ratio,
-    scale_to_enabled, uncore_leaders, wrapping_delta,
+    SKX_UNCORE_COUNTER_WIDTH, UncoreScope, events_per_second, frequency_hz, mask_counter,
+    measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled, uncore_leaders,
+    wrapping_delta,
 };
 
+const COUNTER_ENABLE_BIT: u64 = 1 << 22;
+const COUNTER_OVERFLOW_ENABLE_BIT: u64 = 1 << 20;
+const COUNTER_RESET_BIT: u64 = 1 << 17;
+const IIO_CHANNEL_MASK_SHIFT: u32 = 36;
+const IIO_FUNCTION_CLASS_MASK_SHIFT: u32 = 48;
 const IIO_COUNTER_COUNT: usize = 4;
-const IIO_PCIE_PORT_COUNT: usize = 4;
-const IIO_UNIT_COUNT: usize = SKX_IIO_STACK_COUNT;
+const IIO_PCIE_PORT_COUNT: usize = 8;
+const IIO_UNIT_COUNT: usize = 6;
+const IIO_FREE_RUNNING_COUNTER_WIDTH: u32 = 48;
+const PCIE_COUNTER_BYTES: f64 = 32.0;
+const UNIT_COUNTER_RESET_BIT: u32 = 1 << 1;
+const UNIT_CONTROL_RESET_BIT: u32 = 1 << 0;
+const UNIT_FREEZE_BIT: u32 = 1 << 8;
+const UNIT_RESERVED_BITS: u32 = 0b11 << 16;
 
-const IIO_CLOCK_COUNTER_BASE: u64 = 0x0a45;
-const IIO_COUNTER_BASE: u64 = 0x0a41;
-const IIO_CONTROL_BASE: u64 = 0x0a48;
-const IIO_FREE_RUNNING_COUNTER_WIDTH: u32 = 36;
-const IIO_PCIE_READ_COUNTER_BASE: u64 = 0x0b00;
-const IIO_PCIE_WRITE_COUNTER_BASE: u64 = 0x0b04;
-const IIO_PCIE_COUNTER_STRIDE: u64 = 0x10;
-const IIO_UNIT_CONTROL_BASE: u64 = 0x0a40;
-const IIO_UNIT_STRIDE: u64 = 0x20;
-const PCIE_COUNTER_BYTES: f64 = 4.0;
+const UNIT_FREEZE: u32 = UNIT_FREEZE_BIT | UNIT_RESERVED_BITS;
+const UNIT_FREEZE_AND_RESET: u32 =
+    UNIT_CONTROL_RESET_BIT | UNIT_COUNTER_RESET_BIT | UNIT_FREEZE_BIT | UNIT_RESERVED_BITS;
+const UNIT_UNFREEZE: u32 = UNIT_RESERVED_BITS;
+
+const ICX_IIO_STACKS: [IcxIioStack; IIO_UNIT_COUNT] = [
+    IcxIioStack::new(0, "pcie0", 0x0a50, 0x0a51, 0x0a58, 0x0aa0),
+    IcxIioStack::new(1, "pcie1", 0x0a70, 0x0a71, 0x0a78, 0x0ab0),
+    IcxIioStack::new(2, "mcp", 0x0a90, 0x0a91, 0x0a98, 0x0ac0),
+    IcxIioStack::new(3, "pcie2", 0x0ae0, 0x0ae1, 0x0ae8, 0x0b30),
+    IcxIioStack::new(4, "pcie3", 0x0b00, 0x0b01, 0x0b08, 0x0b40),
+    IcxIioStack::new(5, "cbdma_dmi", 0x0b20, 0x0b21, 0x0b28, 0x0b50),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum IioEventKind {
     Clockticks,
     CompletionInserts,
     CompletionOccupancy,
-    L1Miss,
-    L2Miss,
-    L3Miss,
-    TlbHit,
-    TlbMiss,
+    InboundReadDwords,
+    InboundReadTransactions,
+    InboundWriteDwords,
+    InboundWriteTransactions,
     Unused,
-    VtdAccess,
-    VtdClockticks,
-    VtdOccupancy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IioEventSpec {
-    channel_mask: u8,
+    channel_mask: u16,
     event: u8,
     function_class_mask: u8,
     kind: IioEventKind,
@@ -70,7 +79,7 @@ impl IioEventSpec {
         kind: IioEventKind,
         event: u8,
         umask: u8,
-        channel_mask: u8,
+        channel_mask: u16,
         function_class_mask: u8,
     ) -> Self {
         Self {
@@ -88,63 +97,117 @@ struct IioEventGroup {
     events: [IioEventSpec; IIO_COUNTER_COUNT],
 }
 
-const SKX_IIO_EVENT_GROUPS: [IioEventGroup; 3] = [
+const ICX_IIO_EVENT_GROUPS: [IioEventGroup; 3] = [
     IioEventGroup {
         events: [
-            IioEventSpec::sum(IioEventKind::TlbMiss, 0x41, 0x20, 0x00, 0x00),
-            IioEventSpec::sum(IioEventKind::L1Miss, 0x41, 0x04, 0x00, 0x00),
-            IioEventSpec::sum(IioEventKind::L2Miss, 0x41, 0x08, 0x00, 0x00),
-            IioEventSpec::sum(IioEventKind::L3Miss, 0x41, 0x10, 0x00, 0x00),
+            IioEventSpec::sum(IioEventKind::InboundWriteDwords, 0x83, 0x01, 0x00ff, 0x07),
+            IioEventSpec::sum(IioEventKind::InboundReadDwords, 0x83, 0x04, 0x00ff, 0x07),
+            IioEventSpec::sum(IioEventKind::CompletionOccupancy, 0xd5, 0xff, 0x0000, 0x04),
+            IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00),
         ],
     },
     IioEventGroup {
         events: [
-            IioEventSpec::sum(IioEventKind::TlbHit, 0x41, 0x01, 0x00, 0x00),
-            IioEventSpec::sum(IioEventKind::VtdAccess, 0x41, 0xff, 0x00, 0x00),
-            IioEventSpec::sum(IioEventKind::VtdOccupancy, 0x40, 0x00, 0x00, 0x00),
-            IioEventSpec::sum(IioEventKind::VtdClockticks, 0x01, 0x00, 0x00, 0x00),
+            IioEventSpec::sum(
+                IioEventKind::InboundWriteTransactions,
+                0x84,
+                0x01,
+                0x00ff,
+                0x07,
+            ),
+            IioEventSpec::sum(
+                IioEventKind::InboundReadTransactions,
+                0x84,
+                0x04,
+                0x00ff,
+                0x07,
+            ),
+            IioEventSpec::sum(IioEventKind::CompletionInserts, 0xc2, 0x03, 0x00ff, 0x04),
+            IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00),
         ],
     },
     IioEventGroup {
         events: [
             IioEventSpec::unused(),
-            IioEventSpec::sum(IioEventKind::CompletionInserts, 0xc2, 0x03, 0x0f, 0x04),
-            IioEventSpec::sum(IioEventKind::CompletionOccupancy, 0xd5, 0x0f, 0x00, 0x04),
-            IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x00, 0x00),
+            IioEventSpec::unused(),
+            IioEventSpec::unused(),
+            IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00),
         ],
     },
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IcxIioStack {
+    id: usize,
+    label: &'static str,
+    unit_control: u64,
+    counter_base: u64,
+    control_base: u64,
+    pcie_read_base: u64,
+}
+
+impl IcxIioStack {
+    const fn new(
+        id: usize,
+        label: &'static str,
+        unit_control: u64,
+        counter_base: u64,
+        control_base: u64,
+        pcie_read_base: u64,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            unit_control,
+            counter_base,
+            control_base,
+            pcie_read_base,
+        }
+    }
+
+    pub const fn id(self) -> usize {
+        self.id
+    }
+
+    pub const fn label(self) -> &'static str {
+        self.label
+    }
+}
+
+impl serde::Serialize for IcxIioStack {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.label())
+    }
+}
+
 #[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct IioPciePortMetrics {
+pub struct IcxIioPciePortMetrics {
     pub port_id: u32,
     pub read_bytes_per_second: f64,
     #[serde(flatten)]
     pub scope: UncoreScope,
-    pub stack: SkxIioStack,
-    pub write_bytes_per_second: f64,
+    pub stack: IcxIioStack,
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct IioScopeMetrics {
+pub struct IcxIioScopeMetrics {
     #[serde(flatten)]
     pub scope: UncoreScope,
     pub completion_inserts_per_second: f64,
     pub completion_latency_seconds: f64,
     pub completion_occupancy_entries: f64,
     pub frequency_hz: f64,
-    pub l1_misses_per_second: f64,
-    pub l2_misses_per_second: f64,
-    pub l3_misses_per_second: f64,
-    pub stack: SkxIioStack,
-    pub tlb_hits_per_second: f64,
-    pub tlb_misses_per_second: f64,
-    pub vtd_accesses_per_second: f64,
-    pub vtd_latency_seconds: f64,
-    pub vtd_occupancy_entries: f64,
+    pub stack: IcxIioStack,
+    pub inbound_read_bytes_per_second: f64,
+    pub inbound_reads_per_second: f64,
+    pub inbound_write_bytes_per_second: f64,
+    pub inbound_writes_per_second: f64,
 }
 
-impl IioScopeMetrics {
+impl IcxIioScopeMetrics {
     fn from_measurements(
         stack_scope: IioStackScope,
         measurements: &BTreeMap<IioEventKind, IioEventMeasurement>,
@@ -154,14 +217,14 @@ impl IioScopeMetrics {
             required_measurement(measurements, IioEventKind::CompletionInserts)?;
         let completion_occupancy =
             required_measurement(measurements, IioEventKind::CompletionOccupancy)?;
-        let l1_miss = required_measurement(measurements, IioEventKind::L1Miss)?;
-        let l2_miss = required_measurement(measurements, IioEventKind::L2Miss)?;
-        let l3_miss = required_measurement(measurements, IioEventKind::L3Miss)?;
-        let tlb_hit = required_measurement(measurements, IioEventKind::TlbHit)?;
-        let tlb_miss = required_measurement(measurements, IioEventKind::TlbMiss)?;
-        let vtd_access = required_measurement(measurements, IioEventKind::VtdAccess)?;
-        let vtd_clockticks = required_measurement(measurements, IioEventKind::VtdClockticks)?;
-        let vtd_occupancy = required_measurement(measurements, IioEventKind::VtdOccupancy)?;
+        let inbound_read_dwords =
+            required_measurement(measurements, IioEventKind::InboundReadDwords)?;
+        let inbound_read_transactions =
+            required_measurement(measurements, IioEventKind::InboundReadTransactions)?;
+        let inbound_write_dwords =
+            required_measurement(measurements, IioEventKind::InboundWriteDwords)?;
+        let inbound_write_transactions =
+            required_measurement(measurements, IioEventKind::InboundWriteTransactions)?;
 
         Ok(Self {
             scope: stack_scope.scope,
@@ -171,47 +234,35 @@ impl IioScopeMetrics {
                 completion_inserts,
                 clockticks,
             ),
-            completion_occupancy_entries: ratio(completion_occupancy.value, clockticks.value),
-            frequency_hz: frequency_hz(clockticks.value, clockticks.running),
-            l1_misses_per_second: event_rate(l1_miss),
-            l2_misses_per_second: event_rate(l2_miss),
-            l3_misses_per_second: event_rate(l3_miss),
-            stack: stack_scope.stack,
-            tlb_hits_per_second: event_rate(tlb_hit),
-            tlb_misses_per_second: event_rate(tlb_miss),
-            vtd_accesses_per_second: event_rate(vtd_access),
-            vtd_latency_seconds: vtd_latency_seconds(vtd_occupancy, vtd_access, vtd_clockticks),
-            vtd_occupancy_entries: ratio(
-                scale_to_enabled(
-                    vtd_occupancy.value,
-                    vtd_occupancy.enabled,
-                    vtd_occupancy.running,
-                ),
-                scale_to_enabled(
-                    vtd_clockticks.value,
-                    vtd_clockticks.enabled,
-                    vtd_clockticks.running,
-                ),
+            completion_occupancy_entries: ratio(
+                completion_occupancy.value,
+                completion_occupancy.ticks,
             ),
+            frequency_hz: frequency_hz(clockticks.value, clockticks.running),
+            inbound_read_bytes_per_second: dwords_per_second(inbound_read_dwords),
+            inbound_reads_per_second: event_rate(inbound_read_transactions),
+            inbound_write_bytes_per_second: dwords_per_second(inbound_write_dwords),
+            inbound_writes_per_second: event_rate(inbound_write_transactions),
+            stack: stack_scope.stack,
         })
     }
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub struct SkxIioMetrics {
-    pub ports: Vec<IioPciePortMetrics>,
-    pub scopes: Vec<IioScopeMetrics>,
+pub struct IcxIioMetrics {
+    pub ports: Vec<IcxIioPciePortMetrics>,
+    pub scopes: Vec<IcxIioScopeMetrics>,
 }
 
-impl SkxIioMetrics {
+impl IcxIioMetrics {
     fn from_measurements(
         measurements: BTreeMap<IioStackScope, BTreeMap<IioEventKind, IioEventMeasurement>>,
-        ports: Vec<IioPciePortMetrics>,
+        ports: Vec<IcxIioPciePortMetrics>,
     ) -> Result<Self, String> {
         let mut scopes = Vec::with_capacity(measurements.len());
 
         for (stack_scope, scope_measurements) in measurements {
-            scopes.push(IioScopeMetrics::from_measurements(
+            scopes.push(IcxIioScopeMetrics::from_measurements(
                 stack_scope,
                 &scope_measurements,
             )?);
@@ -222,12 +273,12 @@ impl SkxIioMetrics {
 }
 
 #[derive(Debug)]
-pub struct SkxIioCollector {
+pub struct IcxIioCollector {
     next_group: usize,
     packages: Vec<IioPackage>,
 }
 
-impl SkxIioCollector {
+impl IcxIioCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         let packages = discover_packages(architecture.intel_server_model())?;
         probe_writable_msrs(&packages)?;
@@ -242,11 +293,11 @@ impl SkxIioCollector {
     pub fn is_supported(architecture: &Architecture) -> bool {
         matches!(
             IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
-            Some(IntelServerCpuModel::SkylakeXeon)
+            Some(IntelServerCpuModel::IceLakeXeon)
         )
     }
 
-    pub async fn sample(&mut self, interval: Duration) -> Result<SkxIioMetrics, String> {
+    pub async fn sample(&mut self, interval: Duration) -> Result<IcxIioMetrics, String> {
         if interval.is_zero() {
             return Err("IIO measure interval must be non-zero".to_string());
         }
@@ -277,15 +328,15 @@ impl SkxIioCollector {
         let ports = read_pcie_ports(packages)?;
         self.rotate_group();
 
-        SkxIioMetrics::from_measurements(measurements.into_measurements(), ports)
+        IcxIioMetrics::from_measurements(measurements.into_measurements(), ports)
     }
 
     fn rotate_group(&mut self) {
-        self.next_group = (self.next_group + 1) % SKX_IIO_EVENT_GROUPS.len();
+        self.next_group = (self.next_group + 1) % ICX_IIO_EVENT_GROUPS.len();
     }
 
     fn schedule(&self, interval: Duration) -> Vec<IioMeasurementSlice> {
-        let group_count = SKX_IIO_EVENT_GROUPS.len();
+        let group_count = ICX_IIO_EVENT_GROUPS.len();
         let round_count = measurement_round_count(interval, group_count);
         let slice_count = group_count * round_count;
         let slice_duration = interval.div_f64(slice_count as f64);
@@ -296,7 +347,7 @@ impl SkxIioCollector {
                 let rotated_index = (self.next_group + group_index) % group_count;
                 slices.push(IioMeasurementSlice {
                     duration: slice_duration,
-                    group: SKX_IIO_EVENT_GROUPS[rotated_index],
+                    group: ICX_IIO_EVENT_GROUPS[rotated_index],
                 });
             }
         }
@@ -321,7 +372,7 @@ struct IioPciePortLabels {
 }
 
 impl IioPciePortLabels {
-    fn from_port(port: IioPciePortMetrics) -> Self {
+    fn from_port(port: IcxIioPciePortMetrics) -> Self {
         Self {
             die: port.scope.die_id.to_string(),
             die_group: port.scope.die_group_id.to_string(),
@@ -341,7 +392,7 @@ struct IioScopeLabels {
 }
 
 impl IioScopeLabels {
-    fn from_scope(scope: UncoreScope, stack: SkxIioStack) -> Self {
+    fn from_scope(scope: UncoreScope, stack: IcxIioStack) -> Self {
         Self {
             die: scope.die_id.to_string(),
             die_group: scope.die_group_id.to_string(),
@@ -352,24 +403,19 @@ impl IioScopeLabels {
 }
 
 #[derive(Debug)]
-pub struct SkxIioPrometheusMetrics {
+pub struct IcxIioPrometheusMetrics {
     completion_inserts_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     completion_latency_seconds: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     completion_occupancy_entries: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     frequency_hz: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    l1_misses_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    l2_misses_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    l3_misses_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
+    inbound_read_bytes_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
+    inbound_reads_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
+    inbound_write_bytes_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
+    inbound_writes_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     pcie_read_bytes_per_second: Family<IioPciePortLabels, Gauge<f64, AtomicU64>>,
-    pcie_write_bytes_per_second: Family<IioPciePortLabels, Gauge<f64, AtomicU64>>,
-    tlb_hits_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    tlb_misses_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    vtd_accesses_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    vtd_latency_seconds: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    vtd_occupancy_entries: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
 }
 
-impl SkxIioPrometheusMetrics {
+impl IcxIioPrometheusMetrics {
     pub fn register(registry: &mut Registry) -> Self {
         let metrics = Self {
             completion_inserts_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
@@ -378,18 +424,14 @@ impl SkxIioPrometheusMetrics {
             completion_occupancy_entries: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
             ),
             frequency_hz: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            l1_misses_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            l2_misses_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            l3_misses_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            inbound_read_bytes_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
+            ),
+            inbound_reads_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            inbound_write_bytes_per_second:
+                Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            inbound_writes_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
             pcie_read_bytes_per_second: Family::<IioPciePortLabels, Gauge<f64, AtomicU64>>::default(
             ),
-            pcie_write_bytes_per_second:
-                Family::<IioPciePortLabels, Gauge<f64, AtomicU64>>::default(),
-            tlb_hits_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            tlb_misses_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            vtd_accesses_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            vtd_latency_seconds: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            vtd_occupancy_entries: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
         };
 
         registry.register(
@@ -413,60 +455,34 @@ impl SkxIioPrometheusMetrics {
             metrics.frequency_hz.clone(),
         );
         registry.register(
-            "ocellus_iio_l1_misses_per_second",
-            "Interval-derived IIO L1 misses per second",
-            metrics.l1_misses_per_second.clone(),
+            "ocellus_iio_inbound_read_bytes_per_second",
+            "Interval-derived IIO PCIe inbound read payload bandwidth in bytes per second",
+            metrics.inbound_read_bytes_per_second.clone(),
         );
         registry.register(
-            "ocellus_iio_l2_misses_per_second",
-            "Interval-derived IIO L2 misses per second",
-            metrics.l2_misses_per_second.clone(),
+            "ocellus_iio_inbound_reads_per_second",
+            "Interval-derived IIO PCIe inbound read transactions per second",
+            metrics.inbound_reads_per_second.clone(),
         );
         registry.register(
-            "ocellus_iio_l3_misses_per_second",
-            "Interval-derived IIO L3 misses per second",
-            metrics.l3_misses_per_second.clone(),
+            "ocellus_iio_inbound_write_bytes_per_second",
+            "Interval-derived IIO PCIe inbound write payload bandwidth in bytes per second",
+            metrics.inbound_write_bytes_per_second.clone(),
+        );
+        registry.register(
+            "ocellus_iio_inbound_writes_per_second",
+            "Interval-derived IIO PCIe inbound write transactions per second",
+            metrics.inbound_writes_per_second.clone(),
         );
         registry.register(
             "ocellus_iio_pcie_read_bytes_per_second",
-            "IIO free-running PCIe read bandwidth in bytes per second",
+            "IIO free-running PCIe inbound bandwidth in bytes per second",
             metrics.pcie_read_bytes_per_second.clone(),
         );
-        registry.register(
-            "ocellus_iio_pcie_write_bytes_per_second",
-            "IIO free-running PCIe write bandwidth in bytes per second",
-            metrics.pcie_write_bytes_per_second.clone(),
-        );
-        registry.register(
-            "ocellus_iio_tlb_hits_per_second",
-            "Interval-derived IIO TLB hits per second",
-            metrics.tlb_hits_per_second.clone(),
-        );
-        registry.register(
-            "ocellus_iio_tlb_misses_per_second",
-            "Interval-derived IIO TLB misses per second",
-            metrics.tlb_misses_per_second.clone(),
-        );
-        registry.register(
-            "ocellus_iio_vtd_accesses_per_second",
-            "Interval-derived IIO VT-d accesses per second",
-            metrics.vtd_accesses_per_second.clone(),
-        );
-        registry.register(
-            "ocellus_iio_vtd_latency_seconds",
-            "Interval-derived IIO VT-d access latency in seconds",
-            metrics.vtd_latency_seconds.clone(),
-        );
-        registry.register(
-            "ocellus_iio_vtd_occupancy_entries",
-            "Average IIO VT-d occupancy in entries",
-            metrics.vtd_occupancy_entries.clone(),
-        );
-
         metrics
     }
 
-    pub fn update(&self, metrics: SkxIioMetrics) {
+    pub fn update(&self, metrics: IcxIioMetrics) {
         for scope in metrics.scopes {
             let labels = IioScopeLabels::from_scope(scope.scope, scope.stack);
 
@@ -482,30 +498,18 @@ impl SkxIioPrometheusMetrics {
             self.frequency_hz
                 .get_or_create(&labels)
                 .set(scope.frequency_hz);
-            self.l1_misses_per_second
+            self.inbound_read_bytes_per_second
                 .get_or_create(&labels)
-                .set(scope.l1_misses_per_second);
-            self.l2_misses_per_second
+                .set(scope.inbound_read_bytes_per_second);
+            self.inbound_reads_per_second
                 .get_or_create(&labels)
-                .set(scope.l2_misses_per_second);
-            self.l3_misses_per_second
+                .set(scope.inbound_reads_per_second);
+            self.inbound_write_bytes_per_second
                 .get_or_create(&labels)
-                .set(scope.l3_misses_per_second);
-            self.tlb_hits_per_second
+                .set(scope.inbound_write_bytes_per_second);
+            self.inbound_writes_per_second
                 .get_or_create(&labels)
-                .set(scope.tlb_hits_per_second);
-            self.tlb_misses_per_second
-                .get_or_create(&labels)
-                .set(scope.tlb_misses_per_second);
-            self.vtd_accesses_per_second
-                .get_or_create(&labels)
-                .set(scope.vtd_accesses_per_second);
-            self.vtd_latency_seconds
-                .get_or_create(&labels)
-                .set(scope.vtd_latency_seconds);
-            self.vtd_occupancy_entries
-                .get_or_create(&labels)
-                .set(scope.vtd_occupancy_entries);
+                .set(scope.inbound_writes_per_second);
         }
 
         for port in metrics.ports {
@@ -514,9 +518,6 @@ impl SkxIioPrometheusMetrics {
             self.pcie_read_bytes_per_second
                 .get_or_create(&labels)
                 .set(port.read_bytes_per_second);
-            self.pcie_write_bytes_per_second
-                .get_or_create(&labels)
-                .set(port.write_bytes_per_second);
         }
     }
 }
@@ -530,7 +531,7 @@ struct IioPackage {
 
 impl IioPackage {
     fn new(cpu: u32, scope: UncoreScope) -> Self {
-        let units = SkxIioStack::ALL
+        let units = ICX_IIO_STACKS
             .into_iter()
             .map(|stack| IioUnit { cpu, stack })
             .collect();
@@ -561,7 +562,7 @@ impl IioFreeRunningCounters {
         }
     }
 
-    fn sample(&mut self, scope: UncoreScope) -> Result<Vec<IioPciePortMetrics>, String> {
+    fn sample(&mut self, scope: UncoreScope) -> Result<Vec<IcxIioPciePortMetrics>, String> {
         let current = (Instant::now(), self.read()?);
         let previous = match self.previous.replace(current.clone()) {
             Some(previous) => previous,
@@ -572,21 +573,13 @@ impl IioFreeRunningCounters {
     }
 
     fn read(&self) -> Result<Vec<u64>, String> {
-        let mut values = Vec::with_capacity(IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT * 2);
+        let mut values = Vec::with_capacity(IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT);
 
-        for stack in SkxIioStack::ALL {
+        for stack in ICX_IIO_STACKS {
             for port_index in 0..IIO_PCIE_PORT_COUNT {
                 values.push(read_pcie_counter(
                     self.cpu,
                     iio_pcie_read_counter_offset(stack, port_index),
-                )?);
-            }
-        }
-        for stack in SkxIioStack::ALL {
-            for port_index in 0..IIO_PCIE_PORT_COUNT {
-                values.push(read_pcie_counter(
-                    self.cpu,
-                    iio_pcie_write_counter_offset(stack, port_index),
                 )?);
             }
         }
@@ -598,16 +591,16 @@ impl IioFreeRunningCounters {
 #[derive(Clone, Copy, Debug)]
 struct IioUnit {
     cpu: u32,
-    stack: SkxIioStack,
+    stack: IcxIioStack,
 }
 
 impl IioUnit {
     fn freeze_and_reset(self) -> Result<(), String> {
-        self.write_unit_control(u64::from(pmon::UNIT_FREEZE_AND_RESET))
+        self.write_unit_control(u64::from(UNIT_FREEZE_AND_RESET))
     }
 
     fn freeze(self) -> Result<(), String> {
-        self.write_unit_control(u64::from(pmon::UNIT_FREEZE))
+        self.write_unit_control(u64::from(UNIT_FREEZE))
     }
 
     fn program(self, group: IioEventGroup) -> Result<(), String> {
@@ -616,7 +609,7 @@ impl IioUnit {
             let control = if event.kind == IioEventKind::Unused {
                 0
             } else {
-                pmon::iio_counter_control(
+                iio_counter_control(
                     event.event,
                     event.umask,
                     event.channel_mask,
@@ -639,18 +632,15 @@ impl IioUnit {
                 self.read_counter(2).map(mask_iio_counter)?,
                 self.read_counter(3).map(mask_iio_counter)?,
             ],
-            ticks: Msr::open_readonly(self.cpu)?
-                .read(iio_clock_counter_offset(self.stack))
-                .map(mask_iio_clock_counter)?,
         })
     }
 
-    fn stack(self) -> SkxIioStack {
+    fn stack(self) -> IcxIioStack {
         self.stack
     }
 
     fn unfreeze(self) -> Result<(), String> {
-        self.write_unit_control(u64::from(pmon::UNIT_UNFREEZE))
+        self.write_unit_control(u64::from(UNIT_UNFREEZE))
     }
 
     fn read_counter(self, counter_index: usize) -> Result<u64, String> {
@@ -665,7 +655,6 @@ impl IioUnit {
 #[derive(Clone, Copy, Debug)]
 struct IioUnitReading {
     counters: [u64; IIO_COUNTER_COUNT],
-    ticks: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -694,7 +683,7 @@ struct IioMeasurement {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct IioStackScope {
     scope: UncoreScope,
-    stack: SkxIioStack,
+    stack: IcxIioStack,
 }
 
 #[derive(Debug, Default)]
@@ -710,7 +699,7 @@ impl IioMeasurementAccumulator {
     fn add(
         &mut self,
         scope: UncoreScope,
-        stack: SkxIioStack,
+        stack: IcxIioStack,
         kind: IioEventKind,
         value: u64,
         ticks: u64,
@@ -738,9 +727,37 @@ impl IioMeasurementAccumulator {
     }
 }
 
+fn dwords_per_second(measurement: &IioEventMeasurement) -> f64 {
+    event_rate(measurement) * 4.0
+}
+
+fn iio_counter_control(
+    event: u8,
+    umask: u8,
+    channel_mask: u16,
+    function_class_mask: u8,
+    overflow_enabled: bool,
+) -> u64 {
+    let overflow = if overflow_enabled {
+        COUNTER_OVERFLOW_ENABLE_BIT
+    } else {
+        0
+    };
+
+    u64::from(event)
+        | (u64::from(umask) << 8)
+        | COUNTER_RESET_BIT
+        | overflow
+        | COUNTER_ENABLE_BIT
+        | (u64::from(channel_mask) << IIO_CHANNEL_MASK_SHIFT)
+        | (u64::from(function_class_mask) << IIO_FUNCTION_CLASS_MASK_SHIFT)
+}
+
 fn discover_packages(model: IntelServerCpuModel) -> Result<Vec<IioPackage>, String> {
-    if !matches!(model, IntelServerCpuModel::SkylakeXeon) {
-        return Err(format!("IIO collection is not supported for {model:?}"));
+    if !matches!(model, IntelServerCpuModel::IceLakeXeon) {
+        return Err(format!(
+            "Ice Lake IIO collection is not supported for {model:?}"
+        ));
     }
 
     let leaders = uncore_leaders()?;
@@ -775,18 +792,6 @@ fn completion_latency_seconds(
     queue_residency_seconds(occupancy, insert_count, clockticks, inserts.enabled)
 }
 
-fn vtd_latency_seconds(
-    occupancy: &IioEventMeasurement,
-    accesses: &IioEventMeasurement,
-    clockticks: &IioEventMeasurement,
-) -> f64 {
-    let occupancy = scale_to_enabled(occupancy.value, occupancy.enabled, occupancy.running);
-    let access_count = scale_to_enabled(accesses.value, accesses.enabled, accesses.running);
-    let clockticks = scale_to_enabled(clockticks.value, clockticks.enabled, clockticks.running);
-
-    queue_residency_seconds(occupancy, access_count, clockticks, accesses.enabled)
-}
-
 fn freeze_packages(packages: &[IioPackage]) -> Result<(), String> {
     for package in packages {
         for unit in &package.units {
@@ -797,40 +802,20 @@ fn freeze_packages(packages: &[IioPackage]) -> Result<(), String> {
     Ok(())
 }
 
-fn iio_clock_counter_offset(stack: SkxIioStack) -> u64 {
-    iio_unit_offset(IIO_CLOCK_COUNTER_BASE, stack)
+fn iio_control_offset(stack: IcxIioStack, counter_index: usize) -> u64 {
+    stack.control_base + counter_index as u64
 }
 
-fn iio_control_offset(stack: SkxIioStack, counter_index: usize) -> u64 {
-    iio_unit_offset(IIO_CONTROL_BASE, stack) + counter_index as u64
+fn iio_counter_offset(stack: IcxIioStack, counter_index: usize) -> u64 {
+    stack.counter_base + counter_index as u64
 }
 
-fn iio_counter_offset(stack: SkxIioStack, counter_index: usize) -> u64 {
-    iio_unit_offset(IIO_COUNTER_BASE, stack) + counter_index as u64
+fn iio_pcie_read_counter_offset(stack: IcxIioStack, port_index: usize) -> u64 {
+    stack.pcie_read_base + port_index as u64
 }
 
-fn iio_pcie_read_counter_offset(stack: SkxIioStack, port_index: usize) -> u64 {
-    iio_pcie_counter_offset(IIO_PCIE_READ_COUNTER_BASE, stack, port_index)
-}
-
-fn iio_pcie_write_counter_offset(stack: SkxIioStack, port_index: usize) -> u64 {
-    iio_pcie_counter_offset(IIO_PCIE_WRITE_COUNTER_BASE, stack, port_index)
-}
-
-fn iio_unit_control_offset(stack: SkxIioStack) -> u64 {
-    iio_unit_offset(IIO_UNIT_CONTROL_BASE, stack)
-}
-
-fn iio_pcie_counter_offset(base: u64, stack: SkxIioStack, port_index: usize) -> u64 {
-    base + IIO_PCIE_COUNTER_STRIDE * stack.id() as u64 + port_index as u64
-}
-
-fn iio_unit_offset(base: u64, stack: SkxIioStack) -> u64 {
-    base + IIO_UNIT_STRIDE * stack.id() as u64
-}
-
-fn mask_iio_clock_counter(counter: u64) -> u64 {
-    mask_counter(counter, IIO_FREE_RUNNING_COUNTER_WIDTH)
+fn iio_unit_control_offset(stack: IcxIioStack) -> u64 {
+    stack.unit_control
 }
 
 fn mask_iio_counter(counter: u64) -> u64 {
@@ -841,9 +826,9 @@ fn pcie_metrics_from_readings(
     scope: UncoreScope,
     previous: (Instant, Vec<u64>),
     current: (Instant, Vec<u64>),
-) -> Result<Vec<IioPciePortMetrics>, String> {
-    if previous.1.len() != IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT * 2
-        || current.1.len() != IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT * 2
+) -> Result<Vec<IcxIioPciePortMetrics>, String> {
+    if previous.1.len() != IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT
+        || current.1.len() != IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT
     {
         return Err("IIO PCIe reading length does not match counter count".to_string());
     }
@@ -858,9 +843,8 @@ fn pcie_metrics_from_readings(
     }
 
     let mut ports = Vec::with_capacity(IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT);
-    let write_offset = IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT;
 
-    for stack in SkxIioStack::ALL {
+    for stack in ICX_IIO_STACKS {
         let stack_index = stack.id();
         for port_index in 0..IIO_PCIE_PORT_COUNT {
             let index = stack_index * IIO_PCIE_PORT_COUNT + port_index;
@@ -869,18 +853,12 @@ fn pcie_metrics_from_readings(
                 current.1[index],
                 IIO_FREE_RUNNING_COUNTER_WIDTH,
             );
-            let write_delta = wrapping_delta(
-                previous.1[write_offset + index],
-                current.1[write_offset + index],
-                IIO_FREE_RUNNING_COUNTER_WIDTH,
-            );
 
-            ports.push(IioPciePortMetrics {
+            ports.push(IcxIioPciePortMetrics {
                 port_id: port_index as u32,
                 read_bytes_per_second: read_delta as f64 * PCIE_COUNTER_BYTES / elapsed_seconds,
                 scope,
                 stack,
-                write_bytes_per_second: write_delta as f64 * PCIE_COUNTER_BYTES / elapsed_seconds,
             });
         }
     }
@@ -912,6 +890,7 @@ fn read_packages(
     for package in packages {
         for unit in &package.units {
             let reading = unit.read()?;
+            let group_ticks = group_ticks(measurement.group, reading)?;
 
             for counter_index in 0..IIO_COUNTER_COUNT {
                 let event = measurement.group.events[counter_index];
@@ -922,7 +901,7 @@ fn read_packages(
                         unit.stack(),
                         event.kind,
                         reading.counters[counter_index],
-                        reading.ticks,
+                        group_ticks,
                         measurement,
                     );
                 }
@@ -933,13 +912,24 @@ fn read_packages(
     Ok(())
 }
 
+fn group_ticks(group: IioEventGroup, reading: IioUnitReading) -> Result<u64, String> {
+    group
+        .events
+        .into_iter()
+        .enumerate()
+        .find_map(|(counter_index, event)| {
+            (event.kind == IioEventKind::Clockticks).then_some(reading.counters[counter_index])
+        })
+        .ok_or_else(|| "IIO event group is missing interval clockticks".to_string())
+}
+
 fn read_pcie_counter(cpu: u32, address: u64) -> Result<u64, String> {
     Msr::open_readonly(cpu)?
         .read(address)
         .map(|counter| mask_counter(counter, IIO_FREE_RUNNING_COUNTER_WIDTH))
 }
 
-fn read_pcie_ports(packages: &mut [IioPackage]) -> Result<Vec<IioPciePortMetrics>, String> {
+fn read_pcie_ports(packages: &mut [IioPackage]) -> Result<Vec<IcxIioPciePortMetrics>, String> {
     let mut ports = Vec::new();
 
     for package in packages {
@@ -981,23 +971,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn computes_iio_scope_metrics() {
+    fn computes_icx_iio_scope_metrics() {
         let scope = test_scope();
-        let metrics = SkxIioMetrics::from_measurements(
+        let metrics = IcxIioMetrics::from_measurements(
             BTreeMap::from([(
-                test_stack_scope(scope, SkxIioStack::Pcie0),
+                test_stack_scope(scope, ICX_IIO_STACKS[0]),
                 BTreeMap::from([
                     measurement(IioEventKind::Clockticks, 1_000, 1_000, 100),
                     measurement(IioEventKind::CompletionInserts, 200, 1_000, 100),
                     measurement(IioEventKind::CompletionOccupancy, 400, 1_000, 100),
-                    measurement(IioEventKind::L1Miss, 20, 1_000, 100),
-                    measurement(IioEventKind::L2Miss, 30, 1_000, 100),
-                    measurement(IioEventKind::L3Miss, 40, 1_000, 100),
-                    measurement(IioEventKind::TlbHit, 70, 1_000, 100),
-                    measurement(IioEventKind::TlbMiss, 80, 1_000, 100),
-                    measurement(IioEventKind::VtdAccess, 100, 1_000, 100),
-                    measurement(IioEventKind::VtdClockticks, 1_000, 1_000, 100),
-                    measurement(IioEventKind::VtdOccupancy, 250, 1_000, 100),
+                    measurement(IioEventKind::InboundReadDwords, 300, 1_000, 100),
+                    measurement(IioEventKind::InboundReadTransactions, 30, 1_000, 100),
+                    measurement(IioEventKind::InboundWriteDwords, 500, 1_000, 100),
+                    measurement(IioEventKind::InboundWriteTransactions, 50, 1_000, 100),
                 ]),
             )]),
             Vec::new(),
@@ -1009,133 +995,106 @@ mod tests {
         assert_eq!(scope_metrics.completion_latency_seconds, 0.0002);
         assert_eq!(scope_metrics.completion_occupancy_entries, 0.4);
         assert_eq!(scope_metrics.frequency_hz, 10_000.0);
-        assert_eq!(scope_metrics.l1_misses_per_second, 200.0);
-        assert_eq!(scope_metrics.l2_misses_per_second, 300.0);
-        assert_eq!(scope_metrics.l3_misses_per_second, 400.0);
-        assert_eq!(scope_metrics.stack, SkxIioStack::Pcie0);
-        assert_eq!(scope_metrics.tlb_hits_per_second, 700.0);
-        assert_eq!(scope_metrics.tlb_misses_per_second, 800.0);
-        assert_eq!(scope_metrics.vtd_accesses_per_second, 1_000.0);
-        assert_eq!(scope_metrics.vtd_latency_seconds, 0.00025);
-        assert_eq!(scope_metrics.vtd_occupancy_entries, 0.25);
+        assert_eq!(scope_metrics.inbound_read_bytes_per_second, 12_000.0);
+        assert_eq!(scope_metrics.inbound_reads_per_second, 300.0);
+        assert_eq!(scope_metrics.inbound_write_bytes_per_second, 20_000.0);
+        assert_eq!(scope_metrics.inbound_writes_per_second, 500.0);
+        assert_eq!(scope_metrics.stack, ICX_IIO_STACKS[0]);
     }
 
     #[test]
-    fn computes_pcie_port_metrics() {
+    fn computes_icx_completion_occupancy_from_matching_ticks() {
+        let scope = test_scope();
+        let metrics = IcxIioMetrics::from_measurements(
+            BTreeMap::from([(
+                test_stack_scope(scope, ICX_IIO_STACKS[0]),
+                BTreeMap::from([
+                    measurement(IioEventKind::Clockticks, 3_000, 3_000, 300),
+                    measurement(IioEventKind::CompletionInserts, 200, 1_000, 100),
+                    measurement(IioEventKind::CompletionOccupancy, 400, 1_000, 100),
+                    measurement(IioEventKind::InboundReadDwords, 300, 1_000, 100),
+                    measurement(IioEventKind::InboundReadTransactions, 30, 1_000, 100),
+                    measurement(IioEventKind::InboundWriteDwords, 500, 1_000, 100),
+                    measurement(IioEventKind::InboundWriteTransactions, 50, 1_000, 100),
+                ]),
+            )]),
+            Vec::new(),
+        )
+        .unwrap();
+
+        assert_eq!(metrics.scopes[0].completion_occupancy_entries, 0.4);
+    }
+
+    #[test]
+    fn computes_icx_pcie_port_metrics() {
         let scope = test_scope();
         let previous = (
             Instant::now(),
-            vec![0; IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT * 2],
+            vec![0; IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT],
         );
-        let mut current_values = vec![0; IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT * 2];
+        let mut current_values = vec![0; IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT];
         current_values[0] = 100;
-        current_values[IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT] = 200;
         let current = (previous.0 + Duration::from_millis(100), current_values);
         let ports = pcie_metrics_from_readings(scope, previous, current).unwrap();
 
-        assert_eq!(ports[0].read_bytes_per_second, 4_000.0);
-        assert_eq!(ports[0].stack, SkxIioStack::CbdmaDmi);
-        assert_eq!(ports[0].write_bytes_per_second, 8_000.0);
+        assert_eq!(ports[0].read_bytes_per_second, 32_000.0);
+        assert_eq!(ports[0].stack, ICX_IIO_STACKS[0]);
     }
 
     #[test]
-    fn uses_full_skx_iio_stack_address_map() {
-        assert_eq!(iio_unit_control_offset(SkxIioStack::CbdmaDmi), 0x0a40);
-        assert_eq!(iio_counter_offset(SkxIioStack::CbdmaDmi, 0), 0x0a41);
-        assert_eq!(iio_clock_counter_offset(SkxIioStack::CbdmaDmi), 0x0a45);
-        assert_eq!(iio_control_offset(SkxIioStack::CbdmaDmi, 0), 0x0a48);
-
-        assert_eq!(iio_unit_control_offset(SkxIioStack::Pcie0), 0x0a60);
-        assert_eq!(iio_unit_control_offset(SkxIioStack::Mcp1), 0x0ae0);
+    fn uses_documented_icx_iio_address_map() {
+        assert_eq!(iio_unit_control_offset(ICX_IIO_STACKS[0]), 0x0a50);
+        assert_eq!(iio_counter_offset(ICX_IIO_STACKS[0], 0), 0x0a51);
+        assert_eq!(iio_control_offset(ICX_IIO_STACKS[0], 0), 0x0a58);
+        assert_eq!(iio_unit_control_offset(ICX_IIO_STACKS[5]), 0x0b20);
+        assert_eq!(iio_pcie_read_counter_offset(ICX_IIO_STACKS[5], 7), 0x0b57);
         assert_eq!(
-            iio_pcie_read_counter_offset(SkxIioStack::CbdmaDmi, 0),
-            0x0b00
-        );
-        assert_eq!(iio_pcie_read_counter_offset(SkxIioStack::Mcp1, 3), 0x0b53);
-        assert_eq!(iio_pcie_write_counter_offset(SkxIioStack::Mcp1, 3), 0x0b57);
-    }
-
-    #[test]
-    fn uses_documented_completion_buffer_events() {
-        let completion_group = SKX_IIO_EVENT_GROUPS[2];
-
-        assert_eq!(
-            completion_group.events[1],
-            IioEventSpec::sum(IioEventKind::CompletionInserts, 0xc2, 0x03, 0x0f, 0x04)
+            ICX_IIO_EVENT_GROUPS[0].events[3],
+            IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00)
         );
         assert_eq!(
-            completion_group.events[2],
-            IioEventSpec::sum(IioEventKind::CompletionOccupancy, 0xd5, 0x0f, 0x00, 0x04)
+            ICX_IIO_EVENT_GROUPS[1].events[3],
+            IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00)
+        );
+        assert_eq!(
+            ICX_IIO_EVENT_GROUPS[2].events[3],
+            IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00)
         );
     }
 
     #[test]
-    fn uses_documented_vtd_events() {
-        let miss_group = SKX_IIO_EVENT_GROUPS[0];
-        let vtd_group = SKX_IIO_EVENT_GROUPS[1];
-
+    fn encodes_icx_iio_counter_control() {
         assert_eq!(
-            miss_group.events[0],
-            IioEventSpec::sum(IioEventKind::TlbMiss, 0x41, 0x20, 0x00, 0x00)
-        );
-        assert_eq!(
-            miss_group.events[1],
-            IioEventSpec::sum(IioEventKind::L1Miss, 0x41, 0x04, 0x00, 0x00)
-        );
-        assert_eq!(
-            miss_group.events[2],
-            IioEventSpec::sum(IioEventKind::L2Miss, 0x41, 0x08, 0x00, 0x00)
-        );
-        assert_eq!(
-            miss_group.events[3],
-            IioEventSpec::sum(IioEventKind::L3Miss, 0x41, 0x10, 0x00, 0x00)
-        );
-        assert_eq!(
-            vtd_group.events[0],
-            IioEventSpec::sum(IioEventKind::TlbHit, 0x41, 0x01, 0x00, 0x00)
-        );
-        assert_eq!(
-            vtd_group.events[1],
-            IioEventSpec::sum(IioEventKind::VtdAccess, 0x41, 0xff, 0x00, 0x00)
-        );
-        assert_eq!(
-            vtd_group.events[2],
-            IioEventSpec::sum(IioEventKind::VtdOccupancy, 0x40, 0x00, 0x00, 0x00)
-        );
-        assert_eq!(
-            vtd_group.events[3],
-            IioEventSpec::sum(IioEventKind::VtdClockticks, 0x01, 0x00, 0x00, 0x00)
+            iio_counter_control(0x83, 0x01, 0x00ff, 0x07, true),
+            0x83 | (0x01 << 8)
+                | COUNTER_RESET_BIT
+                | COUNTER_OVERFLOW_ENABLE_BIT
+                | COUNTER_ENABLE_BIT
+                | (0x00ff_u64 << 36)
+                | (0x07_u64 << 48)
         );
     }
 
     #[test]
-    fn rotates_starting_event_group() {
-        let mut collector = test_collector();
-
-        assert_eq!(
-            slice_groups(collector.schedule(Duration::from_millis(100))),
-            vec![
-                SKX_IIO_EVENT_GROUPS[0],
-                SKX_IIO_EVENT_GROUPS[1],
-                SKX_IIO_EVENT_GROUPS[2],
-            ]
-        );
-
-        collector.rotate_group();
-        assert_eq!(
-            slice_groups(collector.schedule(Duration::from_millis(100))),
-            vec![
-                SKX_IIO_EVENT_GROUPS[1],
-                SKX_IIO_EVENT_GROUPS[2],
-                SKX_IIO_EVENT_GROUPS[0],
-            ]
-        );
+    fn encodes_icx_unit_control() {
+        assert_eq!(UNIT_FREEZE, 0x30100);
+        assert_eq!(UNIT_FREEZE_AND_RESET, 0x30103);
+        assert_eq!(UNIT_UNFREEZE, 0x30000);
     }
 
     #[test]
-    fn supports_only_skylake_xeon_uncore_spec() {
-        assert!(SkxIioCollector::is_supported(&test_architecture(0x55)));
-        assert!(!SkxIioCollector::is_supported(&test_architecture(0xcf)));
+    fn uses_programmed_clockticks_counter_for_group_ticks() {
+        let reading = IioUnitReading {
+            counters: [11, 22, 33, 44],
+        };
+
+        assert_eq!(group_ticks(ICX_IIO_EVENT_GROUPS[0], reading).unwrap(), 44);
+    }
+
+    #[test]
+    fn supports_only_ice_lake_xeon_iio() {
+        assert!(IcxIioCollector::is_supported(&test_architecture(0x6a)));
+        assert!(!IcxIioCollector::is_supported(&test_architecture(0x55)));
     }
 
     fn measurement(
@@ -1155,10 +1114,6 @@ mod tests {
         )
     }
 
-    fn slice_groups(slices: Vec<IioMeasurementSlice>) -> Vec<IioEventGroup> {
-        slices.into_iter().map(|slice| slice.group).collect()
-    }
-
     fn test_architecture(model: u8) -> Architecture {
         Architecture {
             brand: "test".to_string(),
@@ -1166,13 +1121,6 @@ mod tests {
             features: crate::arch::ArchitectureFeatures::default(),
             model,
             vendor: "GenuineIntel".to_string(),
-        }
-    }
-
-    fn test_collector() -> SkxIioCollector {
-        SkxIioCollector {
-            next_group: 0,
-            packages: Vec::new(),
         }
     }
 
@@ -1184,7 +1132,7 @@ mod tests {
         }
     }
 
-    fn test_stack_scope(scope: UncoreScope, stack: SkxIioStack) -> IioStackScope {
+    fn test_stack_scope(scope: UncoreScope, stack: IcxIioStack) -> IioStackScope {
         IioStackScope { scope, stack }
     }
 }

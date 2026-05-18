@@ -6,7 +6,6 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
-use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::msr::Msr;
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, events_per_second, frequency_hz, mask_counter,
@@ -268,22 +267,14 @@ pub struct SprIioCollector {
 }
 
 impl SprIioCollector {
-    pub fn new(architecture: &Architecture) -> Result<Self, String> {
-        let packages = discover_packages(architecture.intel_server_model())?;
+    pub fn new() -> Result<Self, String> {
+        let packages = discover_packages()?;
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
             next_group: 0,
             packages,
         })
-    }
-
-    #[cfg(test)]
-    pub fn is_supported(architecture: &Architecture) -> bool {
-        matches!(
-            IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
-            Some(IntelServerCpuModel::SapphireRapids)
-        )
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<SprIioMetrics, String> {
@@ -728,13 +719,7 @@ fn iio_counter_control(
         | (u64::from(function_class_mask) << IIO_FUNCTION_CLASS_MASK_SHIFT)
 }
 
-fn discover_packages(model: IntelServerCpuModel) -> Result<Vec<IioPackage>, String> {
-    if !matches!(model, IntelServerCpuModel::SapphireRapids) {
-        return Err(format!(
-            "Sapphire Rapids IIO collection is not supported for {model:?}"
-        ));
-    }
-
+fn discover_packages() -> Result<Vec<IioPackage>, String> {
     let stacks_by_scope = discover_iio_stacks()?;
     let leaders = uncore_leaders()?;
     let packages = leaders
@@ -1091,12 +1076,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn supports_only_sapphire_rapids_iio() {
-        assert!(SprIioCollector::is_supported(&test_architecture(0x8f)));
-        assert!(!SprIioCollector::is_supported(&test_architecture(0x6a)));
-    }
-
     fn measurement(
         kind: IioEventKind,
         value: u64,
@@ -1112,16 +1091,6 @@ mod tests {
                 value,
             },
         )
-    }
-
-    fn test_architecture(model: u8) -> Architecture {
-        Architecture {
-            brand: "test".to_string(),
-            family: 6,
-            features: crate::arch::ArchitectureFeatures::default(),
-            model,
-            vendor: "GenuineIntel".to_string(),
-        }
     }
 
     fn test_scope() -> UncoreScope {

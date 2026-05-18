@@ -183,6 +183,13 @@ mod tests {
         metadata
     }
 
+    fn emerald_rapids_info_metadata() -> crate::metrics::InfoMetadata {
+        let mut metadata = info_metadata();
+        metadata.processor.brand = "Intel(R) Xeon(R) Platinum 8592+ CPU @ 1.90GHz".to_string();
+        metadata.processor.model = 0xcf;
+        metadata
+    }
+
     fn unsupported_info_metadata() -> crate::metrics::InfoMetadata {
         crate::metrics::InfoMetadata {
             collectors: crate::metrics::CollectorMetadata {
@@ -378,6 +385,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn renders_emerald_rapids_imc_metrics() {
+        assert_renders_server_imc_metrics(
+            emerald_rapids_info_metadata(),
+            crate::metrics::imc::ImcMetrics::Emr(spr_imc_metrics()),
+        );
+    }
+
     fn assert_renders_server_imc_metrics(
         metadata: crate::metrics::InfoMetadata,
         imc: crate::metrics::imc::ImcMetrics,
@@ -548,36 +563,27 @@ mod tests {
 
     #[test]
     fn renders_sapphire_rapids_iio_metrics() {
+        assert_renders_spr_iio_metrics(
+            sapphire_rapids_info_metadata(),
+            crate::metrics::iio::IioMetrics::Spr(spr_iio_metrics()),
+        );
+    }
+
+    #[test]
+    fn renders_emerald_rapids_iio_metrics() {
+        assert_renders_spr_iio_metrics(
+            emerald_rapids_info_metadata(),
+            crate::metrics::iio::IioMetrics::Emr(spr_iio_metrics()),
+        );
+    }
+
+    fn assert_renders_spr_iio_metrics(
+        metadata: crate::metrics::InfoMetadata,
+        iio: crate::metrics::iio::IioMetrics,
+    ) {
         let state = crate::metrics::MetricsState {
             cha: None,
-            iio: Some(crate::metrics::iio::IioMetrics::Spr(
-                crate::metrics::iio::spr::SprIioMetrics {
-                    ports: vec![crate::metrics::iio::spr::SprIioPciePortMetrics {
-                        port_id: 1,
-                        read_bytes_per_second: 1024.0,
-                        scope: crate::metrics::uncore::skx::UncoreScope {
-                            die_group_id: 0,
-                            die_id: 0,
-                            package_id: 0,
-                        },
-                        stack: crate::metrics::iio::spr::SPR_IIO_STACKS[10],
-                        write_bytes_per_second: 2048.0,
-                    }],
-                    scopes: vec![crate::metrics::iio::spr::SprIioScopeMetrics {
-                        frequency_hz: 1_000_000_000.0,
-                        scope: crate::metrics::uncore::skx::UncoreScope {
-                            die_group_id: 0,
-                            die_id: 0,
-                            package_id: 0,
-                        },
-                        stack: crate::metrics::iio::spr::SPR_IIO_STACKS[10],
-                        inbound_read_bytes_per_second: 1024.0,
-                        inbound_reads_per_second: 2.0,
-                        inbound_write_bytes_per_second: 2048.0,
-                        inbound_writes_per_second: 4.0,
-                    }],
-                },
-            )),
+            iio: Some(iio),
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
@@ -587,7 +593,7 @@ mod tests {
         let sampler = SamplerReader::new_for_test(
             crate::runtime::sampler::SamplerMetadata {
                 measure_interval: std::time::Duration::from_millis(1),
-                info: sapphire_rapids_info_metadata(),
+                info: metadata,
             },
             state.clone(),
         );
@@ -603,6 +609,35 @@ mod tests {
         assert!(metrics.contains("# TYPE ocellus_iio_pcie_write_bytes_per_second gauge"));
         assert!(metrics.contains("stack=\"m2iosf10\""));
         assert!(!metrics.contains("ocellus_iio_completion_inserts_per_second"));
+    }
+
+    fn spr_iio_metrics() -> crate::metrics::iio::spr::SprIioMetrics {
+        crate::metrics::iio::spr::SprIioMetrics {
+            ports: vec![crate::metrics::iio::spr::SprIioPciePortMetrics {
+                port_id: 1,
+                read_bytes_per_second: 1024.0,
+                scope: crate::metrics::uncore::skx::UncoreScope {
+                    die_group_id: 0,
+                    die_id: 0,
+                    package_id: 0,
+                },
+                stack: crate::metrics::iio::spr::SPR_IIO_STACKS[10],
+                write_bytes_per_second: 2048.0,
+            }],
+            scopes: vec![crate::metrics::iio::spr::SprIioScopeMetrics {
+                frequency_hz: 1_000_000_000.0,
+                scope: crate::metrics::uncore::skx::UncoreScope {
+                    die_group_id: 0,
+                    die_id: 0,
+                    package_id: 0,
+                },
+                stack: crate::metrics::iio::spr::SPR_IIO_STACKS[10],
+                inbound_read_bytes_per_second: 1024.0,
+                inbound_reads_per_second: 2.0,
+                inbound_write_bytes_per_second: 2048.0,
+                inbound_writes_per_second: 4.0,
+            }],
+        }
     }
 
     #[test]
@@ -667,6 +702,55 @@ mod tests {
         assert!(metrics.contains("# TYPE ocellus_irp_io_write_conflict_ratio gauge"));
         assert!(metrics.contains("ocellus_irp_io_write_conflict_ratio"));
         assert!(metrics.contains("stack=\"pcie1\""));
+    }
+
+    #[test]
+    fn renders_emerald_rapids_irp_metrics() {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: Some(crate::metrics::irp::IrpMetrics::Emr(
+                crate::metrics::irp::spr::SprIrpMetrics {
+                    scopes: vec![crate::metrics::irp::spr::SprIrpScopeMetrics {
+                        all_hit_m_snoop_responses_per_second: 1.0,
+                        faf_full_ratio: 0.25,
+                        faf_occupancy_entries: 2.0,
+                        pcie_inbound_reads_per_second: 3.0,
+                        frequency_hz: 1_000_000_000.0,
+                        io_write_conflict_ratio: 0.5,
+                        scope: crate::metrics::irp::spr::SprUncoreScope {
+                            die_group_id: 0,
+                            die_id: 0,
+                            package_id: 0,
+                        },
+                        stack: crate::metrics::irp::spr::SprIrpStack::new(10, "m2iosf10"),
+                        total_irp_occupancy_entries: 4.0,
+                        pcie_inbound_writes_per_second: 5.0,
+                        pcie_inbound_write_latency_seconds: 0.000001,
+                    }],
+                },
+            )),
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: emerald_rapids_info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_irp_frequency_hz gauge"));
+        assert!(metrics.contains("ocellus_irp_pcie_inbound_writes_per_second"));
+        assert!(metrics.contains("ocellus_irp_all_hit_m_snoop_responses_per_second"));
+        assert!(metrics.contains("stack=\"m2iosf10\""));
     }
 
     #[test]
@@ -890,6 +974,15 @@ mod tests {
         assert_renders_server_cha_metrics(
             sapphire_rapids_info_metadata(),
             crate::metrics::cha::ChaMetrics::Spr(sapphire_rapids_cha_metrics()),
+            "io_pcirdcur",
+        );
+    }
+
+    #[test]
+    fn renders_emerald_rapids_cha_metrics() {
+        assert_renders_server_cha_metrics(
+            emerald_rapids_info_metadata(),
+            crate::metrics::cha::ChaMetrics::Emr(sapphire_rapids_cha_metrics()),
             "io_pcirdcur",
         );
     }

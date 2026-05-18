@@ -6,7 +6,6 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
-use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metrics::cha::{
@@ -24,97 +23,38 @@ use crate::metrics::uncore::skx::{
 const SPR_CHA_COUNT_DEVICE_ID: u16 = 0x325b;
 const SPR_CHA_COUNT_LOW_OFFSET: u64 = 0x9c;
 const SPR_CHA_COUNT_HIGH_OFFSET: u64 = 0xa0;
+const SPR_EMR_CHA_NAME: &str = "SPR/EMR";
+const SPR_CHA_CLOCK_EVENT: u8 = 0x01;
 const SPR_MAX_CHA_COUNT: usize = 128;
 const SPR_UNIT_COUNTER_RESET_BIT: u64 = 1 << 9;
 const SPR_UNIT_CONTROL_RESET_BIT: u64 = 1 << 8;
 const SPR_UNIT_FREEZE_BIT: u64 = 1 << 0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SprChaArchitecture {
-    Spr,
+const fn spr_cha_counter_offset(cha_id: usize, counter_index: usize) -> u64 {
+    0x2008 + 0x10 * cha_id as u64 + counter_index as u64
 }
 
-impl SprChaArchitecture {
-    pub(crate) const fn model(self) -> IntelServerCpuModel {
-        match self {
-            Self::Spr => IntelServerCpuModel::SapphireRapids,
-        }
-    }
+const fn spr_cha_control_offset(cha_id: usize, counter_index: usize) -> u64 {
+    0x2002 + 0x10 * cha_id as u64 + counter_index as u64
+}
 
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Spr => "Sapphire Rapids",
-        }
-    }
+const fn spr_cha_filter_offset(cha_id: usize) -> u64 {
+    0x200e + 0x10 * cha_id as u64
+}
 
-    const fn clock_event(self) -> u8 {
-        match self {
-            Self::Spr => 0x01,
-        }
-    }
+const fn spr_cha_unit_control_offset(cha_id: usize) -> u64 {
+    0x2000 + 0x10 * cha_id as u64
+}
 
-    const fn counter_offset(self, cha_id: usize, counter_index: usize) -> u64 {
-        match self {
-            Self::Spr => 0x2008 + 0x10 * cha_id as u64 + counter_index as u64,
-        }
-    }
-
-    const fn control_offset(self, cha_id: usize, counter_index: usize) -> u64 {
-        match self {
-            Self::Spr => 0x2002 + 0x10 * cha_id as u64 + counter_index as u64,
-        }
-    }
-
-    const fn filter_offset(self, cha_id: usize) -> u64 {
-        match self {
-            Self::Spr => 0x200e + 0x10 * cha_id as u64,
-        }
-    }
-
-    const fn unit_control_offset(self, cha_id: usize) -> u64 {
-        match self {
-            Self::Spr => 0x2000 + 0x10 * cha_id as u64,
-        }
-    }
-
-    const fn unit_freeze(self) -> u64 {
-        match self {
-            Self::Spr => SPR_UNIT_FREEZE_BIT,
-        }
-    }
-
-    const fn unit_unfreeze(self) -> u64 {
-        match self {
-            Self::Spr => 0,
-        }
-    }
-
-    fn freeze_and_reset(self, msr: &Msr, cha_id: usize) -> Result<(), String> {
-        match self {
-            Self::Spr => {
-                msr.write(
-                    self.unit_control_offset(cha_id),
-                    SPR_UNIT_FREEZE_BIT | SPR_UNIT_CONTROL_RESET_BIT,
-                )?;
-                msr.write(
-                    self.unit_control_offset(cha_id),
-                    SPR_UNIT_FREEZE_BIT | SPR_UNIT_COUNTER_RESET_BIT,
-                )
-            }
-        }
-    }
-
-    fn event_groups(self) -> &'static [SprChaEventGroup] {
-        match self {
-            Self::Spr => &SPR_CHA_EVENT_GROUPS,
-        }
-    }
-
-    fn supported_transactions(self) -> &'static [SprChaTransactionSpec] {
-        match self {
-            Self::Spr => &SPR_CHA_TRANSACTIONS,
-        }
-    }
+fn spr_cha_freeze_and_reset(msr: &Msr, cha_id: usize) -> Result<(), String> {
+    msr.write(
+        spr_cha_unit_control_offset(cha_id),
+        SPR_UNIT_FREEZE_BIT | SPR_UNIT_CONTROL_RESET_BIT,
+    )?;
+    msr.write(
+        spr_cha_unit_control_offset(cha_id),
+        SPR_UNIT_FREEZE_BIT | SPR_UNIT_COUNTER_RESET_BIT,
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,13 +103,10 @@ struct SprChaEventGroup {
 }
 
 impl SprChaEventGroup {
-    const fn frequency(architecture: SprChaArchitecture) -> Self {
+    const fn frequency() -> Self {
         Self {
             events: [
-                SprChaEventSpec::clockticks(
-                    ChaEventKind::EvictionClockticks,
-                    architecture.clock_event(),
-                ),
+                SprChaEventSpec::clockticks(ChaEventKind::EvictionClockticks, SPR_CHA_CLOCK_EVENT),
                 SprChaEventSpec::unused(),
                 SprChaEventSpec::unused(),
                 SprChaEventSpec::unused(),
@@ -220,7 +157,7 @@ impl SprChaEventGroup {
         }
     }
 
-    const fn request_queue(architecture: SprChaArchitecture, source: ChaRequestSource) -> Self {
+    const fn request_queue(source: ChaRequestSource) -> Self {
         Self {
             events: [
                 SprChaEventSpec::new(
@@ -231,7 +168,7 @@ impl SprChaEventGroup {
                 ),
                 SprChaEventSpec::clockticks(
                     ChaEventKind::RequestQueueClockticks(source),
-                    architecture.clock_event(),
+                    SPR_CHA_CLOCK_EVENT,
                 ),
                 SprChaEventSpec::unused(),
                 SprChaEventSpec::unused(),
@@ -270,11 +207,7 @@ impl SprChaEventGroup {
         }
     }
 
-    const fn transaction(
-        architecture: SprChaArchitecture,
-        transaction: SprChaTransaction,
-        counter_kind: SprChaCounterKind,
-    ) -> Self {
+    const fn transaction(transaction: SprChaTransaction, counter_kind: SprChaCounterKind) -> Self {
         let tor = transaction.tor_spec(counter_kind);
 
         Self {
@@ -294,17 +227,14 @@ impl SprChaEventGroup {
                 SprChaEventSpec::transaction_clockticks(
                     transaction,
                     counter_kind,
-                    architecture.clock_event(),
+                    SPR_CHA_CLOCK_EVENT,
                 ),
                 SprChaEventSpec::unused(),
             ],
         }
     }
 
-    const fn aggregate_transaction(
-        architecture: SprChaArchitecture,
-        transaction: SprChaTransaction,
-    ) -> Self {
+    const fn aggregate_transaction(transaction: SprChaTransaction) -> Self {
         let tor = transaction.aggregate_tor_spec();
 
         Self {
@@ -324,7 +254,7 @@ impl SprChaEventGroup {
                 SprChaEventSpec::transaction_clockticks(
                     transaction,
                     SprChaCounterKind::All,
-                    architecture.clock_event(),
+                    SPR_CHA_CLOCK_EVENT,
                 ),
                 SprChaEventSpec::unused(),
             ],
@@ -659,7 +589,7 @@ impl SprChaEventKind {
     }
 }
 
-const SPR_CHA_TRANSACTIONS: [SprChaTransactionSpec; 11] = [
+const SPR_EMR_CHA_TRANSACTIONS: [SprChaTransactionSpec; 11] = [
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IoPciRdCur),
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IoItoM),
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IoItoMCacheNear),
@@ -673,113 +603,33 @@ const SPR_CHA_TRANSACTIONS: [SprChaTransactionSpec; 11] = [
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IoClFlush),
 ];
 
-const SPR_CHA_EVENT_GROUPS: [SprChaEventGroup; 26] = [
-    SprChaEventGroup::frequency(SprChaArchitecture::Spr),
+const SPR_EMR_CHA_EVENT_GROUPS: [SprChaEventGroup; 26] = [
+    SprChaEventGroup::frequency(),
     SprChaEventGroup::ha_requests(),
-    SprChaEventGroup::request_queue(SprChaArchitecture::Spr, ChaRequestSource::Ia),
-    SprChaEventGroup::request_queue(SprChaArchitecture::Spr, ChaRequestSource::Io),
+    SprChaEventGroup::request_queue(ChaRequestSource::Ia),
+    SprChaEventGroup::request_queue(ChaRequestSource::Io),
     SprChaEventGroup::llc_victims(),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoPciRdCur,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoPciRdCur,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoItoM,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoItoM,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoItoMCacheNear,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoItoMCacheNear,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoWbMtoI,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoWbMtoI,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaDrd,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaDrd,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaRfo,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaRfo,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaItoM,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaItoM,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::aggregate_transaction(SprChaArchitecture::Spr, SprChaTransaction::IaSpecItoM),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaClFlush,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaClFlush,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaWbMtoI,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IaWbMtoI,
-        SprChaCounterKind::Miss,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoClFlush,
-        SprChaCounterKind::Hit,
-    ),
-    SprChaEventGroup::transaction(
-        SprChaArchitecture::Spr,
-        SprChaTransaction::IoClFlush,
-        SprChaCounterKind::Miss,
-    ),
+    SprChaEventGroup::transaction(SprChaTransaction::IoPciRdCur, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IoPciRdCur, SprChaCounterKind::Miss),
+    SprChaEventGroup::transaction(SprChaTransaction::IoItoM, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IoItoM, SprChaCounterKind::Miss),
+    SprChaEventGroup::transaction(SprChaTransaction::IoItoMCacheNear, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IoItoMCacheNear, SprChaCounterKind::Miss),
+    SprChaEventGroup::transaction(SprChaTransaction::IoWbMtoI, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IoWbMtoI, SprChaCounterKind::Miss),
+    SprChaEventGroup::transaction(SprChaTransaction::IaDrd, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IaDrd, SprChaCounterKind::Miss),
+    SprChaEventGroup::transaction(SprChaTransaction::IaRfo, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IaRfo, SprChaCounterKind::Miss),
+    SprChaEventGroup::transaction(SprChaTransaction::IaItoM, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IaItoM, SprChaCounterKind::Miss),
+    SprChaEventGroup::aggregate_transaction(SprChaTransaction::IaSpecItoM),
+    SprChaEventGroup::transaction(SprChaTransaction::IaClFlush, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IaClFlush, SprChaCounterKind::Miss),
+    SprChaEventGroup::transaction(SprChaTransaction::IaWbMtoI, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IaWbMtoI, SprChaCounterKind::Miss),
+    SprChaEventGroup::transaction(SprChaTransaction::IoClFlush, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IoClFlush, SprChaCounterKind::Miss),
 ];
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -795,7 +645,6 @@ pub struct SprChaMetrics {
 
 impl SprChaMetrics {
     fn from_measurements(
-        architecture: SprChaArchitecture,
         measurements: BTreeMap<UncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>>,
     ) -> Result<Self, String> {
         let mut ha_requests = Vec::new();
@@ -818,8 +667,7 @@ impl SprChaMetrics {
             llc_victims.extend(spr_llc_victim_metrics(scope, &scope_measurements)?);
             request_queues.extend(request_queue_metrics(scope, &scope_measurements)?);
             let _ = &scope_measurements;
-            let transaction_scope_metrics =
-                transaction_metrics(architecture, scope, &scope_measurements)?;
+            let transaction_scope_metrics = transaction_metrics(scope, &scope_measurements)?;
             transaction_results.extend(transaction_scope_metrics.results);
             transactions.extend(transaction_scope_metrics.totals);
         }
@@ -844,7 +692,6 @@ struct SprChaTransactionScopeMetrics {
 
 #[derive(Debug)]
 pub struct SprChaCollector {
-    architecture: SprChaArchitecture,
     multiplex_mode: ChaMultiplexMode,
     next_group: usize,
     next_partition_offset: usize,
@@ -852,21 +699,11 @@ pub struct SprChaCollector {
 }
 
 impl SprChaCollector {
-    pub fn new(architecture: &Architecture) -> Result<Self, String> {
-        let model = architecture.intel_server_model();
-        let architecture = SprChaArchitecture::Spr;
-        if model != architecture.model() {
-            return Err(format!(
-                "{} CHA collection is not supported for {model:?}",
-                architecture.name()
-            ));
-        }
-
-        let packages = discover_packages(architecture)?;
+    pub fn new() -> Result<Self, String> {
+        let packages = discover_packages()?;
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
-            architecture,
             multiplex_mode: ChaMultiplexMode::default(),
             next_group: 0,
             next_partition_offset: 0,
@@ -876,10 +713,7 @@ impl SprChaCollector {
 
     pub fn set_multiplex_mode(&mut self, mode: ChaMultiplexMode) {
         if let Err(error) = self.validate_multiplex_mode(mode) {
-            eprintln!(
-                "ocellus: disabling {} CHA spatial multiplexing: {error}",
-                self.architecture.name()
-            );
+            eprintln!("ocellus: disabling {SPR_EMR_CHA_NAME} CHA spatial multiplexing: {error}");
             self.multiplex_mode = ChaMultiplexMode::Temporal;
             return;
         }
@@ -890,8 +724,7 @@ impl SprChaCollector {
     pub async fn sample(&mut self, interval: Duration) -> Result<SprChaMetrics, String> {
         if interval.is_zero() {
             return Err(format!(
-                "{} CHA measure interval must be non-zero",
-                self.architecture.name()
+                "{SPR_EMR_CHA_NAME} CHA measure interval must be non-zero"
             ));
         }
 
@@ -917,20 +750,17 @@ impl SprChaCollector {
 
         self.rotate_schedule();
 
-        SprChaMetrics::from_measurements(
-            self.architecture,
-            measurements.into_measurements(self.architecture),
-        )
+        SprChaMetrics::from_measurements(measurements.into_measurements())
     }
 
     fn rotate_schedule(&mut self) {
-        self.next_group = (self.next_group + self.multiplex_mode.partitions())
-            % self.architecture.event_groups().len();
+        self.next_group =
+            (self.next_group + self.multiplex_mode.partitions()) % SPR_EMR_CHA_EVENT_GROUPS.len();
         self.next_partition_offset = self.next_partition_offset.wrapping_add(1);
     }
 
     fn schedule(&self, interval: Duration) -> Vec<SprChaMeasurementSlice> {
-        let event_groups = self.architecture.event_groups();
+        let event_groups = &SPR_EMR_CHA_EVENT_GROUPS;
         let group_count = event_groups.len();
         let partitions = self.multiplex_mode.partitions();
         let slice_count_per_round = group_count.div_ceil(partitions);
@@ -1007,29 +837,28 @@ struct SprChaUnitReading {
 
 #[derive(Clone, Copy, Debug)]
 struct SprChaUnit {
-    architecture: SprChaArchitecture,
     cpu: u32,
     id: usize,
 }
 
 impl SprChaUnit {
     fn freeze(self) -> Result<(), String> {
-        self.write_unit_control(self.architecture.unit_freeze())
+        self.write_unit_control(SPR_UNIT_FREEZE_BIT)
     }
 
     fn freeze_and_reset(self) -> Result<(), String> {
         let msr = Msr::open(self.cpu)?;
-        self.architecture.freeze_and_reset(&msr, self.id)
+        spr_cha_freeze_and_reset(&msr, self.id)
     }
 
     fn program(self, group: SprChaEventGroup) -> Result<(), String> {
         let msr = Msr::open(self.cpu)?;
 
-        msr.write(self.architecture.filter_offset(self.id), 0)?;
+        msr.write(spr_cha_filter_offset(self.id), 0)?;
         for (counter_index, event) in group.events.into_iter().enumerate() {
             msr.write(
-                self.architecture.control_offset(self.id, counter_index),
-                counter_control(self.architecture, event),
+                spr_cha_control_offset(self.id, counter_index),
+                counter_control(event),
             )?;
         }
 
@@ -1048,15 +877,15 @@ impl SprChaUnit {
     }
 
     fn unfreeze(self) -> Result<(), String> {
-        self.write_unit_control(self.architecture.unit_unfreeze())
+        self.write_unit_control(0)
     }
 
     fn read_counter(self, counter_index: usize) -> Result<u64, String> {
-        Msr::open_readonly(self.cpu)?.read(self.architecture.counter_offset(self.id, counter_index))
+        Msr::open_readonly(self.cpu)?.read(spr_cha_counter_offset(self.id, counter_index))
     }
 
     fn write_unit_control(self, value: u64) -> Result<(), String> {
-        Msr::open(self.cpu)?.write(self.architecture.unit_control_offset(self.id), value)
+        Msr::open(self.cpu)?.write(spr_cha_unit_control_offset(self.id), value)
     }
 
     fn probe_writable(self) -> Result<(), String> {
@@ -1162,9 +991,8 @@ impl SprChaMeasurementAccumulator {
 
     fn into_measurements(
         mut self,
-        architecture: SprChaArchitecture,
     ) -> BTreeMap<UncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>> {
-        for transaction in architecture.supported_transactions() {
+        for transaction in SPR_EMR_CHA_TRANSACTIONS {
             match transaction.result_mode {
                 SprChaTransactionResultMode::Aggregate => {
                     self.export_counter_kind(
@@ -1643,27 +1471,26 @@ impl ChaTransactionResultLabels {
     }
 }
 
-fn discover_packages(architecture: SprChaArchitecture) -> Result<Vec<SprChaPackage>, String> {
+fn discover_packages() -> Result<Vec<SprChaPackage>, String> {
     let mut packages = Vec::new();
 
     for leader in uncore_leaders()? {
         packages.push(SprChaPackage::new(
             leader.scope,
-            discover_units(architecture, leader.cpu)?,
+            discover_units(leader.cpu)?,
         ));
     }
 
     if packages.is_empty() {
         return Err(format!(
-            "failed to discover any {} CHA packages",
-            architecture.name()
+            "failed to discover any {SPR_EMR_CHA_NAME} CHA packages"
         ));
     }
 
     Ok(packages)
 }
 
-fn discover_units(architecture: SprChaArchitecture, cpu: u32) -> Result<Vec<SprChaUnit>, String> {
+fn discover_units(cpu: u32) -> Result<Vec<SprChaUnit>, String> {
     let count = spr_cha_count(cpu)?;
     let max_count = SPR_MAX_CHA_COUNT;
     let count = count.min(max_count);
@@ -1671,21 +1498,14 @@ fn discover_units(architecture: SprChaArchitecture, cpu: u32) -> Result<Vec<SprC
     let mut units = Vec::new();
 
     for id in 0..count {
-        if msr.read(architecture.unit_control_offset(id)).is_ok()
-            && msr.read(architecture.counter_offset(id, 0)).is_ok()
-            && msr.read(architecture.control_offset(id, 0)).is_ok()
-            && msr.read(architecture.filter_offset(id)).is_ok()
+        if msr.read(spr_cha_unit_control_offset(id)).is_ok()
+            && msr.read(spr_cha_counter_offset(id, 0)).is_ok()
+            && msr.read(spr_cha_control_offset(id, 0)).is_ok()
+            && msr.read(spr_cha_filter_offset(id)).is_ok()
         {
-            let unit = SprChaUnit {
-                architecture,
-                cpu,
-                id,
-            };
+            let unit = SprChaUnit { cpu, id };
             if let Err(error) = unit.probe_writable() {
-                eprintln!(
-                    "ocellus: skipping {} CHA {id} on CPU {cpu}: {error}",
-                    architecture.name()
-                );
+                eprintln!("ocellus: skipping {SPR_EMR_CHA_NAME} CHA {id} on CPU {cpu}: {error}");
                 continue;
             }
 
@@ -1695,8 +1515,7 @@ fn discover_units(architecture: SprChaArchitecture, cpu: u32) -> Result<Vec<SprC
 
     if units.is_empty() {
         return Err(format!(
-            "failed to discover any {} CHA units on CPU {cpu}",
-            architecture.name()
+            "failed to discover any {SPR_EMR_CHA_NAME} CHA units on CPU {cpu}"
         ));
     }
 
@@ -1711,10 +1530,7 @@ fn spr_cha_count(cpu: u32) -> Result<usize, String> {
             let mut count = 0;
 
             for id in 0..SPR_MAX_CHA_COUNT {
-                if msr
-                    .read(SprChaArchitecture::Spr.unit_control_offset(id))
-                    .is_ok()
-                {
+                if msr.read(spr_cha_unit_control_offset(id)).is_ok() {
                     count += 1;
                 } else if count > 0 {
                     break;
@@ -1722,7 +1538,7 @@ fn spr_cha_count(cpu: u32) -> Result<usize, String> {
             }
 
             if count == 0 {
-                Err("failed to discover Sapphire Rapids CHA count".to_string())
+                Err(format!("failed to discover {SPR_EMR_CHA_NAME} CHA count"))
             } else {
                 Ok(count)
             }
@@ -1734,7 +1550,7 @@ fn spr_cha_count_from_pci() -> Result<usize, String> {
     let locations = metal::pci::find_intel_devices_matching_device_id(SPR_CHA_COUNT_DEVICE_ID)?;
     let location = *locations
         .first()
-        .ok_or_else(|| "failed to find Sapphire Rapids CHA count PCI device".to_string())?;
+        .ok_or_else(|| format!("failed to find {SPR_EMR_CHA_NAME} CHA count PCI device"))?;
     let device = metal::pci::PciDevice::open_readonly(location)?;
     let low = device.read_u32(SPR_CHA_COUNT_LOW_OFFSET)?;
     let high = device.read_u32(SPR_CHA_COUNT_HIGH_OFFSET)?;
@@ -1895,14 +1711,13 @@ fn ha_request_metrics(
 }
 
 fn transaction_metrics(
-    architecture: SprChaArchitecture,
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
 ) -> Result<SprChaTransactionScopeMetrics, String> {
     let mut results = Vec::new();
     let mut totals = Vec::new();
 
-    for transaction_spec in architecture.supported_transactions() {
+    for transaction_spec in SPR_EMR_CHA_TRANSACTIONS {
         let transaction = transaction_spec.kind;
         match transaction_spec.result_mode {
             SprChaTransactionResultMode::Aggregate => {
@@ -2051,14 +1866,8 @@ fn transaction_result_metrics(
     })
 }
 
-fn counter_control(architecture: SprChaArchitecture, event: SprChaEventSpec) -> u64 {
-    match architecture {
-        SprChaArchitecture::Spr => {
-            u64::from(event.event)
-                | (u64::from(event.umask) << 8)
-                | (u64::from(event.umask_ext) << 32)
-        }
-    }
+fn counter_control(event: SprChaEventSpec) -> u64 {
+    u64::from(event.event) | (u64::from(event.umask) << 8) | (u64::from(event.umask_ext) << 32)
 }
 
 fn add_measurement<K: Ord>(
@@ -2111,7 +1920,7 @@ mod tests {
         );
 
         assert_eq!(
-            counter_control(SprChaArchitecture::Spr, event),
+            counter_control(event),
             0x35 | (0x04 << 8) | (u64::from(umask_ext) << 32)
         );
     }
@@ -2276,11 +2085,8 @@ mod tests {
 
     #[test]
     fn uses_counter_zero_for_spr_cha_tor_occupancy() {
-        let group = SprChaEventGroup::transaction(
-            SprChaArchitecture::Spr,
-            SprChaTransaction::IoPciRdCur,
-            SprChaCounterKind::Hit,
-        );
+        let group =
+            SprChaEventGroup::transaction(SprChaTransaction::IoPciRdCur, SprChaCounterKind::Hit);
 
         assert_eq!(group.events[0].event, 0x36);
         assert_eq!(group.events[1].event, 0x35);

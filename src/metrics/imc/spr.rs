@@ -6,7 +6,6 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
-use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE};
 
@@ -28,7 +27,7 @@ const SPR_UNIT_FREEZE_AND_CONTROL_RESET: u32 = SPR_UNIT_FREEZE_BIT | SPR_UNIT_CO
 const SPR_UNIT_FREEZE_AND_COUNTER_RESET: u32 = SPR_UNIT_FREEZE_BIT | SPR_UNIT_COUNTER_RESET_BIT;
 const SPR_UNIT_UNFREEZE: u32 = 0;
 
-const SPR_IMC_EVENT_GROUPS: [SprImcEventGroup; 3] = [
+const SPR_EMR_IMC_EVENT_GROUPS: [SprImcEventGroup; 3] = [
     SprImcEventGroup {
         events: [
             SprImcEventSpec::sum(SprImcEventKind::ReadOccupancy, 0x80, 0x00),
@@ -153,32 +152,19 @@ impl SprImcMetrics {
 pub struct SprImcCollector {
     channels: Vec<SprImcChannel>,
     next_group: usize,
-    spec: SprImcSpec,
 }
 
 impl SprImcCollector {
-    pub fn new(architecture: &Architecture) -> Result<Self, String> {
-        let model = architecture.intel_server_model();
-        if !matches!(model, IntelServerCpuModel::SapphireRapids) {
-            return Err(format!(
-                "Sapphire Rapids IMC collection is not supported for {model:?}"
-            ));
-        }
-
-        let spec = spr_imc_spec();
+    pub fn new() -> Result<Self, String> {
         Ok(Self {
-            channels: discover_channels(spec)?,
+            channels: discover_channels()?,
             next_group: 0,
-            spec,
         })
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<SprImcMetrics, String> {
         if interval.is_zero() {
-            return Err(format!(
-                "{} IMC measure interval must be non-zero",
-                self.spec.name
-            ));
+            return Err("SPR/EMR IMC measure interval must be non-zero".to_string());
         }
 
         let mut measurements = SprImcMeasurementAccumulator::new();
@@ -209,11 +195,11 @@ impl SprImcCollector {
     }
 
     fn rotate_group(&mut self) {
-        self.next_group = (self.next_group + 1) % self.spec.event_groups.len();
+        self.next_group = (self.next_group + 1) % SPR_EMR_IMC_EVENT_GROUPS.len();
     }
 
     fn schedule(&self, interval: Duration) -> Vec<SprImcMeasurementSlice> {
-        let group_count = self.spec.event_groups.len();
+        let group_count = SPR_EMR_IMC_EVENT_GROUPS.len();
         let round_count = measurement_round_count(interval, group_count);
         let slice_count = group_count * round_count;
         let slice_duration = interval.div_f64(slice_count as f64);
@@ -224,7 +210,7 @@ impl SprImcCollector {
                 let rotated_index = (self.next_group + group_index) % group_count;
                 slices.push(SprImcMeasurementSlice {
                     duration: slice_duration,
-                    group: self.spec.event_groups[rotated_index],
+                    group: SPR_EMR_IMC_EVENT_GROUPS[rotated_index],
                 });
             }
         }
@@ -599,18 +585,6 @@ impl SprImcMeasurementAccumulator {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SprImcSpec {
-    channels: SprImcChannels,
-    event_groups: &'static [SprImcEventGroup],
-    name: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SprImcChannels {
-    Discovery { box_type: u16 },
-}
-
 fn bytes_per_second(cache_lines: u64, duration: Duration) -> f64 {
     events_per_second(cache_lines, duration) * BYTES_PER_CACHE_LINE
 }
@@ -630,10 +604,8 @@ fn counter_control(event: SprImcEventSpec) -> u32 {
     u32::from(event.event) | (u32::from(event.umask) << 8)
 }
 
-fn discover_channels(spec: SprImcSpec) -> Result<Vec<SprImcChannel>, String> {
-    match spec.channels {
-        SprImcChannels::Discovery { box_type } => discover_channels_from_discovery(box_type),
-    }
+fn discover_channels() -> Result<Vec<SprImcChannel>, String> {
+    discover_channels_from_discovery(SPR_IMC_BOX_TYPE)
 }
 
 fn discover_channels_from_discovery(box_type: u16) -> Result<Vec<SprImcChannel>, String> {
@@ -788,16 +760,6 @@ fn scale_to_enabled(value: u64, enabled: Duration, running: Duration) -> u64 {
     (value as f64 * enabled.as_secs_f64() / running.as_secs_f64()) as u64
 }
 
-fn spr_imc_spec() -> SprImcSpec {
-    SprImcSpec {
-        channels: SprImcChannels::Discovery {
-            box_type: SPR_IMC_BOX_TYPE,
-        },
-        event_groups: &SPR_IMC_EVENT_GROUPS,
-        name: "Sapphire Rapids",
-    }
-}
-
 fn unfreeze_channels(channels: &[SprImcChannel]) -> Result<(), String> {
     for channel in channels {
         channel.unfreeze()?;
@@ -825,46 +787,61 @@ mod tests {
     #[test]
     fn uses_imc_event_encodings() {
         assert_event(
-            &SPR_IMC_EVENT_GROUPS,
+            &SPR_EMR_IMC_EVENT_GROUPS,
             SprImcEventKind::ReadInsert,
             0x10,
             0x03,
         );
         assert_event(
-            &SPR_IMC_EVENT_GROUPS,
+            &SPR_EMR_IMC_EVENT_GROUPS,
             SprImcEventKind::WriteInsert,
             0x20,
             0x03,
         );
         assert_event(
-            &SPR_IMC_EVENT_GROUPS,
+            &SPR_EMR_IMC_EVENT_GROUPS,
             SprImcEventKind::ReadOccupancy,
             0x80,
             0x00,
         );
         assert_event(
-            &SPR_IMC_EVENT_GROUPS,
+            &SPR_EMR_IMC_EVENT_GROUPS,
             SprImcEventKind::ReadOccupancy,
             0x81,
             0x00,
         );
         assert_event(
-            &SPR_IMC_EVENT_GROUPS,
+            &SPR_EMR_IMC_EVENT_GROUPS,
             SprImcEventKind::WriteOccupancy,
             0x82,
             0x00,
         );
         assert_event(
-            &SPR_IMC_EVENT_GROUPS,
+            &SPR_EMR_IMC_EVENT_GROUPS,
             SprImcEventKind::WriteOccupancy,
             0x83,
             0x00,
         );
-        assert_event(&SPR_IMC_EVENT_GROUPS, SprImcEventKind::ReadCas, 0x05, 0xcf);
-        assert_event(&SPR_IMC_EVENT_GROUPS, SprImcEventKind::WriteCas, 0x05, 0xf0);
-        assert_event(&SPR_IMC_EVENT_GROUPS, SprImcEventKind::Activate, 0x02, 0xff);
         assert_event(
-            &SPR_IMC_EVENT_GROUPS,
+            &SPR_EMR_IMC_EVENT_GROUPS,
+            SprImcEventKind::ReadCas,
+            0x05,
+            0xcf,
+        );
+        assert_event(
+            &SPR_EMR_IMC_EVENT_GROUPS,
+            SprImcEventKind::WriteCas,
+            0x05,
+            0xf0,
+        );
+        assert_event(
+            &SPR_EMR_IMC_EVENT_GROUPS,
+            SprImcEventKind::Activate,
+            0x02,
+            0xff,
+        );
+        assert_event(
+            &SPR_EMR_IMC_EVENT_GROUPS,
             SprImcEventKind::PageMissPrecharge,
             0x03,
             0x33,

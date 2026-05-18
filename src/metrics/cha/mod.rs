@@ -453,6 +453,7 @@ pub enum ChaMetrics {
     Hsx(hsx::HsxChaMetrics),
     Icx(icx::IcxChaMetrics),
     Skx(skx::SkxChaMetrics),
+    Emr(spr::SprChaMetrics),
     Spr(spr::SprChaMetrics),
 }
 
@@ -461,6 +462,7 @@ pub enum ChaCollector {
     Hsx(hsx::HsxChaCollector),
     Icx(icx::IcxChaCollector),
     Skx(skx::SkxChaCollector),
+    Emr(spr::SprChaCollector),
     Spr(spr::SprChaCollector),
 }
 
@@ -476,9 +478,8 @@ impl ChaCollector {
             IntelServerCpuModel::SkylakeXeon => {
                 skx::SkxChaCollector::new(architecture).map(Self::Skx)
             }
-            IntelServerCpuModel::SapphireRapids => {
-                spr::SprChaCollector::new(architecture).map(Self::Spr)
-            }
+            IntelServerCpuModel::SapphireRapids => spr::SprChaCollector::new().map(Self::Spr),
+            IntelServerCpuModel::EmeraldRapids => spr::SprChaCollector::new().map(Self::Emr),
             model => Err(format!("CHA collection is not supported for {model:?}")),
         }
     }
@@ -492,6 +493,7 @@ impl ChaCollector {
                     | IntelServerCpuModel::IceLakeXeon
                     | IntelServerCpuModel::SkylakeXeon
                     | IntelServerCpuModel::SapphireRapids
+                    | IntelServerCpuModel::EmeraldRapids
             )
         )
     }
@@ -501,6 +503,7 @@ impl ChaCollector {
             Self::Hsx(collector) => collector.set_multiplex_mode(mode),
             Self::Icx(collector) => collector.set_multiplex_mode(mode),
             Self::Skx(collector) => collector.set_multiplex_mode(mode),
+            Self::Emr(collector) => collector.set_multiplex_mode(mode),
             Self::Spr(collector) => collector.set_multiplex_mode(mode),
         }
     }
@@ -510,6 +513,7 @@ impl ChaCollector {
             Self::Hsx(collector) => collector.sample(interval).await.map(ChaMetrics::Hsx),
             Self::Icx(collector) => collector.sample(interval).await.map(ChaMetrics::Icx),
             Self::Skx(collector) => collector.sample(interval).await.map(ChaMetrics::Skx),
+            Self::Emr(collector) => collector.sample(interval).await.map(ChaMetrics::Emr),
             Self::Spr(collector) => collector.sample(interval).await.map(ChaMetrics::Spr),
         }
     }
@@ -564,6 +568,7 @@ pub enum ChaPrometheusMetrics {
     Hsx(hsx::HsxChaPrometheusMetrics),
     Icx(icx::IcxChaPrometheusMetrics),
     Skx(skx::SkxChaPrometheusMetrics),
+    Emr(spr::SprChaPrometheusMetrics),
     Spr(spr::SprChaPrometheusMetrics),
 }
 
@@ -585,6 +590,9 @@ impl ChaPrometheusMetrics {
             Some(IntelServerCpuModel::SapphireRapids) => {
                 Some(Self::Spr(spr::SprChaPrometheusMetrics::register(registry)))
             }
+            Some(IntelServerCpuModel::EmeraldRapids) => {
+                Some(Self::Emr(spr::SprChaPrometheusMetrics::register(registry)))
+            }
             _ => None,
         }
     }
@@ -594,6 +602,7 @@ impl ChaPrometheusMetrics {
             (Self::Hsx(prometheus), ChaMetrics::Hsx(metrics)) => prometheus.update(metrics),
             (Self::Icx(prometheus), ChaMetrics::Icx(metrics)) => prometheus.update(metrics),
             (Self::Skx(prometheus), ChaMetrics::Skx(metrics)) => prometheus.update(metrics),
+            (Self::Emr(prometheus), ChaMetrics::Emr(metrics)) => prometheus.update(metrics),
             (Self::Spr(prometheus), ChaMetrics::Spr(metrics)) => prometheus.update(metrics),
             (prometheus, metrics) => {
                 debug_assert!(
@@ -617,7 +626,7 @@ mod tests {
         assert!(ChaCollector::is_supported(&test_architecture(0x6a)));
         assert!(!ChaCollector::is_supported(&test_architecture(0x6c)));
         assert!(ChaCollector::is_supported(&test_architecture(0x8f)));
-        assert!(!ChaCollector::is_supported(&test_architecture(0xcf)));
+        assert!(ChaCollector::is_supported(&test_architecture(0xcf)));
     }
 
     fn test_architecture(model: u8) -> Architecture {

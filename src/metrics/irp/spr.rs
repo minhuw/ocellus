@@ -6,7 +6,6 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
-use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
@@ -76,11 +75,11 @@ const SPR_IRP_EVENT_GROUPS: [SprIrpEventGroup; 5] = [
     },
 ];
 
-const SPR_IRP_SPEC: SprIrpSpec = SprIrpSpec {
+const SPR_EMR_IRP_SPEC: SprIrpSpec = SprIrpSpec {
     counter_offset: SPR_IRP_COUNTER_OFFSET,
     control_offset: SPR_IRP_CONTROL_OFFSET,
     event_groups: &SPR_IRP_EVENT_GROUPS,
-    name: "Sapphire Rapids",
+    name: "SPR/EMR",
     stacks: &SPR_IRP_STACKS,
     unit_control_offsets: &SPR_IRP_UNIT_CONTROL_OFFSETS,
 };
@@ -275,21 +274,14 @@ pub struct SprIrpCollector {
 }
 
 impl SprIrpCollector {
-    pub fn new(architecture: &Architecture) -> Result<Self, String> {
-        let model = architecture.intel_server_model();
-        if !matches!(model, IntelServerCpuModel::SapphireRapids) {
-            return Err(format!(
-                "Sapphire Rapids IRP collection is not supported for {model:?}"
-            ));
-        }
-
-        let packages = discover_packages(SPR_IRP_SPEC)?;
+    pub fn new() -> Result<Self, String> {
+        let packages = discover_packages(SPR_EMR_IRP_SPEC)?;
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
             next_group: 0,
             packages,
-            spec: SPR_IRP_SPEC,
+            spec: SPR_EMR_IRP_SPEC,
         })
     }
 
@@ -881,7 +873,7 @@ fn uncore_leaders() -> Result<Vec<SprUncoreLeader>, String> {
     }
 
     if leaders.is_empty() {
-        return Err("failed to discover any Sapphire Rapids uncore scope leaders".to_string());
+        return Err("failed to discover any SPR/EMR uncore scope leaders".to_string());
     }
 
     Ok(leaders
@@ -897,27 +889,27 @@ mod tests {
     #[test]
     fn uses_spr_irp_stack_address_map() {
         assert_eq!(
-            irp_unit_control_offset(SPR_IRP_SPEC, SPR_IRP_STACKS[0]),
+            irp_unit_control_offset(SPR_EMR_IRP_SPEC, SPR_IRP_STACKS[0]),
             0x3400
         );
         assert_eq!(
-            irp_counter_offset(SPR_IRP_SPEC, SPR_IRP_STACKS[0], 0),
+            irp_counter_offset(SPR_EMR_IRP_SPEC, SPR_IRP_STACKS[0], 0),
             0x3408
         );
         assert_eq!(
-            irp_control_offset(SPR_IRP_SPEC, SPR_IRP_STACKS[0], 0),
+            irp_control_offset(SPR_EMR_IRP_SPEC, SPR_IRP_STACKS[0], 0),
             0x3402
         );
         assert_eq!(
-            irp_unit_control_offset(SPR_IRP_SPEC, SPR_IRP_STACKS[11]),
+            irp_unit_control_offset(SPR_EMR_IRP_SPEC, SPR_IRP_STACKS[11]),
             0x34b0
         );
         assert_eq!(
-            irp_counter_offset(SPR_IRP_SPEC, SPR_IRP_STACKS[11], 1),
+            irp_counter_offset(SPR_EMR_IRP_SPEC, SPR_IRP_STACKS[11], 1),
             0x34b9
         );
         assert_eq!(
-            irp_control_offset(SPR_IRP_SPEC, SPR_IRP_STACKS[11], 1),
+            irp_control_offset(SPR_EMR_IRP_SPEC, SPR_IRP_STACKS[11], 1),
             0x34b3
         );
     }

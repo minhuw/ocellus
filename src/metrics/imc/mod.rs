@@ -14,6 +14,7 @@ use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "architecture")]
 pub enum ImcMetrics {
+    Emr(spr::SprImcMetrics),
     Hsx(hsx::HsxImcMetrics),
     Icx(icx::IcxImcMetrics),
     Skx(skx::ImcMetrics),
@@ -22,6 +23,7 @@ pub enum ImcMetrics {
 
 #[derive(Debug)]
 pub enum ImcCollector {
+    Emr(spr::SprImcCollector),
     Hsx(hsx::HsxImcCollector),
     Icx(icx::IcxImcCollector),
     Skx(skx::SkxImcCollector),
@@ -40,9 +42,8 @@ impl ImcCollector {
             IntelServerCpuModel::SkylakeXeon => {
                 skx::SkxImcCollector::new(architecture).map(Self::Skx)
             }
-            IntelServerCpuModel::SapphireRapids => {
-                spr::SprImcCollector::new(architecture).map(Self::Spr)
-            }
+            IntelServerCpuModel::SapphireRapids => spr::SprImcCollector::new().map(Self::Spr),
+            IntelServerCpuModel::EmeraldRapids => spr::SprImcCollector::new().map(Self::Emr),
             model => Err(format!("IMC collection is not supported for {model:?}")),
         }
     }
@@ -56,12 +57,14 @@ impl ImcCollector {
                     | IntelServerCpuModel::SkylakeXeon
                     | IntelServerCpuModel::IceLakeXeon
                     | IntelServerCpuModel::SapphireRapids
+                    | IntelServerCpuModel::EmeraldRapids
             )
         )
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<ImcMetrics, String> {
         match self {
+            Self::Emr(collector) => collector.sample(interval).await.map(ImcMetrics::Emr),
             Self::Hsx(collector) => collector.sample(interval).await.map(ImcMetrics::Hsx),
             Self::Icx(collector) => collector.sample(interval).await.map(ImcMetrics::Icx),
             Self::Skx(collector) => collector.sample(interval).await.map(ImcMetrics::Skx),
@@ -116,6 +119,7 @@ impl ImcTask {
 
 #[derive(Debug)]
 pub enum ImcPrometheusMetrics {
+    Emr(spr::SprImcPrometheusMetrics),
     Hsx(hsx::HsxImcPrometheusMetrics),
     Icx(icx::IcxImcPrometheusMetrics),
     Skx(skx::ImcPrometheusMetrics),
@@ -140,12 +144,16 @@ impl ImcPrometheusMetrics {
             Some(IntelServerCpuModel::SapphireRapids) => {
                 Some(Self::Spr(spr::SprImcPrometheusMetrics::register(registry)))
             }
+            Some(IntelServerCpuModel::EmeraldRapids) => {
+                Some(Self::Emr(spr::SprImcPrometheusMetrics::register(registry)))
+            }
             _ => None,
         }
     }
 
     pub fn update(&self, metrics: ImcMetrics) {
         match (self, metrics) {
+            (Self::Emr(prometheus), ImcMetrics::Emr(metrics)) => prometheus.update(metrics),
             (Self::Hsx(prometheus), ImcMetrics::Hsx(metrics)) => prometheus.update(metrics),
             (Self::Icx(prometheus), ImcMetrics::Icx(metrics)) => prometheus.update(metrics),
             (Self::Skx(prometheus), ImcMetrics::Skx(metrics)) => prometheus.update(metrics),
@@ -172,7 +180,7 @@ mod tests {
         assert!(ImcCollector::is_supported(&test_architecture(0x6a)));
         assert!(!ImcCollector::is_supported(&test_architecture(0x6c)));
         assert!(ImcCollector::is_supported(&test_architecture(0x8f)));
-        assert!(!ImcCollector::is_supported(&test_architecture(0xcf)));
+        assert!(ImcCollector::is_supported(&test_architecture(0xcf)));
     }
 
     fn test_architecture(model: u8) -> Architecture {

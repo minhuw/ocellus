@@ -13,6 +13,7 @@ use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "architecture")]
 pub enum IioMetrics {
+    Emr(spr::SprIioMetrics),
     Icx(icx::IcxIioMetrics),
     Skx(skx::SkxIioMetrics),
     Spr(spr::SprIioMetrics),
@@ -20,6 +21,7 @@ pub enum IioMetrics {
 
 #[derive(Debug)]
 pub enum IioCollector {
+    Emr(spr::SprIioCollector),
     Icx(icx::IcxIioCollector),
     Skx(skx::SkxIioCollector),
     Spr(spr::SprIioCollector),
@@ -34,9 +36,8 @@ impl IioCollector {
             IntelServerCpuModel::SkylakeXeon => {
                 skx::SkxIioCollector::new(architecture).map(Self::Skx)
             }
-            IntelServerCpuModel::SapphireRapids => {
-                spr::SprIioCollector::new(architecture).map(Self::Spr)
-            }
+            IntelServerCpuModel::SapphireRapids => spr::SprIioCollector::new().map(Self::Spr),
+            IntelServerCpuModel::EmeraldRapids => spr::SprIioCollector::new().map(Self::Emr),
             model => Err(format!("IIO collection is not supported for {model:?}")),
         }
     }
@@ -48,12 +49,14 @@ impl IioCollector {
                 IntelServerCpuModel::SkylakeXeon
                     | IntelServerCpuModel::IceLakeXeon
                     | IntelServerCpuModel::SapphireRapids
+                    | IntelServerCpuModel::EmeraldRapids
             )
         )
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<IioMetrics, String> {
         match self {
+            Self::Emr(collector) => collector.sample(interval).await.map(IioMetrics::Emr),
             Self::Icx(collector) => collector.sample(interval).await.map(IioMetrics::Icx),
             Self::Skx(collector) => collector.sample(interval).await.map(IioMetrics::Skx),
             Self::Spr(collector) => collector.sample(interval).await.map(IioMetrics::Spr),
@@ -107,6 +110,7 @@ impl IioTask {
 
 #[derive(Debug)]
 pub enum IioPrometheusMetrics {
+    Emr(spr::SprIioPrometheusMetrics),
     Icx(icx::IcxIioPrometheusMetrics),
     Skx(skx::SkxIioPrometheusMetrics),
     Spr(spr::SprIioPrometheusMetrics),
@@ -127,12 +131,16 @@ impl IioPrometheusMetrics {
             Some(IntelServerCpuModel::SapphireRapids) => {
                 Some(Self::Spr(spr::SprIioPrometheusMetrics::register(registry)))
             }
+            Some(IntelServerCpuModel::EmeraldRapids) => {
+                Some(Self::Emr(spr::SprIioPrometheusMetrics::register(registry)))
+            }
             _ => None,
         }
     }
 
     pub fn update(&self, metrics: IioMetrics) {
         match (self, metrics) {
+            (Self::Emr(prometheus), IioMetrics::Emr(metrics)) => prometheus.update(metrics),
             (Self::Icx(prometheus), IioMetrics::Icx(metrics)) => prometheus.update(metrics),
             (Self::Skx(prometheus), IioMetrics::Skx(metrics)) => prometheus.update(metrics),
             (Self::Spr(prometheus), IioMetrics::Spr(metrics)) => prometheus.update(metrics),
@@ -157,7 +165,7 @@ mod tests {
         assert!(IioCollector::is_supported(&test_architecture(0x6a)));
         assert!(!IioCollector::is_supported(&test_architecture(0x6c)));
         assert!(IioCollector::is_supported(&test_architecture(0x8f)));
-        assert!(!IioCollector::is_supported(&test_architecture(0xcf)));
+        assert!(IioCollector::is_supported(&test_architecture(0xcf)));
     }
 
     fn test_architecture(model: u8) -> Architecture {

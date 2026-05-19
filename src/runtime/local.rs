@@ -10,7 +10,7 @@ use tokio::time::MissedTickBehavior;
 use crate::metrics::MetricsState;
 use crate::runtime::sampler::SamplerReader;
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 7;
 
 #[derive(Debug, Serialize)]
 struct LocalMetadata {
@@ -168,6 +168,90 @@ mod tests {
     }
 
     #[test]
+    fn encodes_sandy_and_ivy_bridge_cha_architectures() {
+        for (cha, expected) in [
+            (
+                crate::metrics::cha::ChaMetrics::Snb(empty_snb_cha_metrics()),
+                "snb",
+            ),
+            (
+                crate::metrics::cha::ChaMetrics::Ivb(empty_snb_cha_metrics()),
+                "ivb",
+            ),
+        ] {
+            let state = MetricsState {
+                cha: Some(cha),
+                iio: None,
+                imc: None,
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                irp: None,
+                rapl: None,
+                tsc: None,
+            };
+            let record = LocalRecord::sample(state);
+            let json = serde_json::to_value(&record).unwrap();
+
+            assert_eq!(json["cha"]["architecture"], expected);
+        }
+    }
+
+    #[test]
+    fn encodes_sandy_and_ivy_bridge_imc_architectures() {
+        for (imc, expected) in [
+            (
+                crate::metrics::imc::ImcMetrics::Snb(empty_snb_imc_metrics()),
+                "snb",
+            ),
+            (
+                crate::metrics::imc::ImcMetrics::Ivb(empty_snb_imc_metrics()),
+                "ivb",
+            ),
+        ] {
+            let state = MetricsState {
+                cha: None,
+                iio: None,
+                imc: Some(imc),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                irp: None,
+                rapl: None,
+                tsc: None,
+            };
+            let record = LocalRecord::sample(state);
+            let json = serde_json::to_value(&record).unwrap();
+
+            assert_eq!(json["imc"]["architecture"], expected);
+        }
+    }
+
+    #[test]
+    fn encodes_sandy_and_ivy_bridge_irp_architectures() {
+        for (irp, expected) in [
+            (
+                crate::metrics::irp::IrpMetrics::Snb(empty_snb_irp_metrics()),
+                "snb",
+            ),
+            (
+                crate::metrics::irp::IrpMetrics::Ivb(empty_snb_irp_metrics()),
+                "ivb",
+            ),
+        ] {
+            let state = MetricsState {
+                cha: None,
+                iio: None,
+                imc: None,
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                irp: Some(irp),
+                rapl: None,
+                tsc: None,
+            };
+            let record = LocalRecord::sample(state);
+            let json = serde_json::to_value(&record).unwrap();
+
+            assert_eq!(json["irp"]["architecture"], expected);
+        }
+    }
+
+    #[test]
     fn encodes_rapl_domain_sample() {
         let state = MetricsState {
             cha: None,
@@ -198,5 +282,23 @@ mod tests {
         assert_eq!(json["rapl"]["domains"][0]["energy_joules_total"], 10.0);
         assert_eq!(json["rapl"]["domains"][0]["package_id"], 0);
         assert_eq!(json["rapl"]["domains"][0]["power_watts"], 5.0);
+    }
+
+    fn empty_snb_cha_metrics() -> crate::metrics::cha::snb::SnbChaMetrics {
+        crate::metrics::cha::snb::SnbChaMetrics {
+            llc_lookups: Vec::new(),
+            llc_victims: Vec::new(),
+            scopes: Vec::new(),
+            transaction_results: Vec::new(),
+            transactions: Vec::new(),
+        }
+    }
+
+    fn empty_snb_imc_metrics() -> crate::metrics::imc::snb::SnbImcMetrics {
+        crate::metrics::imc::snb::SnbImcMetrics { scopes: Vec::new() }
+    }
+
+    fn empty_snb_irp_metrics() -> crate::metrics::irp::snb::SnbIrpMetrics {
+        crate::metrics::irp::snb::SnbIrpMetrics { scopes: Vec::new() }
     }
 }

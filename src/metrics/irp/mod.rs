@@ -1,6 +1,7 @@
 pub mod hsx;
 pub mod icx;
 pub mod skx;
+pub mod snb;
 pub mod spr;
 
 use std::time::Duration;
@@ -14,6 +15,7 @@ use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 pub use hsx::HsxIrpMetrics;
 pub use icx::IcxIrpMetrics;
 pub use skx::SkxIrpMetrics;
+pub use snb::SnbIrpMetrics;
 pub use spr::SprIrpMetrics;
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -22,7 +24,9 @@ pub enum IrpMetrics {
     Emr(SprIrpMetrics),
     Hsx(HsxIrpMetrics),
     Icx(IcxIrpMetrics),
+    Ivb(SnbIrpMetrics),
     Skx(SkxIrpMetrics),
+    Snb(SnbIrpMetrics),
     Spr(SprIrpMetrics),
 }
 
@@ -31,13 +35,19 @@ pub enum IrpCollector {
     Emr(spr::SprIrpCollector),
     Hsx(hsx::HsxIrpCollector),
     Icx(icx::IcxIrpCollector),
+    Ivb(snb::SnbIrpCollector),
     Skx(skx::SkxIrpCollector),
+    Snb(snb::SnbIrpCollector),
     Spr(spr::SprIrpCollector),
 }
 
 impl IrpCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         match architecture.intel_server_model() {
+            IntelServerCpuModel::SandyBridgeEp => {
+                snb::SnbIrpCollector::new(architecture).map(Self::Snb)
+            }
+            IntelServerCpuModel::IvyTown => snb::SnbIrpCollector::new(architecture).map(Self::Ivb),
             IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => {
                 hsx::HsxIrpCollector::new(architecture).map(Self::Hsx)
             }
@@ -57,7 +67,9 @@ impl IrpCollector {
         matches!(
             IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
             Some(
-                IntelServerCpuModel::HaswellXeon
+                IntelServerCpuModel::SandyBridgeEp
+                    | IntelServerCpuModel::IvyTown
+                    | IntelServerCpuModel::HaswellXeon
                     | IntelServerCpuModel::BroadwellXeon
                     | IntelServerCpuModel::SkylakeXeon
                     | IntelServerCpuModel::IceLakeXeon
@@ -72,7 +84,9 @@ impl IrpCollector {
             Self::Emr(collector) => collector.sample(interval).await.map(IrpMetrics::Emr),
             Self::Hsx(collector) => collector.sample(interval).await.map(IrpMetrics::Hsx),
             Self::Icx(collector) => collector.sample(interval).await.map(IrpMetrics::Icx),
+            Self::Ivb(collector) => collector.sample(interval).await.map(IrpMetrics::Ivb),
             Self::Skx(collector) => collector.sample(interval).await.map(IrpMetrics::Skx),
+            Self::Snb(collector) => collector.sample(interval).await.map(IrpMetrics::Snb),
             Self::Spr(collector) => collector.sample(interval).await.map(IrpMetrics::Spr),
         }
     }
@@ -127,7 +141,9 @@ pub enum IrpPrometheusMetrics {
     Emr(spr::SprIrpPrometheusMetrics),
     Hsx(hsx::HsxIrpPrometheusMetrics),
     Icx(icx::IcxIrpPrometheusMetrics),
+    Ivb(snb::SnbIrpPrometheusMetrics),
     Skx(skx::SkxIrpPrometheusMetrics),
+    Snb(snb::SnbIrpPrometheusMetrics),
     Spr(spr::SprIrpPrometheusMetrics),
 }
 
@@ -137,6 +153,12 @@ impl IrpPrometheusMetrics {
             metadata.processor.family,
             metadata.processor.model,
         ) {
+            Some(IntelServerCpuModel::SandyBridgeEp) => {
+                Some(Self::Snb(snb::SnbIrpPrometheusMetrics::register(registry)))
+            }
+            Some(IntelServerCpuModel::IvyTown) => {
+                Some(Self::Ivb(snb::SnbIrpPrometheusMetrics::register(registry)))
+            }
             Some(IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon) => {
                 Some(Self::Hsx(hsx::HsxIrpPrometheusMetrics::register(registry)))
             }
@@ -161,7 +183,9 @@ impl IrpPrometheusMetrics {
             (Self::Emr(prometheus), IrpMetrics::Emr(metrics)) => prometheus.update(metrics),
             (Self::Hsx(prometheus), IrpMetrics::Hsx(metrics)) => prometheus.update(metrics),
             (Self::Icx(prometheus), IrpMetrics::Icx(metrics)) => prometheus.update(metrics),
+            (Self::Ivb(prometheus), IrpMetrics::Ivb(metrics)) => prometheus.update(metrics),
             (Self::Skx(prometheus), IrpMetrics::Skx(metrics)) => prometheus.update(metrics),
+            (Self::Snb(prometheus), IrpMetrics::Snb(metrics)) => prometheus.update(metrics),
             (Self::Spr(prometheus), IrpMetrics::Spr(metrics)) => prometheus.update(metrics),
             (prometheus, metrics) => {
                 debug_assert!(
@@ -179,6 +203,8 @@ mod tests {
 
     #[test]
     fn supports_known_irp_architectures() {
+        assert!(IrpCollector::is_supported(&test_architecture(0x2d)));
+        assert!(IrpCollector::is_supported(&test_architecture(0x3e)));
         assert!(IrpCollector::is_supported(&test_architecture(0x3f)));
         assert!(IrpCollector::is_supported(&test_architecture(0x4f)));
         assert!(IrpCollector::is_supported(&test_architecture(0x55)));

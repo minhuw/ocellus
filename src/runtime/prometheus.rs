@@ -169,6 +169,20 @@ mod tests {
         metadata
     }
 
+    fn sandy_bridge_info_metadata() -> crate::metrics::InfoMetadata {
+        let mut metadata = info_metadata();
+        metadata.processor.brand = "Intel(R) Xeon(R) CPU E5-2690 0 @ 2.90GHz".to_string();
+        metadata.processor.model = 0x2d;
+        metadata
+    }
+
+    fn ivy_bridge_info_metadata() -> crate::metrics::InfoMetadata {
+        let mut metadata = info_metadata();
+        metadata.processor.brand = "Intel(R) Xeon(R) CPU E5-2697 v2 @ 2.70GHz".to_string();
+        metadata.processor.model = 0x3e;
+        metadata
+    }
+
     fn ice_lake_info_metadata() -> crate::metrics::InfoMetadata {
         let mut metadata = info_metadata();
         metadata.processor.brand = "Intel(R) Xeon(R) Platinum 8380 CPU @ 2.30GHz".to_string();
@@ -378,6 +392,22 @@ mod tests {
     }
 
     #[test]
+    fn renders_sandy_bridge_imc_metrics() {
+        assert_renders_snb_imc_metrics(
+            sandy_bridge_info_metadata(),
+            crate::metrics::imc::ImcMetrics::Snb(snb_imc_metrics()),
+        );
+    }
+
+    #[test]
+    fn renders_ivy_bridge_imc_metrics() {
+        assert_renders_snb_imc_metrics(
+            ivy_bridge_info_metadata(),
+            crate::metrics::imc::ImcMetrics::Ivb(snb_imc_metrics()),
+        );
+    }
+
+    #[test]
     fn renders_sapphire_rapids_imc_metrics() {
         assert_renders_server_imc_metrics(
             sapphire_rapids_info_metadata(),
@@ -444,6 +474,48 @@ mod tests {
         assert!(metrics.contains("ocellus_imc_wpq_occupancy_entries"));
     }
 
+    fn assert_renders_snb_imc_metrics(
+        metadata: crate::metrics::InfoMetadata,
+        imc: crate::metrics::imc::ImcMetrics,
+    ) {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: Some(imc),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: metadata,
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_imc_activate_commands_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_imc_frequency_hz gauge"));
+        assert!(
+            metrics.contains("# TYPE ocellus_imc_page_miss_precharge_commands_per_second gauge")
+        );
+        assert!(metrics.contains("# TYPE ocellus_imc_read_cas_commands_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_imc_read_bytes_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_imc_rpq_non_empty_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_imc_write_cas_commands_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_imc_write_bytes_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_imc_wpq_full_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_imc_wpq_non_empty_ratio gauge"));
+        assert!(metrics.contains("package=\"0\""));
+        assert!(!metrics.contains("ocellus_imc_rpq_residency_seconds"));
+        assert!(!metrics.contains("ocellus_imc_rpq_occupancy_entries"));
+    }
+
     fn icx_imc_metrics() -> crate::metrics::imc::icx::IcxImcMetrics {
         crate::metrics::imc::icx::IcxImcMetrics {
             scopes: vec![crate::metrics::imc::icx::IcxImcScopeMetrics {
@@ -463,6 +535,24 @@ mod tests {
                 write_bytes_per_second: 2048.0,
                 wpq_residency_seconds: 0.000002,
                 wpq_occupancy_entries: 0.75,
+            }],
+        }
+    }
+
+    fn snb_imc_metrics() -> crate::metrics::imc::snb::SnbImcMetrics {
+        crate::metrics::imc::snb::SnbImcMetrics {
+            scopes: vec![crate::metrics::imc::snb::SnbImcScopeMetrics {
+                activate_commands_per_second: 128.0,
+                frequency_hz: 1_000_000_000.0,
+                page_miss_precharge_commands_per_second: 512.0,
+                read_cas_commands_per_second: 1024.0,
+                read_bytes_per_second: 1024.0,
+                rpq_non_empty_ratio: 0.25,
+                scope: crate::metrics::imc::snb::SnbImcScope { package_id: 0 },
+                write_cas_commands_per_second: 2048.0,
+                write_bytes_per_second: 2048.0,
+                wpq_full_ratio: 0.5,
+                wpq_non_empty_ratio: 0.75,
             }],
         }
     }
@@ -754,6 +844,78 @@ mod tests {
     }
 
     #[test]
+    fn renders_sandy_bridge_irp_metrics() {
+        assert_renders_snb_irp_metrics(
+            sandy_bridge_info_metadata(),
+            crate::metrics::irp::IrpMetrics::Snb(snb_irp_metrics()),
+        );
+    }
+
+    #[test]
+    fn renders_ivy_bridge_irp_metrics() {
+        assert_renders_snb_irp_metrics(
+            ivy_bridge_info_metadata(),
+            crate::metrics::irp::IrpMetrics::Ivb(snb_irp_metrics()),
+        );
+    }
+
+    fn assert_renders_snb_irp_metrics(
+        metadata: crate::metrics::InfoMetadata,
+        irp: crate::metrics::irp::IrpMetrics,
+    ) {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: Some(irp),
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: metadata,
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_irp_frequency_hz gauge"));
+        assert!(metrics.contains("# TYPE ocellus_irp_io_write_conflict_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_irp_pcie_inbound_reads_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_irp_pcie_inbound_writes_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_irp_total_occupancy_entries gauge"));
+        assert!(metrics.contains("package=\"0\""));
+        assert!(!metrics.contains("ocellus_irp_clflush_bytes_per_second"));
+        assert!(!metrics.contains("ocellus_irp_core_read_bytes_per_second"));
+        assert!(!metrics.contains("ocellus_irp_demand_read_bytes_per_second"));
+        assert!(!metrics.contains("ocellus_irp_faf_occupancy_entries"));
+        assert!(!metrics.contains("ocellus_irp_pci_dca_hint_bytes_per_second"));
+        assert!(!metrics.contains("ocellus_irp_pci_itom_bytes_per_second"));
+        assert!(!metrics.contains("ocellus_irp_pcie_inbound_write_latency_seconds"));
+        assert!(!metrics.contains("ocellus_irp_pcie_read_current_bytes_per_second"));
+        assert!(!metrics.contains("ocellus_irp_read_for_ownership_bytes_per_second"));
+        assert!(!metrics.contains("ocellus_irp_wbmtoi_bytes_per_second"));
+    }
+
+    fn snb_irp_metrics() -> crate::metrics::irp::snb::SnbIrpMetrics {
+        crate::metrics::irp::snb::SnbIrpMetrics {
+            scopes: vec![crate::metrics::irp::snb::SnbIrpScopeMetrics {
+                frequency_hz: 1_000_000_000.0,
+                io_write_conflict_ratio: 0.25,
+                pcie_inbound_reads_per_second: 13.0,
+                pcie_inbound_writes_per_second: 12.0,
+                scope: crate::metrics::irp::snb::SnbIrpScope { package_id: 0 },
+                total_irp_occupancy_entries: 11.0,
+            }],
+        }
+    }
+
+    #[test]
     fn renders_cha_metrics() {
         let scope = crate::metrics::uncore::skx::UncoreScope {
             die_group_id: 0,
@@ -961,6 +1123,26 @@ mod tests {
     }
 
     #[test]
+    fn renders_sandy_bridge_cha_metrics() {
+        assert_renders_snb_cha_metrics(
+            sandy_bridge_info_metadata(),
+            crate::metrics::cha::ChaMetrics::Snb(snb_cha_metrics(
+                crate::metrics::cha::ChaLookupOperation::Read,
+            )),
+        );
+    }
+
+    #[test]
+    fn renders_ivy_bridge_cha_metrics() {
+        assert_renders_snb_cha_metrics(
+            ivy_bridge_info_metadata(),
+            crate::metrics::cha::ChaMetrics::Ivb(snb_cha_metrics(
+                crate::metrics::cha::ChaLookupOperation::Any,
+            )),
+        );
+    }
+
+    #[test]
     fn renders_ice_lake_cha_metrics() {
         assert_renders_server_cha_metrics(
             ice_lake_info_metadata(),
@@ -1024,6 +1206,42 @@ mod tests {
         assert!(metrics.contains(&format!("transaction=\"{transaction}\"")));
     }
 
+    fn assert_renders_snb_cha_metrics(
+        metadata: crate::metrics::InfoMetadata,
+        cha: crate::metrics::cha::ChaMetrics,
+    ) {
+        let state = crate::metrics::MetricsState {
+            cha: Some(cha),
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: metadata,
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_cha_frequency_hz gauge"));
+        assert!(metrics.contains("ocellus_cha_llc_lookup_bytes_per_second"));
+        assert!(metrics.contains("ocellus_cha_llc_victims_per_second"));
+        assert!(metrics.contains("ocellus_cha_transaction_result_inserts_per_second"));
+        assert!(metrics.contains("ocellus_cha_transaction_hit_rate"));
+        assert!(metrics.contains("operation=\""));
+        assert!(metrics.contains("result=\"hit\""));
+        assert!(metrics.contains("state=\"m\""));
+        assert!(metrics.contains("transaction=\"ia_drd\""));
+    }
+
     fn ice_lake_cha_metrics() -> crate::metrics::cha::icx::IcxChaMetrics {
         let metrics = server_cha_metric_fields();
 
@@ -1049,6 +1267,50 @@ mod tests {
             sf_evictions: metrics.3,
             transaction_results: metrics.4,
             transactions: metrics.5,
+        }
+    }
+
+    fn snb_cha_metrics(
+        lookup_operation: crate::metrics::cha::ChaLookupOperation,
+    ) -> crate::metrics::cha::snb::SnbChaMetrics {
+        let scope = crate::metrics::uncore::skx::UncoreScope {
+            die_group_id: 0,
+            die_id: 0,
+            package_id: 0,
+        };
+
+        crate::metrics::cha::snb::SnbChaMetrics {
+            llc_lookups: vec![crate::metrics::cha::ChaLlcLookupMetrics {
+                bytes_per_second: 1.0,
+                operation: lookup_operation,
+                scope,
+                state: crate::metrics::cha::ChaCacheState::M,
+            }],
+            llc_victims: vec![crate::metrics::cha::ChaLlcVictimMetrics {
+                per_second: 2.0,
+                scope,
+                state: crate::metrics::cha::ChaCacheState::M,
+            }],
+            scopes: vec![crate::metrics::cha::ChaScopeMetrics {
+                frequency_hz: 1_000_000_000.0,
+                scope,
+            }],
+            transaction_results: vec![crate::metrics::cha::ChaTransactionResultMetrics {
+                bandwidth_bytes_per_second: 3.0,
+                inserts_per_second: 4.0,
+                latency_seconds: 0.000001,
+                occupancy_entries: 5.0,
+                result: crate::metrics::cha::ChaTransactionResult::Hit,
+                scope,
+                transaction: crate::metrics::cha::ChaTransactionLabel::new("ia_drd"),
+            }],
+            transactions: vec![crate::metrics::cha::ChaTransactionMetrics {
+                bandwidth_bytes_per_second: 6.0,
+                hit_rate: 0.75,
+                latency_seconds: 0.000002,
+                scope,
+                transaction: crate::metrics::cha::ChaTransactionLabel::new("ia_drd"),
+            }],
         }
     }
 

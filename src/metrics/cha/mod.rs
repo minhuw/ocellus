@@ -1,6 +1,7 @@
 pub mod hsx;
 pub mod icx;
 pub mod skx;
+pub mod snb;
 pub mod spr;
 
 use std::collections::BTreeMap;
@@ -452,7 +453,9 @@ pub(crate) fn required_measurement(
 pub enum ChaMetrics {
     Hsx(hsx::HsxChaMetrics),
     Icx(icx::IcxChaMetrics),
+    Ivb(snb::SnbChaMetrics),
     Skx(skx::SkxChaMetrics),
+    Snb(snb::SnbChaMetrics),
     Emr(spr::SprChaMetrics),
     Spr(spr::SprChaMetrics),
 }
@@ -461,7 +464,9 @@ pub enum ChaMetrics {
 pub enum ChaCollector {
     Hsx(hsx::HsxChaCollector),
     Icx(icx::IcxChaCollector),
+    Ivb(snb::SnbChaCollector),
     Skx(skx::SkxChaCollector),
+    Snb(snb::SnbChaCollector),
     Emr(spr::SprChaCollector),
     Spr(spr::SprChaCollector),
 }
@@ -469,6 +474,10 @@ pub enum ChaCollector {
 impl ChaCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         match architecture.intel_server_model() {
+            IntelServerCpuModel::SandyBridgeEp => {
+                snb::SnbChaCollector::new(architecture).map(Self::Snb)
+            }
+            IntelServerCpuModel::IvyTown => snb::SnbChaCollector::new(architecture).map(Self::Ivb),
             IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => {
                 hsx::HsxChaCollector::new(architecture).map(Self::Hsx)
             }
@@ -488,7 +497,9 @@ impl ChaCollector {
         matches!(
             IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
             Some(
-                IntelServerCpuModel::HaswellXeon
+                IntelServerCpuModel::SandyBridgeEp
+                    | IntelServerCpuModel::IvyTown
+                    | IntelServerCpuModel::HaswellXeon
                     | IntelServerCpuModel::BroadwellXeon
                     | IntelServerCpuModel::IceLakeXeon
                     | IntelServerCpuModel::SkylakeXeon
@@ -502,7 +513,9 @@ impl ChaCollector {
         match self {
             Self::Hsx(collector) => collector.set_multiplex_mode(mode),
             Self::Icx(collector) => collector.set_multiplex_mode(mode),
+            Self::Ivb(collector) => collector.set_multiplex_mode(mode),
             Self::Skx(collector) => collector.set_multiplex_mode(mode),
+            Self::Snb(collector) => collector.set_multiplex_mode(mode),
             Self::Emr(collector) => collector.set_multiplex_mode(mode),
             Self::Spr(collector) => collector.set_multiplex_mode(mode),
         }
@@ -512,7 +525,9 @@ impl ChaCollector {
         match self {
             Self::Hsx(collector) => collector.sample(interval).await.map(ChaMetrics::Hsx),
             Self::Icx(collector) => collector.sample(interval).await.map(ChaMetrics::Icx),
+            Self::Ivb(collector) => collector.sample(interval).await.map(ChaMetrics::Ivb),
             Self::Skx(collector) => collector.sample(interval).await.map(ChaMetrics::Skx),
+            Self::Snb(collector) => collector.sample(interval).await.map(ChaMetrics::Snb),
             Self::Emr(collector) => collector.sample(interval).await.map(ChaMetrics::Emr),
             Self::Spr(collector) => collector.sample(interval).await.map(ChaMetrics::Spr),
         }
@@ -567,7 +582,9 @@ impl ChaTask {
 pub enum ChaPrometheusMetrics {
     Hsx(hsx::HsxChaPrometheusMetrics),
     Icx(icx::IcxChaPrometheusMetrics),
+    Ivb(snb::SnbChaPrometheusMetrics),
     Skx(skx::SkxChaPrometheusMetrics),
+    Snb(snb::SnbChaPrometheusMetrics),
     Emr(spr::SprChaPrometheusMetrics),
     Spr(spr::SprChaPrometheusMetrics),
 }
@@ -578,6 +595,12 @@ impl ChaPrometheusMetrics {
             metadata.processor.family,
             metadata.processor.model,
         ) {
+            Some(IntelServerCpuModel::SandyBridgeEp) => {
+                Some(Self::Snb(snb::SnbChaPrometheusMetrics::register(registry)))
+            }
+            Some(IntelServerCpuModel::IvyTown) => {
+                Some(Self::Ivb(snb::SnbChaPrometheusMetrics::register(registry)))
+            }
             Some(IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon) => {
                 Some(Self::Hsx(hsx::HsxChaPrometheusMetrics::register(registry)))
             }
@@ -601,7 +624,9 @@ impl ChaPrometheusMetrics {
         match (self, metrics) {
             (Self::Hsx(prometheus), ChaMetrics::Hsx(metrics)) => prometheus.update(metrics),
             (Self::Icx(prometheus), ChaMetrics::Icx(metrics)) => prometheus.update(metrics),
+            (Self::Ivb(prometheus), ChaMetrics::Ivb(metrics)) => prometheus.update(metrics),
             (Self::Skx(prometheus), ChaMetrics::Skx(metrics)) => prometheus.update(metrics),
+            (Self::Snb(prometheus), ChaMetrics::Snb(metrics)) => prometheus.update(metrics),
             (Self::Emr(prometheus), ChaMetrics::Emr(metrics)) => prometheus.update(metrics),
             (Self::Spr(prometheus), ChaMetrics::Spr(metrics)) => prometheus.update(metrics),
             (prometheus, metrics) => {
@@ -620,6 +645,8 @@ mod tests {
 
     #[test]
     fn supports_all_cha_architectures() {
+        assert!(ChaCollector::is_supported(&test_architecture(0x2d)));
+        assert!(ChaCollector::is_supported(&test_architecture(0x3e)));
         assert!(ChaCollector::is_supported(&test_architecture(0x3f)));
         assert!(ChaCollector::is_supported(&test_architecture(0x4f)));
         assert!(ChaCollector::is_supported(&test_architecture(0x55)));

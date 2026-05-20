@@ -10,6 +10,7 @@ use crate::metrics::cha::{ChaCollector, ChaMultiplexMode, ChaTask};
 use crate::metrics::iio::{IioCollector, IioTask};
 use crate::metrics::imc::{ImcCollector, ImcTask};
 use crate::metrics::irp::{IrpCollector, IrpTask};
+use crate::metrics::pcu::{PcuCollector, PcuTask};
 use crate::metrics::rapl::{RaplCollector, RaplTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
 use crate::metrics::{CollectorMetadata, InfoMetadata, MetricEvent, MetricUpdate, MetricsState};
@@ -102,6 +103,7 @@ pub fn spawn(
     spawn_imc_collector(&architecture, measure_interval, &event_tx);
     spawn_iio_collector(&architecture, measure_interval, &event_tx);
     spawn_irp_collector(&architecture, measure_interval, &event_tx);
+    spawn_pcu_collector(&architecture, measure_interval, &event_tx);
     spawn_collector(
         "tsc",
         TscTask::new(TscCollector::new(), measure_interval, event_tx.clone()).run(),
@@ -129,6 +131,7 @@ fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> 
                 iio_supported: IioCollector::is_supported(architecture),
                 imc_supported: ImcCollector::is_supported(architecture),
                 irp_supported: IrpCollector::is_supported(architecture),
+                pcu_supported: PcuCollector::is_supported(architecture),
             },
             processor: crate::metrics::ProcessorMetadata {
                 brand: architecture.brand.clone(),
@@ -242,6 +245,26 @@ fn spawn_rapl_collector(
         }
         Err(error) => {
             eprintln!("ocellus: skipping RAPL collector: {error}");
+        }
+    }
+}
+
+fn spawn_pcu_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    events: &mpsc::Sender<MetricEvent>,
+) {
+    match PcuCollector::new(architecture) {
+        Ok(pcu) => {
+            eprintln!("ocellus: starting PCU collector");
+            spawn_collector(
+                "pcu",
+                PcuTask::new(pcu, measure_interval, events.clone()).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping PCU collector: {error}");
         }
     }
 }

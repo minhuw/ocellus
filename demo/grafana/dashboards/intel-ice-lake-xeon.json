@@ -7,7 +7,7 @@
   "spec": {
     "annotations": [],
     "cursorSync": "Off",
-    "description": "Ice Lake Xeon dashboard for Ocellus IMC, IRP, RAPL, and TSC metrics.",
+    "description": "Ice Lake Xeon dashboard for Ocellus IMC, IRP, IIO, CHA, PCU, RAPL, and TSC metrics.",
     "editable": true,
     "elements": {
       "panel-1": {
@@ -11354,6 +11354,124 @@
           },
           "transparent": false
         }
+      },
+      "panel-pcu-frequency": {
+        "kind": "Panel",
+        "spec": {
+          "id": 87,
+          "title": "PCU Frequency",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_pcu_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
+                        "legendFormat": "PCU frequency",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "hertz"
+                },
+                "overrides": []
+              }
+            }
+          },
+          "transparent": false
+        }
       }
     },
     "layout": {
@@ -11443,6 +11561,32 @@
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-22"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "TabsLayoutTab",
+            "spec": {
+              "title": "PCU",
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 6,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-pcu-frequency"
                         }
                       }
                     }
@@ -12669,14 +12813,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz)\"}, package)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz)\"}, package)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz)\"}, package)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz)\"}, package)",
           "options": [],
           "multi": false,
           "includeAll": false,
@@ -12704,14 +12848,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz)\",package=\"$package\"}, die_group)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz)\",package=\"$package\"}, die_group)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz)\",package=\"$package\"}, die_group)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz)\",package=\"$package\"}, die_group)",
           "options": [],
           "multi": false,
           "includeAll": false,
@@ -12739,14 +12883,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz)\",package=\"$package\",die_group=\"$die_group\"}, die)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz)\",package=\"$package\",die_group=\"$die_group\"}, die)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz)\",package=\"$package\",die_group=\"$die_group\"}, die)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz)\",package=\"$package\",die_group=\"$die_group\"}, die)",
           "options": [],
           "multi": false,
           "includeAll": false,

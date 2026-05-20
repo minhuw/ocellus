@@ -10,7 +10,7 @@ use tokio::time::MissedTickBehavior;
 use crate::metrics::MetricsState;
 use crate::runtime::sampler::SamplerReader;
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 9;
 
 #[derive(Debug, Serialize)]
 struct LocalMetadata {
@@ -154,6 +154,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -185,6 +186,7 @@ mod tests {
                 imc: None,
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 irp: None,
+                pcu: None,
                 rapl: None,
                 tsc: None,
             };
@@ -213,6 +215,7 @@ mod tests {
                 imc: Some(imc),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 irp: None,
+                pcu: None,
                 rapl: None,
                 tsc: None,
             };
@@ -241,6 +244,7 @@ mod tests {
                 imc: None,
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 irp: Some(irp),
+                pcu: None,
                 rapl: None,
                 tsc: None,
             };
@@ -252,6 +256,63 @@ mod tests {
     }
 
     #[test]
+    fn encodes_pcu_architectures() {
+        for (pcu, expected) in [
+            (
+                crate::metrics::pcu::PcuMetrics::Snb(empty_snb_pcu_metrics()),
+                "snb",
+            ),
+            (
+                crate::metrics::pcu::PcuMetrics::Ivb(empty_snb_pcu_metrics()),
+                "ivb",
+            ),
+            (
+                crate::metrics::pcu::PcuMetrics::Hsx(empty_hsx_pcu_metrics()),
+                "hsx",
+            ),
+            (
+                crate::metrics::pcu::PcuMetrics::Bdx(empty_hsx_pcu_metrics()),
+                "bdx",
+            ),
+            (
+                crate::metrics::pcu::PcuMetrics::BdxDe(empty_hsx_pcu_metrics()),
+                "bdx_de",
+            ),
+            (
+                crate::metrics::pcu::PcuMetrics::Icx(empty_icx_pcu_metrics()),
+                "icx",
+            ),
+            (
+                crate::metrics::pcu::PcuMetrics::Skx(empty_skx_pcu_metrics()),
+                "skx",
+            ),
+            (
+                crate::metrics::pcu::PcuMetrics::Spr(empty_spr_pcu_metrics()),
+                "spr",
+            ),
+            (
+                crate::metrics::pcu::PcuMetrics::Emr(empty_spr_pcu_metrics()),
+                "emr",
+            ),
+        ] {
+            let state = MetricsState {
+                cha: None,
+                iio: None,
+                imc: None,
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                irp: None,
+                pcu: Some(pcu),
+                rapl: None,
+                tsc: None,
+            };
+            let record = LocalRecord::sample(state);
+            let json = serde_json::to_value(&record).unwrap();
+
+            assert_eq!(json["pcu"]["architecture"], expected);
+        }
+    }
+
+    #[test]
     fn encodes_rapl_domain_sample() {
         let state = MetricsState {
             cha: None,
@@ -259,6 +320,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: Some(crate::metrics::rapl::RaplMetrics {
                 domains: vec![crate::metrics::rapl::RaplDomainMetrics {
                     domain: crate::metrics::rapl::RaplDomainKind::Dram,
@@ -300,5 +362,52 @@ mod tests {
 
     fn empty_snb_irp_metrics() -> crate::metrics::irp::snb::SnbIrpMetrics {
         crate::metrics::irp::snb::SnbIrpMetrics { scopes: Vec::new() }
+    }
+
+    fn empty_hsx_pcu_metrics() -> crate::metrics::pcu::hsx::HsxPcuMetrics {
+        crate::metrics::pcu::hsx::HsxPcuMetrics {
+            clocks: Vec::new(),
+            core_c_states: Vec::new(),
+            frequency_limits: Vec::new(),
+            frequency_transition: Vec::new(),
+            memory_phase_shedding: Vec::new(),
+            package_c_states: Vec::new(),
+            thermal_throttles: Vec::new(),
+        }
+    }
+
+    fn empty_icx_pcu_metrics() -> crate::metrics::pcu::icx::IcxPcuMetrics {
+        crate::metrics::pcu::icx::IcxPcuMetrics { clocks: Vec::new() }
+    }
+
+    fn empty_skx_pcu_metrics() -> crate::metrics::pcu::skx::SkxPcuMetrics {
+        crate::metrics::pcu::skx::SkxPcuMetrics {
+            clocks: Vec::new(),
+            core_c_states: Vec::new(),
+            frequency_limits: Vec::new(),
+            frequency_transition: Vec::new(),
+            memory_phase_shedding: Vec::new(),
+            package_c_states: Vec::new(),
+            thermal_throttles: Vec::new(),
+        }
+    }
+
+    fn empty_snb_pcu_metrics() -> crate::metrics::pcu::snb::SnbPcuMetrics {
+        crate::metrics::pcu::snb::SnbPcuMetrics {
+            clocks: Vec::new(),
+            core_c_states: Vec::new(),
+            frequency_limits: Vec::new(),
+            frequency_transition: Vec::new(),
+            memory_phase_shedding: Vec::new(),
+            package_c_states: Vec::new(),
+            thermal_throttles: Vec::new(),
+        }
+    }
+
+    fn empty_spr_pcu_metrics() -> crate::metrics::pcu::spr::SprPcuMetrics {
+        crate::metrics::pcu::spr::SprPcuMetrics {
+            clocks: Vec::new(),
+            core_c_states: Vec::new(),
+        }
     }
 }

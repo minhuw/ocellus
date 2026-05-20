@@ -10,6 +10,7 @@ struct CollectorInfoLabels {
     iio_supported: String,
     imc_supported: String,
     irp_supported: String,
+    pcu_supported: String,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
@@ -59,6 +60,7 @@ pub fn register(registry: &mut Registry, metadata: InfoMetadata) {
             iio_supported: metadata.collectors.iio_supported.to_string(),
             imc_supported: metadata.collectors.imc_supported.to_string(),
             irp_supported: metadata.collectors.irp_supported.to_string(),
+            pcu_supported: metadata.collectors.pcu_supported.to_string(),
         })
         .set(1);
     processor_info

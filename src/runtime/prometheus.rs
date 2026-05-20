@@ -150,6 +150,7 @@ mod tests {
                 iio_supported: true,
                 imc_supported: true,
                 irp_supported: true,
+                pcu_supported: true,
             },
             processor: crate::metrics::ProcessorMetadata {
                 brand: "Intel(R) Xeon(R) Gold 6252 CPU @ 2.10GHz".to_string(),
@@ -183,6 +184,13 @@ mod tests {
         metadata
     }
 
+    fn skylake_info_metadata() -> crate::metrics::InfoMetadata {
+        let mut metadata = info_metadata();
+        metadata.processor.brand = "Intel(R) Xeon(R) Gold 6154 CPU @ 3.00GHz".to_string();
+        metadata.processor.model = 0x55;
+        metadata
+    }
+
     fn ice_lake_info_metadata() -> crate::metrics::InfoMetadata {
         let mut metadata = info_metadata();
         metadata.processor.brand = "Intel(R) Xeon(R) Platinum 8380 CPU @ 2.30GHz".to_string();
@@ -211,6 +219,7 @@ mod tests {
                 iio_supported: false,
                 imc_supported: false,
                 irp_supported: false,
+                pcu_supported: false,
             },
             processor: crate::metrics::ProcessorMetadata {
                 brand: "unsupported".to_string(),
@@ -247,6 +256,7 @@ mod tests {
         assert!(!metrics.contains("ocellus_up"));
         assert!(!metrics.contains("ocellus_tsc_supported"));
         assert!(metrics.contains("imc_supported=\"true\""));
+        assert!(metrics.contains("pcu_supported=\"true\""));
         assert!(
             !metrics
                 .lines()
@@ -279,6 +289,7 @@ mod tests {
         assert!(!metrics.contains("ocellus_iio_"));
         assert!(!metrics.contains("ocellus_imc_"));
         assert!(!metrics.contains("ocellus_irp_"));
+        assert!(!metrics.contains("ocellus_pcu_"));
         assert!(!metrics.contains("ocellus_rapl_"));
     }
 
@@ -290,6 +301,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: Some(crate::metrics::tsc::TscMetrics {
                 frequency_hz: 2_400_000_000.0,
@@ -320,6 +332,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: Some(crate::metrics::rapl::RaplMetrics {
                 domains: vec![crate::metrics::rapl::RaplDomainMetrics {
                     domain: crate::metrics::rapl::RaplDomainKind::Package,
@@ -433,6 +446,7 @@ mod tests {
             imc: Some(imc),
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -484,6 +498,7 @@ mod tests {
             imc: Some(imc),
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -622,6 +637,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -677,6 +693,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -764,6 +781,7 @@ mod tests {
                     }],
                 },
             )),
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -822,6 +840,7 @@ mod tests {
                     }],
                 },
             )),
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -841,6 +860,368 @@ mod tests {
         assert!(metrics.contains("ocellus_irp_pcie_inbound_writes_per_second"));
         assert!(metrics.contains("ocellus_irp_all_hit_m_snoop_responses_per_second"));
         assert!(metrics.contains("stack=\"m2iosf10\""));
+    }
+
+    #[test]
+    fn renders_sandy_bridge_pcu_metrics() {
+        assert_renders_snb_pcu_metrics(
+            sandy_bridge_info_metadata(),
+            crate::metrics::pcu::PcuMetrics::Snb(snb_pcu_metrics()),
+        );
+    }
+
+    #[test]
+    fn renders_ivy_bridge_pcu_metrics() {
+        assert_renders_snb_pcu_metrics(
+            ivy_bridge_info_metadata(),
+            crate::metrics::pcu::PcuMetrics::Ivb(snb_pcu_metrics()),
+        );
+    }
+
+    #[test]
+    fn renders_broadwell_pcu_metrics() {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            pcu: Some(crate::metrics::pcu::PcuMetrics::Bdx(hsx_pcu_metrics())),
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: haswell_info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_hz gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_core_c_state_average_cores gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_limit_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_transition_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_memory_phase_shedding_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_package_c_state_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_thermal_throttle_ratio gauge"));
+        assert!(metrics.contains("reason=\"power\""));
+        assert!(metrics.contains("source=\"vr_hot\""));
+        assert!(metrics.contains("package=\"0\""));
+    }
+
+    #[test]
+    fn renders_skylake_pcu_metrics() {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            pcu: Some(crate::metrics::pcu::PcuMetrics::Skx(skx_pcu_metrics())),
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: skylake_info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_hz gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_core_c_state_average_cores gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_limit_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_transition_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_memory_phase_shedding_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_package_c_state_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_thermal_throttle_ratio gauge"));
+        assert!(metrics.contains("reason=\"io_p\""));
+        assert!(metrics.contains("source=\"vr_hot\""));
+        assert!(metrics.contains("die_group=\"0\""));
+        assert!(!metrics.contains("reason=\"os\""));
+    }
+
+    #[test]
+    fn renders_ice_lake_pcu_metrics() {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            pcu: Some(crate::metrics::pcu::PcuMetrics::Icx(
+                crate::metrics::pcu::icx::IcxPcuMetrics {
+                    clocks: vec![crate::metrics::pcu::PcuClockMetrics {
+                        frequency_hz: 1_000_000_000.0,
+                        scope: crate::metrics::pcu::PcuScope {
+                            die_group_id: 0,
+                            die_id: 0,
+                            package_id: 0,
+                        },
+                    }],
+                },
+            )),
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: ice_lake_info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_hz gauge"));
+        assert!(metrics.contains("die_group=\"0\""));
+        assert!(!metrics.contains("ocellus_pcu_core_c_state_average_cores"));
+        assert!(!metrics.contains("ocellus_pcu_frequency_limit_ratio"));
+    }
+
+    #[test]
+    fn renders_sapphire_rapids_pcu_metrics() {
+        assert_renders_spr_pcu_metrics(
+            sapphire_rapids_info_metadata(),
+            crate::metrics::pcu::PcuMetrics::Spr(spr_pcu_metrics()),
+        );
+    }
+
+    #[test]
+    fn renders_emerald_rapids_pcu_metrics() {
+        assert_renders_spr_pcu_metrics(
+            emerald_rapids_info_metadata(),
+            crate::metrics::pcu::PcuMetrics::Emr(spr_pcu_metrics()),
+        );
+    }
+
+    fn assert_renders_snb_pcu_metrics(
+        metadata: crate::metrics::InfoMetadata,
+        pcu: crate::metrics::pcu::PcuMetrics,
+    ) {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            pcu: Some(pcu),
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: metadata,
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_hz gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_core_c_state_average_cores gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_limit_ratio gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_package_c_state_ratio gauge"));
+        assert!(metrics.contains("reason=\"current\""));
+        assert!(metrics.contains("reason=\"perf_p\""));
+        assert!(metrics.contains("c_state=\"c6\""));
+        assert!(metrics.contains("package=\"0\""));
+    }
+
+    fn assert_renders_spr_pcu_metrics(
+        metadata: crate::metrics::InfoMetadata,
+        pcu: crate::metrics::pcu::PcuMetrics,
+    ) {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            pcu: Some(pcu),
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: metadata,
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_pcu_frequency_hz gauge"));
+        assert!(metrics.contains("# TYPE ocellus_pcu_core_c_state_average_cores gauge"));
+        assert!(metrics.contains("c_state=\"c0\""));
+        assert!(metrics.contains("c_state=\"c6\""));
+        assert!(!metrics.contains("ocellus_pcu_frequency_limit_ratio"));
+        assert!(!metrics.contains("ocellus_pcu_package_c_state_ratio"));
+        assert!(!metrics.contains("c_state=\"c3\""));
+    }
+
+    fn snb_pcu_metrics() -> crate::metrics::pcu::snb::SnbPcuMetrics {
+        let scope = crate::metrics::pcu::PcuPackageScope { package_id: 0 };
+        crate::metrics::pcu::snb::SnbPcuMetrics {
+            clocks: vec![crate::metrics::pcu::PcuClockMetrics {
+                frequency_hz: 800_000_000.0,
+                scope,
+            }],
+            core_c_states: vec![crate::metrics::pcu::PcuCoreCStateMetrics {
+                average_cores: 2.0,
+                c_state: crate::metrics::pcu::PcuCoreCState::C6,
+                scope,
+            }],
+            frequency_limits: vec![
+                crate::metrics::pcu::PcuFrequencyLimitMetrics {
+                    ratio: 0.25,
+                    reason: crate::metrics::pcu::PcuFrequencyLimitReason::Current,
+                    scope,
+                },
+                crate::metrics::pcu::PcuFrequencyLimitMetrics {
+                    ratio: 0.5,
+                    reason: crate::metrics::pcu::PcuFrequencyLimitReason::PerfP,
+                    scope,
+                },
+            ],
+            frequency_transition: Vec::new(),
+            memory_phase_shedding: Vec::new(),
+            package_c_states: vec![crate::metrics::pcu::PcuPackageCStateMetrics {
+                c_state: crate::metrics::pcu::PcuCoreCState::C6,
+                ratio: 0.75,
+                scope,
+            }],
+            thermal_throttles: Vec::new(),
+        }
+    }
+
+    fn hsx_pcu_metrics() -> crate::metrics::pcu::hsx::HsxPcuMetrics {
+        let scope = crate::metrics::pcu::PcuPackageScope { package_id: 0 };
+        crate::metrics::pcu::hsx::HsxPcuMetrics {
+            clocks: vec![crate::metrics::pcu::PcuClockMetrics {
+                frequency_hz: 800_000_000.0,
+                scope,
+            }],
+            core_c_states: vec![crate::metrics::pcu::PcuCoreCStateMetrics {
+                average_cores: 2.0,
+                c_state: crate::metrics::pcu::PcuCoreCState::C0,
+                scope,
+            }],
+            frequency_limits: vec![crate::metrics::pcu::PcuFrequencyLimitMetrics {
+                ratio: 0.25,
+                reason: crate::metrics::pcu::PcuFrequencyLimitReason::Power,
+                scope,
+            }],
+            frequency_transition: vec![crate::metrics::pcu::PcuCycleRatioMetrics {
+                ratio: 0.1,
+                scope,
+                source: "frequency_transition",
+            }],
+            memory_phase_shedding: vec![crate::metrics::pcu::PcuCycleRatioMetrics {
+                ratio: 0.2,
+                scope,
+                source: "memory_phase_shedding",
+            }],
+            package_c_states: vec![crate::metrics::pcu::PcuPackageCStateMetrics {
+                c_state: crate::metrics::pcu::PcuCoreCState::C6,
+                ratio: 0.75,
+                scope,
+            }],
+            thermal_throttles: vec![crate::metrics::pcu::PcuCycleRatioMetrics {
+                ratio: 0.3,
+                scope,
+                source: crate::metrics::pcu::PcuThermalThrottleSource::VrHot,
+            }],
+        }
+    }
+
+    fn skx_pcu_metrics() -> crate::metrics::pcu::skx::SkxPcuMetrics {
+        let scope = crate::metrics::pcu::PcuScope {
+            die_group_id: 0,
+            die_id: 0,
+            package_id: 0,
+        };
+        crate::metrics::pcu::skx::SkxPcuMetrics {
+            clocks: vec![crate::metrics::pcu::PcuClockMetrics {
+                frequency_hz: 1_000_000_000.0,
+                scope,
+            }],
+            core_c_states: vec![crate::metrics::pcu::PcuCoreCStateMetrics {
+                average_cores: 2.0,
+                c_state: crate::metrics::pcu::PcuCoreCState::C0,
+                scope,
+            }],
+            frequency_limits: vec![crate::metrics::pcu::PcuFrequencyLimitMetrics {
+                ratio: 0.25,
+                reason: crate::metrics::pcu::PcuFrequencyLimitReason::IoP,
+                scope,
+            }],
+            frequency_transition: vec![crate::metrics::pcu::PcuCycleRatioMetrics {
+                ratio: 0.1,
+                scope,
+                source: "frequency_transition",
+            }],
+            memory_phase_shedding: vec![crate::metrics::pcu::PcuCycleRatioMetrics {
+                ratio: 0.2,
+                scope,
+                source: "memory_phase_shedding",
+            }],
+            package_c_states: vec![crate::metrics::pcu::PcuPackageCStateMetrics {
+                c_state: crate::metrics::pcu::PcuCoreCState::C6,
+                ratio: 0.75,
+                scope,
+            }],
+            thermal_throttles: vec![crate::metrics::pcu::PcuCycleRatioMetrics {
+                ratio: 0.3,
+                scope,
+                source: crate::metrics::pcu::PcuThermalThrottleSource::VrHot,
+            }],
+        }
+    }
+
+    fn spr_pcu_metrics() -> crate::metrics::pcu::spr::SprPcuMetrics {
+        let scope = crate::metrics::pcu::PcuScope {
+            die_group_id: 0,
+            die_id: 0,
+            package_id: 0,
+        };
+        crate::metrics::pcu::spr::SprPcuMetrics {
+            clocks: vec![crate::metrics::pcu::PcuClockMetrics {
+                frequency_hz: 1_000_000_000.0,
+                scope,
+            }],
+            core_c_states: vec![
+                crate::metrics::pcu::PcuCoreCStateMetrics {
+                    average_cores: 1.0,
+                    c_state: crate::metrics::pcu::PcuCoreCState::C0,
+                    scope,
+                },
+                crate::metrics::pcu::PcuCoreCStateMetrics {
+                    average_cores: 2.0,
+                    c_state: crate::metrics::pcu::PcuCoreCState::C6,
+                    scope,
+                },
+            ],
+        }
     }
 
     #[test]
@@ -869,6 +1250,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: Some(irp),
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -999,6 +1381,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -1096,6 +1479,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -1180,6 +1564,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -1216,6 +1601,7 @@ mod tests {
             imc: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };
@@ -1413,6 +1799,7 @@ mod tests {
             )),
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
+            pcu: None,
             rapl: None,
             tsc: None,
         };

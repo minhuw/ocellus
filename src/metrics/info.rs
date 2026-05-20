@@ -9,6 +9,7 @@ struct CollectorInfoLabels {
     cha_supported: String,
     iio_supported: String,
     imc_supported: String,
+    interconnect_supported: String,
     irp_supported: String,
     pcu_supported: String,
 }
@@ -59,6 +60,7 @@ pub fn register(registry: &mut Registry, metadata: InfoMetadata) {
             cha_supported: metadata.collectors.cha_supported.to_string(),
             iio_supported: metadata.collectors.iio_supported.to_string(),
             imc_supported: metadata.collectors.imc_supported.to_string(),
+            interconnect_supported: metadata.collectors.interconnect_supported.to_string(),
             irp_supported: metadata.collectors.irp_supported.to_string(),
             pcu_supported: metadata.collectors.pcu_supported.to_string(),
         })

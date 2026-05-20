@@ -149,6 +149,7 @@ mod tests {
                 cha_supported: true,
                 iio_supported: true,
                 imc_supported: true,
+                interconnect_supported: false,
                 irp_supported: true,
                 pcu_supported: true,
             },
@@ -218,6 +219,7 @@ mod tests {
                 cha_supported: false,
                 iio_supported: false,
                 imc_supported: false,
+                interconnect_supported: false,
                 irp_supported: false,
                 pcu_supported: false,
             },
@@ -225,7 +227,7 @@ mod tests {
                 brand: "unsupported".to_string(),
                 family: 6,
                 invariant_tsc_supported: false,
-                model: 0xcf,
+                model: 0,
                 package_rapl_supported: false,
                 vendor: "GenuineIntel".to_string(),
             },
@@ -256,6 +258,7 @@ mod tests {
         assert!(!metrics.contains("ocellus_up"));
         assert!(!metrics.contains("ocellus_tsc_supported"));
         assert!(metrics.contains("imc_supported=\"true\""));
+        assert!(metrics.contains("interconnect_supported=\"false\""));
         assert!(metrics.contains("pcu_supported=\"true\""));
         assert!(
             !metrics
@@ -288,6 +291,7 @@ mod tests {
         assert!(!metrics.contains("ocellus_cha_"));
         assert!(!metrics.contains("ocellus_iio_"));
         assert!(!metrics.contains("ocellus_imc_"));
+        assert!(!metrics.contains("ocellus_interconnect_"));
         assert!(!metrics.contains("ocellus_irp_"));
         assert!(!metrics.contains("ocellus_pcu_"));
         assert!(!metrics.contains("ocellus_rapl_"));
@@ -299,6 +303,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -330,6 +335,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -367,6 +373,160 @@ mod tests {
         assert!(metrics.contains("package=\"0\""));
         assert!(metrics.contains("# TYPE ocellus_rapl_power_watts gauge"));
         assert!(metrics.contains("ocellus_rapl_power_watts"));
+    }
+
+    #[test]
+    fn renders_qpi_interconnect_metrics() {
+        assert_renders_interconnect_metrics(
+            haswell_info_metadata(),
+            crate::metrics::interconnect::InterconnectMetrics::Bdx(hsx_interconnect_metrics()),
+            true,
+        );
+    }
+
+    #[test]
+    fn renders_upi_interconnect_metrics() {
+        assert_renders_interconnect_metrics(
+            skylake_info_metadata(),
+            crate::metrics::interconnect::InterconnectMetrics::Skx(skx_interconnect_metrics()),
+            false,
+        );
+    }
+
+    fn assert_renders_interconnect_metrics(
+        mut metadata: crate::metrics::InfoMetadata,
+        interconnect: crate::metrics::interconnect::InterconnectMetrics,
+        has_queues: bool,
+    ) {
+        metadata.collectors.interconnect_supported = true;
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            interconnect: Some(interconnect),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            pcu: None,
+            rapl: None,
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: metadata,
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("interconnect_supported=\"true\""));
+        assert!(metrics.contains("# TYPE ocellus_interconnect_frequency_hz gauge"));
+        assert!(metrics.contains("# TYPE ocellus_interconnect_data_bytes_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_interconnect_flits_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_interconnect_power_state_ratio gauge"));
+        assert!(metrics.contains("ocellus_interconnect_frequency_hz"));
+        assert!(metrics.contains("ocellus_interconnect_data_bytes_per_second"));
+        assert!(metrics.contains("ocellus_interconnect_flits_per_second"));
+        assert!(metrics.contains("ocellus_interconnect_power_state_ratio"));
+        assert!(metrics.contains("direction=\"rx\""));
+        assert!(metrics.contains("direction=\"tx\""));
+        assert!(metrics.contains("traffic=\"data\""));
+        assert!(metrics.contains("traffic=\"non_data\""));
+        assert!(metrics.contains("state=\"l1\""));
+
+        if has_queues {
+            assert!(metrics.contains("# TYPE ocellus_interconnect_queue_inserts_per_second gauge"));
+            assert!(metrics.contains("# TYPE ocellus_interconnect_queue_latency_seconds gauge"));
+            assert!(metrics.contains("# TYPE ocellus_interconnect_queue_occupancy_flits gauge"));
+        } else {
+            assert!(!metrics.contains("ocellus_interconnect_queue_inserts_per_second"));
+            assert!(!metrics.contains("ocellus_interconnect_queue_latency_seconds"));
+            assert!(!metrics.contains("ocellus_interconnect_queue_occupancy_flits"));
+        }
+    }
+
+    fn hsx_interconnect_metrics() -> crate::metrics::interconnect::hsx::HsxInterconnectMetrics {
+        let scope = interconnect_scope();
+        crate::metrics::interconnect::hsx::HsxInterconnectMetrics {
+            links: vec![crate::metrics::interconnect::InterconnectLinkMetrics {
+                frequency_hz: 8_000_000_000.0,
+                scope,
+            }],
+            power_states: vec![
+                crate::metrics::interconnect::InterconnectPowerStateMetrics {
+                    direction: None,
+                    ratio: 0.125,
+                    scope,
+                    state: crate::metrics::interconnect::InterconnectPowerState::L1,
+                },
+                crate::metrics::interconnect::InterconnectPowerStateMetrics {
+                    direction: Some(crate::metrics::interconnect::InterconnectDirection::Tx),
+                    ratio: 0.25,
+                    scope,
+                    state: crate::metrics::interconnect::InterconnectPowerState::L0p,
+                },
+            ],
+            queues: vec![crate::metrics::interconnect::InterconnectQueueMetrics {
+                direction: crate::metrics::interconnect::InterconnectDirection::Rx,
+                inserts_per_second: 100.0,
+                latency_seconds: 0.000001,
+                occupancy_flits: 2.0,
+                scope,
+            }],
+            traffic: interconnect_traffic(scope),
+        }
+    }
+
+    fn skx_interconnect_metrics() -> crate::metrics::interconnect::skx::SkxInterconnectMetrics {
+        let scope = interconnect_scope();
+        crate::metrics::interconnect::skx::SkxInterconnectMetrics {
+            links: vec![crate::metrics::interconnect::InterconnectLinkMetrics {
+                frequency_hz: 10_400_000_000.0,
+                scope,
+            }],
+            power_states: vec![
+                crate::metrics::interconnect::InterconnectPowerStateMetrics {
+                    direction: None,
+                    ratio: 0.125,
+                    scope,
+                    state: crate::metrics::interconnect::InterconnectPowerState::L1,
+                },
+            ],
+            traffic: interconnect_traffic(scope),
+        }
+    }
+
+    fn interconnect_scope() -> crate::metrics::interconnect::InterconnectScope {
+        crate::metrics::interconnect::InterconnectScope {
+            die_group_id: 0,
+            die_id: 0,
+            link_id: 1,
+            package_id: 0,
+        }
+    }
+
+    fn interconnect_traffic(
+        scope: crate::metrics::interconnect::InterconnectScope,
+    ) -> Vec<crate::metrics::interconnect::InterconnectTrafficMetrics> {
+        vec![
+            crate::metrics::interconnect::InterconnectTrafficMetrics {
+                bytes_per_second: Some(1024.0),
+                direction: crate::metrics::interconnect::InterconnectDirection::Tx,
+                flits_per_second: 128.0,
+                scope,
+                traffic: crate::metrics::interconnect::InterconnectTrafficClass::Data,
+            },
+            crate::metrics::interconnect::InterconnectTrafficMetrics {
+                bytes_per_second: None,
+                direction: crate::metrics::interconnect::InterconnectDirection::Rx,
+                flits_per_second: 64.0,
+                scope,
+                traffic: crate::metrics::interconnect::InterconnectTrafficClass::NonData,
+            },
+        ]
     }
 
     #[test]
@@ -444,6 +604,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: Some(imc),
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -496,6 +657,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: Some(imc),
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -635,6 +797,7 @@ mod tests {
                 },
             )),
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -691,6 +854,7 @@ mod tests {
             cha: None,
             iio: Some(iio),
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -753,6 +917,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: Some(crate::metrics::irp::IrpMetrics::Skx(
                 crate::metrics::irp::skx::SkxIrpMetrics {
@@ -818,6 +983,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: Some(crate::metrics::irp::IrpMetrics::Emr(
                 crate::metrics::irp::spr::SprIrpMetrics {
@@ -884,6 +1050,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: Some(crate::metrics::pcu::PcuMetrics::Bdx(hsx_pcu_metrics())),
@@ -920,6 +1087,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: Some(crate::metrics::pcu::PcuMetrics::Skx(skx_pcu_metrics())),
@@ -957,6 +1125,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: Some(crate::metrics::pcu::PcuMetrics::Icx(
@@ -1016,6 +1185,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: Some(pcu),
@@ -1052,6 +1222,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: Some(pcu),
@@ -1248,6 +1419,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: Some(irp),
             pcu: None,
@@ -1379,6 +1551,7 @@ mod tests {
             )),
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -1477,6 +1650,7 @@ mod tests {
             )),
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -1562,6 +1736,7 @@ mod tests {
             cha: Some(cha),
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -1599,6 +1774,7 @@ mod tests {
             cha: Some(cha),
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -1797,6 +1973,7 @@ mod tests {
                     }],
                 },
             )),
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,

@@ -10,7 +10,7 @@ use tokio::time::MissedTickBehavior;
 use crate::metrics::MetricsState;
 use crate::runtime::sampler::SamplerReader;
 
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
 
 #[derive(Debug, Serialize)]
 struct LocalMetadata {
@@ -152,6 +152,7 @@ mod tests {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -184,6 +185,7 @@ mod tests {
                 cha: Some(cha),
                 iio: None,
                 imc: None,
+                interconnect: None,
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 irp: None,
                 pcu: None,
@@ -213,6 +215,7 @@ mod tests {
                 cha: None,
                 iio: None,
                 imc: Some(imc),
+                interconnect: None,
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 irp: None,
                 pcu: None,
@@ -242,6 +245,7 @@ mod tests {
                 cha: None,
                 iio: None,
                 imc: None,
+                interconnect: None,
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 irp: Some(irp),
                 pcu: None,
@@ -299,6 +303,7 @@ mod tests {
                 cha: None,
                 iio: None,
                 imc: None,
+                interconnect: None,
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 irp: None,
                 pcu: Some(pcu),
@@ -313,11 +318,82 @@ mod tests {
     }
 
     #[test]
+    fn encodes_interconnect_architectures() {
+        for (interconnect, expected) in [
+            (
+                crate::metrics::interconnect::InterconnectMetrics::Snb(
+                    empty_snb_interconnect_metrics(),
+                ),
+                "snb",
+            ),
+            (
+                crate::metrics::interconnect::InterconnectMetrics::Ivb(
+                    empty_snb_interconnect_metrics(),
+                ),
+                "ivb",
+            ),
+            (
+                crate::metrics::interconnect::InterconnectMetrics::Hsx(
+                    empty_hsx_interconnect_metrics(),
+                ),
+                "hsx",
+            ),
+            (
+                crate::metrics::interconnect::InterconnectMetrics::Bdx(
+                    empty_hsx_interconnect_metrics(),
+                ),
+                "bdx",
+            ),
+            (
+                crate::metrics::interconnect::InterconnectMetrics::Skx(
+                    empty_skx_interconnect_metrics(),
+                ),
+                "skx",
+            ),
+            (
+                crate::metrics::interconnect::InterconnectMetrics::Icx(
+                    empty_icx_interconnect_metrics(),
+                ),
+                "icx",
+            ),
+            (
+                crate::metrics::interconnect::InterconnectMetrics::Spr(
+                    empty_spr_interconnect_metrics(),
+                ),
+                "spr",
+            ),
+            (
+                crate::metrics::interconnect::InterconnectMetrics::Emr(
+                    empty_spr_interconnect_metrics(),
+                ),
+                "emr",
+            ),
+        ] {
+            let state = MetricsState {
+                cha: None,
+                iio: None,
+                imc: None,
+                interconnect: Some(interconnect),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                irp: None,
+                pcu: None,
+                rapl: None,
+                tsc: None,
+            };
+            let record = LocalRecord::sample(state);
+            let json = serde_json::to_value(&record).unwrap();
+
+            assert_eq!(json["interconnect"]["architecture"], expected);
+        }
+    }
+
+    #[test]
     fn encodes_rapl_domain_sample() {
         let state = MetricsState {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             irp: None,
             pcu: None,
@@ -408,6 +484,53 @@ mod tests {
         crate::metrics::pcu::spr::SprPcuMetrics {
             clocks: Vec::new(),
             core_c_states: Vec::new(),
+        }
+    }
+
+    fn empty_hsx_interconnect_metrics() -> crate::metrics::interconnect::hsx::HsxInterconnectMetrics
+    {
+        crate::metrics::interconnect::hsx::HsxInterconnectMetrics {
+            links: Vec::new(),
+            power_states: Vec::new(),
+            queues: Vec::new(),
+            traffic: Vec::new(),
+        }
+    }
+
+    fn empty_icx_interconnect_metrics() -> crate::metrics::interconnect::icx::IcxInterconnectMetrics
+    {
+        crate::metrics::interconnect::icx::IcxInterconnectMetrics {
+            links: Vec::new(),
+            power_states: Vec::new(),
+            traffic: Vec::new(),
+        }
+    }
+
+    fn empty_skx_interconnect_metrics() -> crate::metrics::interconnect::skx::SkxInterconnectMetrics
+    {
+        crate::metrics::interconnect::skx::SkxInterconnectMetrics {
+            links: Vec::new(),
+            power_states: Vec::new(),
+            traffic: Vec::new(),
+        }
+    }
+
+    fn empty_snb_interconnect_metrics() -> crate::metrics::interconnect::snb::SnbInterconnectMetrics
+    {
+        crate::metrics::interconnect::snb::SnbInterconnectMetrics {
+            links: Vec::new(),
+            power_states: Vec::new(),
+            queues: Vec::new(),
+            traffic: Vec::new(),
+        }
+    }
+
+    fn empty_spr_interconnect_metrics() -> crate::metrics::interconnect::spr::SprInterconnectMetrics
+    {
+        crate::metrics::interconnect::spr::SprInterconnectMetrics {
+            links: Vec::new(),
+            power_states: Vec::new(),
+            traffic: Vec::new(),
         }
     }
 }

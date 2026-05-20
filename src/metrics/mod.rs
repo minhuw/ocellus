@@ -3,6 +3,7 @@ pub(crate) mod common;
 pub mod iio;
 pub mod imc;
 mod info;
+pub mod interconnect;
 pub mod irp;
 pub mod pcu;
 pub mod rapl;
@@ -21,6 +22,8 @@ pub struct MetricsState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub imc: Option<imc::ImcMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub interconnect: Option<interconnect::InterconnectMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub irp: Option<irp::IrpMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pcu: Option<pcu::PcuMetrics>,
@@ -37,6 +40,7 @@ impl MetricsState {
             MetricUpdate::Cha(cha) => self.cha = Some(*cha),
             MetricUpdate::Iio(iio) => self.iio = Some(*iio),
             MetricUpdate::Imc(imc) => self.imc = Some(*imc),
+            MetricUpdate::Interconnect(interconnect) => self.interconnect = Some(*interconnect),
             MetricUpdate::Irp(irp) => self.irp = Some(*irp),
             MetricUpdate::Pcu(pcu) => self.pcu = Some(*pcu),
             MetricUpdate::Rapl(rapl) => self.rapl = Some(*rapl),
@@ -52,6 +56,7 @@ impl Default for MetricsState {
             cha: None,
             iio: None,
             imc: None,
+            interconnect: None,
             irp: None,
             pcu: None,
             rapl: None,
@@ -65,6 +70,7 @@ pub struct CollectorMetadata {
     pub cha_supported: bool,
     pub iio_supported: bool,
     pub imc_supported: bool,
+    pub interconnect_supported: bool,
     pub irp_supported: bool,
     pub pcu_supported: bool,
 }
@@ -96,6 +102,7 @@ pub enum MetricUpdate {
     Cha(Box<cha::ChaMetrics>),
     Iio(Box<iio::IioMetrics>),
     Imc(Box<imc::ImcMetrics>),
+    Interconnect(Box<interconnect::InterconnectMetrics>),
     Irp(Box<irp::IrpMetrics>),
     Pcu(Box<pcu::PcuMetrics>),
     Rapl(Box<rapl::RaplMetrics>),
@@ -107,6 +114,7 @@ pub struct MetricsRegistry {
     cha: Option<cha::ChaPrometheusMetrics>,
     iio: Option<iio::IioPrometheusMetrics>,
     imc: Option<imc::ImcPrometheusMetrics>,
+    interconnect: Option<interconnect::InterconnectPrometheusMetrics>,
     irp: Option<irp::IrpPrometheusMetrics>,
     pcu: Option<pcu::PcuPrometheusMetrics>,
     rapl: Option<rapl::RaplPrometheusMetrics>,
@@ -121,6 +129,9 @@ impl MetricsRegistry {
             cha: cha::ChaPrometheusMetrics::register(registry, &metadata),
             iio: iio::IioPrometheusMetrics::register(registry, &metadata),
             imc: imc::ImcPrometheusMetrics::register(registry, &metadata),
+            interconnect: interconnect::InterconnectPrometheusMetrics::register(
+                registry, &metadata,
+            ),
             irp: irp::IrpPrometheusMetrics::register(registry, &metadata),
             pcu: pcu::PcuPrometheusMetrics::register(registry, &metadata),
             rapl: rapl::RaplPrometheusMetrics::register(registry, &metadata),
@@ -133,6 +144,9 @@ impl MetricsRegistry {
             MetricUpdate::Cha(cha) => expect_registered(&self.cha, "CHA").update(*cha),
             MetricUpdate::Iio(iio) => expect_registered(&self.iio, "IIO").update(*iio),
             MetricUpdate::Imc(imc) => expect_registered(&self.imc, "IMC").update(*imc),
+            MetricUpdate::Interconnect(interconnect) => {
+                expect_registered(&self.interconnect, "interconnect").update(*interconnect)
+            }
             MetricUpdate::Irp(irp) => expect_registered(&self.irp, "IRP").update(*irp),
             MetricUpdate::Pcu(pcu) => expect_registered(&self.pcu, "PCU").update(*pcu),
             MetricUpdate::Rapl(rapl) => expect_registered(&self.rapl, "RAPL").update(*rapl),
@@ -150,6 +164,9 @@ impl MetricsRegistry {
         }
         if let Some(imc) = state.imc {
             expect_registered(&self.imc, "IMC").update(imc);
+        }
+        if let Some(interconnect) = state.interconnect {
+            expect_registered(&self.interconnect, "interconnect").update(interconnect);
         }
         if let Some(irp) = state.irp {
             expect_registered(&self.irp, "IRP").update(irp);

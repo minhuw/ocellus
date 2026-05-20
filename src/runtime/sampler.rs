@@ -9,6 +9,7 @@ use crate::arch::Architecture;
 use crate::metrics::cha::{ChaCollector, ChaMultiplexMode, ChaTask};
 use crate::metrics::iio::{IioCollector, IioTask};
 use crate::metrics::imc::{ImcCollector, ImcTask};
+use crate::metrics::interconnect::{InterconnectCollector, InterconnectTask};
 use crate::metrics::irp::{IrpCollector, IrpTask};
 use crate::metrics::pcu::{PcuCollector, PcuTask};
 use crate::metrics::rapl::{RaplCollector, RaplTask};
@@ -104,6 +105,7 @@ pub fn spawn(
     spawn_iio_collector(&architecture, measure_interval, &event_tx);
     spawn_irp_collector(&architecture, measure_interval, &event_tx);
     spawn_pcu_collector(&architecture, measure_interval, &event_tx);
+    spawn_interconnect_collector(&architecture, measure_interval, &event_tx);
     spawn_collector(
         "tsc",
         TscTask::new(TscCollector::new(), measure_interval, event_tx.clone()).run(),
@@ -130,6 +132,7 @@ fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> 
                 cha_supported: ChaCollector::is_supported(architecture),
                 iio_supported: IioCollector::is_supported(architecture),
                 imc_supported: ImcCollector::is_supported(architecture),
+                interconnect_supported: InterconnectCollector::is_supported(architecture),
                 irp_supported: IrpCollector::is_supported(architecture),
                 pcu_supported: PcuCollector::is_supported(architecture),
             },
@@ -265,6 +268,26 @@ fn spawn_pcu_collector(
         }
         Err(error) => {
             eprintln!("ocellus: skipping PCU collector: {error}");
+        }
+    }
+}
+
+fn spawn_interconnect_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    events: &mpsc::Sender<MetricEvent>,
+) {
+    match InterconnectCollector::new(architecture) {
+        Ok(interconnect) => {
+            eprintln!("ocellus: starting interconnect collector");
+            spawn_collector(
+                "interconnect",
+                InterconnectTask::new(interconnect, measure_interval, events.clone()).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping interconnect collector: {error}");
         }
     }
 }

@@ -33,8 +33,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_rapl_power_watts{package=\"$package\",die_group=\"$die_group\",die=\"$die\",domain=\"package\"}",
-                        "legendFormat": "package",
+                        "expr": "ocellus_rapl_power_watts{package=\"$package\",die_group=\"$die_group\",die=\"$die\",domain=\"package\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} package",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -151,8 +151,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_rapl_power_watts{package=\"$package\",die_group=\"$die_group\",die=\"$die\",domain=\"dram\"}",
-                        "legendFormat": "DRAM",
+                        "expr": "ocellus_rapl_power_watts{package=\"$package\",die_group=\"$die_group\",die=\"$die\",domain=\"dram\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} DRAM",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -269,8 +269,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_tsc_frequency_hz",
-                        "legendFormat": "TSC frequency",
+                        "expr": "ocellus_tsc_frequency_hz{instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} TSC frequency",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -387,8 +387,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_irp_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "IRP {{stack}}",
+                        "expr": "ocellus_irp_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} IRP {{stack}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -505,8 +505,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_irp_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "IRP {{stack}}",
+                        "expr": "ocellus_irp_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} IRP {{stack}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -623,8 +623,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_irp_total_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"}",
-                        "legendFormat": "total IRP occupancy",
+                        "expr": "ocellus_irp_total_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} total IRP occupancy",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -646,8 +646,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_irp_faf_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"}",
-                        "legendFormat": "FAF occupancy",
+                        "expr": "ocellus_irp_faf_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} FAF occupancy",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -764,8 +764,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_irp_pcie_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "PCIe inbound writes",
+                        "expr": "(ocellus_irp_pcie_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} PCIe inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -787,8 +787,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_irp_pcie_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "PCIe inbound writes",
+                        "expr": "((ocellus_irp_pcie_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} PCIe inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -810,8 +810,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_irp_pcie_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "PCIe inbound writes",
+                        "expr": "((ocellus_irp_pcie_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} PCIe inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -953,8 +953,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_irp_pcie_inbound_write_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"}",
-                        "legendFormat": "PCIe inbound write latency",
+                        "expr": "ocellus_irp_pcie_inbound_write_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} PCIe inbound write latency",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1071,8 +1071,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_irp_io_write_conflict_ratio{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"}",
-                        "legendFormat": "I/O write conflict ratio",
+                        "expr": "ocellus_irp_io_write_conflict_ratio{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} I/O write conflict ratio",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1189,8 +1189,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_irp_pcie_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "PCIe inbound reads",
+                        "expr": "(ocellus_irp_pcie_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} PCIe inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1212,8 +1212,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_irp_pcie_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "PCIe inbound reads",
+                        "expr": "((ocellus_irp_pcie_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} PCIe inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1235,8 +1235,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_irp_pcie_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "PCIe inbound reads",
+                        "expr": "((ocellus_irp_pcie_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} PCIe inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1378,8 +1378,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_irp_faf_full_ratio{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"}",
-                        "legendFormat": "FAF full ratio",
+                        "expr": "ocellus_irp_faf_full_ratio{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} FAF full ratio",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1496,8 +1496,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_irp_all_hit_m_snoop_responses_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\"}",
-                        "legendFormat": "AllHitM snoop responses",
+                        "expr": "ocellus_irp_all_hit_m_snoop_responses_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$irp_stack\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} AllHitM snoop responses",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1614,8 +1614,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_imc_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "IMC Read Bandwidth",
+                        "expr": "((ocellus_imc_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{instance}} IMC Read Bandwidth",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1637,8 +1637,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_imc_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "IMC Read Bandwidth",
+                        "expr": "((ocellus_imc_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} IMC Read Bandwidth",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1777,8 +1777,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_imc_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "IMC Write Bandwidth",
+                        "expr": "((ocellus_imc_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{instance}} IMC Write Bandwidth",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1800,8 +1800,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_imc_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "IMC Write Bandwidth",
+                        "expr": "((ocellus_imc_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} IMC Write Bandwidth",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1940,8 +1940,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_imc_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "IMC Frequency",
+                        "expr": "ocellus_imc_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} IMC Frequency",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2055,8 +2055,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_imc_rpq_residency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "IMC RPQ Residency",
+                        "expr": "ocellus_imc_rpq_residency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} IMC RPQ Residency",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2170,8 +2170,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_imc_wpq_residency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "IMC WPQ Residency",
+                        "expr": "ocellus_imc_wpq_residency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} IMC WPQ Residency",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2285,8 +2285,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_imc_rpq_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "IMC RPQ Occupancy",
+                        "expr": "ocellus_imc_rpq_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} IMC RPQ Occupancy",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2400,8 +2400,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_imc_wpq_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "IMC WPQ Occupancy",
+                        "expr": "ocellus_imc_wpq_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} IMC WPQ Occupancy",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2515,8 +2515,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_imc_activate_commands_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "activate",
+                        "expr": "ocellus_imc_activate_commands_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} activate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2538,8 +2538,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_imc_page_miss_precharge_commands_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "page-miss",
+                        "expr": "ocellus_imc_page_miss_precharge_commands_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} page-miss",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2561,8 +2561,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_imc_read_cas_commands_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"} + ocellus_imc_write_cas_commands_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "CAS",
+                        "expr": "ocellus_imc_read_cas_commands_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"} + ocellus_imc_write_cas_commands_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} CAS",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2676,8 +2676,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "CHA frequency",
+                        "expr": "ocellus_cha_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} CHA frequency",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2794,8 +2794,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_ha_request_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"} / 64) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{locality}} {{operation}}",
+                        "expr": "(ocellus_cha_ha_request_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{locality}} {{operation}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2817,8 +2817,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_ha_request_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{locality}} {{operation}}",
+                        "expr": "((ocellus_cha_ha_request_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{locality}} {{operation}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2840,8 +2840,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_ha_request_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{locality}} {{operation}}",
+                        "expr": "((ocellus_cha_ha_request_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{locality}} {{operation}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2983,8 +2983,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_ha_request_local_ratio{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "{{operation}}",
+                        "expr": "ocellus_cha_ha_request_local_ratio{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{operation}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3101,8 +3101,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3124,8 +3124,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3147,8 +3147,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3290,8 +3290,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3408,8 +3408,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3526,8 +3526,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_pcirdcur\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3644,8 +3644,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3667,8 +3667,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3690,8 +3690,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3833,8 +3833,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3951,8 +3951,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4069,8 +4069,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itom\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4187,8 +4187,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4210,8 +4210,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4233,8 +4233,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4376,8 +4376,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4494,8 +4494,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4612,8 +4612,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_itomcachenear\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4730,8 +4730,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4753,8 +4753,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4776,8 +4776,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4919,8 +4919,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5037,8 +5037,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5155,8 +5155,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_drd\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5273,8 +5273,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5296,8 +5296,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5319,8 +5319,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5462,8 +5462,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5580,8 +5580,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5698,8 +5698,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_rfo\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5816,8 +5816,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_request_queue_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "{{source}}",
+                        "expr": "ocellus_cha_request_queue_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{source}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5934,8 +5934,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5957,8 +5957,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5980,8 +5980,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6123,8 +6123,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6241,8 +6241,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6359,8 +6359,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_wbmtoi\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6477,8 +6477,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6500,8 +6500,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6523,8 +6523,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6666,8 +6666,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6784,8 +6784,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -6902,8 +6902,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_itom\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7020,8 +7020,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7043,8 +7043,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7066,8 +7066,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7209,8 +7209,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7327,8 +7327,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7445,8 +7445,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_clflush\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7563,8 +7563,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7586,8 +7586,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7609,8 +7609,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7752,8 +7752,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7870,8 +7870,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -7988,8 +7988,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_wbmtoi\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8106,8 +8106,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8129,8 +8129,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8152,8 +8152,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8295,8 +8295,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8413,8 +8413,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8531,8 +8531,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\"}",
-                        "legendFormat": "hit rate",
+                        "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"io_clflush\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} hit rate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8649,8 +8649,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_llc_victims_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "{{state}}",
+                        "expr": "ocellus_cha_llc_victims_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{state}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8767,8 +8767,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{result}}",
+                        "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8790,8 +8790,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8813,8 +8813,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{result}}",
+                        "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8956,8 +8956,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9074,8 +9074,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\"}",
-                        "legendFormat": "{{result}}",
+                        "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",die_group=\"$die_group\",die=\"$die\",transaction=\"ia_specitom\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9192,8 +9192,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_iio_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "IIO {{stack}}",
+                        "expr": "ocellus_iio_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} IIO {{stack}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9307,8 +9307,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "stack {{stack}} port {{port}}",
+                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\",instance=\"$instance\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9330,8 +9330,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "stack {{stack}} port {{port}}",
+                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9353,8 +9353,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "stack {{stack}} port {{port}}",
+                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9493,8 +9493,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "inbound writes",
+                        "expr": "((ocellus_iio_inbound_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9516,8 +9516,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "inbound writes",
+                        "expr": "((ocellus_iio_inbound_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9539,8 +9539,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "inbound writes",
+                        "expr": "((ocellus_iio_inbound_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9679,8 +9679,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_iio_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "inbound writes",
+                        "expr": "(ocellus_iio_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9702,8 +9702,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "inbound writes",
+                        "expr": "((ocellus_iio_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9725,8 +9725,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "inbound writes",
+                        "expr": "((ocellus_iio_inbound_writes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} inbound writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9865,8 +9865,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "inbound reads",
+                        "expr": "((ocellus_iio_inbound_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9888,8 +9888,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "inbound reads",
+                        "expr": "((ocellus_iio_inbound_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -9911,8 +9911,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "inbound reads",
+                        "expr": "((ocellus_iio_inbound_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10051,8 +10051,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "(ocellus_iio_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "inbound reads",
+                        "expr": "(ocellus_iio_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10074,8 +10074,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "inbound reads",
+                        "expr": "((ocellus_iio_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10097,8 +10097,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "inbound reads",
+                        "expr": "((ocellus_iio_inbound_reads_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} inbound reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10237,8 +10237,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "stack {{stack}} port {{port}}",
+                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\",instance=\"$instance\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10260,8 +10260,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "stack {{stack}} port {{port}}",
+                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10283,8 +10283,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "stack {{stack}} port {{port}}",
+                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=\"$iio_port\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10423,8 +10423,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_pcu_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "PCU frequency",
+                        "expr": "ocellus_pcu_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} PCU frequency",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10538,8 +10538,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_pcu_core_c_state_average_cores{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "core {{c_state}}",
+                        "expr": "ocellus_pcu_core_c_state_average_cores{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} core {{c_state}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10653,8 +10653,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_interconnect_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "link {{link}}",
+                        "expr": "ocellus_interconnect_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} link {{link}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10768,8 +10768,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_interconnect_data_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"} / 1073741824",
-                        "legendFormat": "link {{link}} {{direction}}",
+                        "expr": "ocellus_interconnect_data_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"} / 1073741824",
+                        "legendFormat": "{{instance}} link {{link}} {{direction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10883,8 +10883,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_interconnect_flits_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "link {{link}} {{direction}} {{traffic}}",
+                        "expr": "ocellus_interconnect_flits_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} link {{link}} {{direction}} {{traffic}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -10998,8 +10998,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_interconnect_power_state_ratio{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}",
-                        "legendFormat": "link {{link}} {{direction}} {{state}}",
+                        "expr": "ocellus_interconnect_power_state_ratio{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} link {{link}} {{direction}} {{state}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -11466,14 +11466,14 @@
                         "name": "Prometheus"
                       },
                       "spec": {
-                        "query": "label_values(ocellus_irp_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}, stack)",
+                        "query": "label_values(ocellus_irp_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}, stack)",
                         "refId": "StandardVariableQuery"
                       }
                     },
                     "regex": "",
                     "regexApplyTo": "value",
                     "sort": "alphabeticalAsc",
-                    "definition": "label_values(ocellus_irp_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}, stack)",
+                    "definition": "label_values(ocellus_irp_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}, stack)",
                     "options": [],
                     "multi": false,
                     "includeAll": false,
@@ -11607,14 +11607,14 @@
                         "name": "Prometheus"
                       },
                       "spec": {
-                        "query": "label_values(ocellus_iio_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}, stack)",
+                        "query": "label_values(ocellus_iio_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}, stack)",
                         "refId": "StandardVariableQuery"
                       }
                     },
                     "regex": "",
                     "regexApplyTo": "value",
                     "sort": "alphabeticalAsc",
-                    "definition": "label_values(ocellus_iio_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\"}, stack)",
+                    "definition": "label_values(ocellus_iio_frequency_hz{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}, stack)",
                     "options": [],
                     "multi": false,
                     "includeAll": false,
@@ -11642,14 +11642,14 @@
                         "name": "Prometheus"
                       },
                       "spec": {
-                        "query": "label_values(ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}, port)",
+                        "query": "label_values(ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}, port)",
                         "refId": "StandardVariableQuery"
                       }
                     },
                     "regex": "",
                     "regexApplyTo": "value",
                     "sort": "numericalAsc",
-                    "definition": "label_values(ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\"}, port)",
+                    "definition": "label_values(ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}, port)",
                     "options": [],
                     "multi": false,
                     "includeAll": false,
@@ -12438,6 +12438,41 @@
       {
         "kind": "QueryVariable",
         "spec": {
+          "name": "instance",
+          "current": {
+            "selected": false,
+            "text": "host.docker.internal:8080",
+            "value": "host.docker.internal:8080"
+          },
+          "label": "Instance",
+          "hide": "dontHide",
+          "refresh": "onDashboardLoad",
+          "skipUrlSync": true,
+          "query": {
+            "kind": "DataQuery",
+            "group": "prometheus",
+            "version": "v0",
+            "datasource": {
+              "name": "Prometheus"
+            },
+            "spec": {
+              "query": "label_values({__name__=~\"ocellus_.*\"}, instance)",
+              "refId": "InstanceVariableQuery"
+            }
+          },
+          "regex": "",
+          "regexApplyTo": "value",
+          "sort": "alphabeticalAsc",
+          "definition": "label_values({__name__=~\"ocellus_.*\"}, instance)",
+          "options": [],
+          "multi": false,
+          "includeAll": false,
+          "allowCustomValue": true
+        }
+      },
+      {
+        "kind": "QueryVariable",
+        "spec": {
           "name": "package",
           "current": {
             "selected": false,
@@ -12456,14 +12491,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\"}, package)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\"}, package)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
           "options": [],
           "multi": false,
           "includeAll": false,
@@ -12491,14 +12526,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\"}, die_group)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\"}, die_group)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
           "options": [],
           "multi": false,
           "includeAll": false,
@@ -12526,14 +12561,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\"}, die)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\"}, die)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
           "options": [],
           "multi": false,
           "includeAll": false,

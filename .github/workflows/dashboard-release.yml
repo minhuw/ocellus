@@ -1,0 +1,70 @@
+name: Release assets
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust musl target
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Build static Linux binary
+        run: cargo build --locked --release --target x86_64-unknown-linux-musl
+
+      - name: Prepare static Linux binary asset
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          cp target/x86_64-unknown-linux-musl/release/ocellus \
+            "ocellus-${TAG_NAME}"
+          cp target/x86_64-unknown-linux-musl/release/ocellus ocellus
+          sha256sum "ocellus-${TAG_NAME}" > "ocellus-${TAG_NAME}.sha256"
+          sha256sum ocellus > ocellus.sha256
+
+      - name: Verify static binary
+        run: |
+          file target/x86_64-unknown-linux-musl/release/ocellus
+          if readelf -l target/x86_64-unknown-linux-musl/release/ocellus | grep -q INTERP; then
+            echo "expected a static binary, found an ELF interpreter" >&2
+            exit 1
+          fi
+
+      - name: Build dashboard site assets
+        env:
+          OCELLUS_SITE_VERSION: ${{ github.ref_name }}
+          OCELLUS_RELEASE_BUILD: "1"
+        run: |
+          cd site
+          npm ci
+          npm run prebuild
+
+      - name: Validate dashboard JSON
+        run: jq empty demo/grafana/dashboards/*.json site/public/dashboards/*.json
+
+      - name: Publish dashboard release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          cp site/public/dashboards/release-index.json "ocellus-dashboards-${TAG_NAME}.json"
+          gh release view "${TAG_NAME}" >/dev/null 2>&1 ||
+            gh release create "${TAG_NAME}" --title "${TAG_NAME}" --generate-notes
+          gh release upload "${TAG_NAME}" \
+            ocellus \
+            ocellus.sha256 \
+            "ocellus-${TAG_NAME}" \
+            "ocellus-${TAG_NAME}.sha256" \
+            demo/grafana/dashboards/*.json \
+            "ocellus-dashboards-${TAG_NAME}.json" \
+            --clobber

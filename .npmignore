@@ -1,0 +1,11 @@
+*
+!README.md
+!package.json
+!package-lock.json
+!bin/
+!bin/**
+!site/
+!site/scripts/
+!site/scripts/sync-grafana-dashboards.ts
+!site/lib/
+!site/lib/dashboard-types.ts

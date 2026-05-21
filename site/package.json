@@ -1,0 +1,27 @@
+{
+  "name": "ocellus-site",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "prebuild": "tsx scripts/build-dashboard-assets.ts",
+    "predev": "tsx scripts/build-dashboard-assets.ts",
+    "build": "next build",
+    "dev": "next dev",
+    "sync-dashboards": "tsx scripts/sync-grafana-dashboards.ts",
+    "typecheck": "npm run prebuild && next build"
+  },
+  "dependencies": {
+    "next": "^16.0.7",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "shiki": "^4.1.0",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,15 @@
+/dashboards/index.json
+  Cache-Control: public, max-age=60
+  Access-Control-Allow-Origin: *
+
+/dashboards/release-index.json
+  Cache-Control: public, max-age=300
+  Access-Control-Allow-Origin: *
+
+/dashboards/*.json
+  Cache-Control: public, max-age=300
+  Access-Control-Allow-Origin: *
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

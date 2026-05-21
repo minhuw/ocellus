@@ -1,0 +1,26 @@
+# Dependencies
+/node_modules
+
+# Next.js build output and caches
+/.next
+/out
+/.vercel
+/.turbo
+
+# Generated dashboard assets copied from demo/grafana/dashboards
+/public/dashboards
+
+# TypeScript incremental cache
+/tsconfig.tsbuildinfo
+
+# Legacy generated output from the previous static-site generator
+/dist
+
+# Local environment files
+.env*.local
+
+# Package-manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

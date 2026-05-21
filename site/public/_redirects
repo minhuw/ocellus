@@ -1,0 +1,3 @@
+/manifest.json /dashboards/index.json 200
+/dashboards/:version/index.json https://github.com/minhuw/ocellus/releases/download/:version/ocellus-dashboards-:version.json 302
+/dashboards/:version/:file https://github.com/minhuw/ocellus/releases/download/:version/:file 302

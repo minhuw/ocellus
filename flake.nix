@@ -18,6 +18,12 @@
           version = manifest.version;
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
+
+          # Local cargo invocations use sudo as the Linux runner; Nix sandboxed
+          # checks must run the test binary directly.
+          postPatch = ''
+            rm -f .cargo/config.toml
+          '';
         };
 
         apps.default = {

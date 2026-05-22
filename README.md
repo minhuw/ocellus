@@ -20,6 +20,21 @@ sudo modprobe msr
 sudo cargo run -- --daemon --listen 0.0.0.0:8080 --measure-interval-ms 1000
 ```
 
+Run directly from the GitHub flake:
+
+```sh
+sudo modprobe msr
+sudo nix run github:minhuw/ocellus -- --daemon --listen 0.0.0.0:8080 --measure-interval-ms 1000
+```
+
+Alternatively, build with Nix first and run the built binary with elevated
+privileges:
+
+```sh
+nix build github:minhuw/ocellus
+sudo ./result/bin/ocellus --daemon --listen 0.0.0.0:8080 --measure-interval-ms 1000
+```
+
 ## Releases
 
 Tagged releases publish a statically linked Linux x86_64 binary:

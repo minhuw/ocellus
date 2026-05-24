@@ -11,11 +11,99 @@ use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
+use crate::metal::pci;
 use crate::metrics::common::BYTES_PER_CACHE_LINE;
 use crate::metrics::uncore::skx::{UncoreScope, events_per_second, scale_to_enabled};
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 pub const CHA_COUNTER_COUNT: usize = 4;
+const LINUX_UNCORE_EVENT_SOURCE_ROOT: &str = "/sys/bus/event_source/devices";
+
+pub(crate) fn linux_uncore_unit_ids(
+    prefixes: &[&str],
+    max_count: usize,
+) -> Result<Vec<usize>, String> {
+    let mut ids = Vec::new();
+
+    for entry in std::fs::read_dir(LINUX_UNCORE_EVENT_SOURCE_ROOT).map_err(|error| {
+        format!(
+            "failed to read Linux uncore PMU devices from {LINUX_UNCORE_EVENT_SOURCE_ROOT}: {error}"
+        )
+    })? {
+        let entry =
+            entry.map_err(|error| format!("failed to read Linux uncore PMU device: {error}"))?;
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+
+        if let Some(id) =
+            linux_uncore_unit_id_from_event_source_name(file_name, prefixes, max_count)
+        {
+            ids.push(id);
+        }
+    }
+
+    ids.sort_unstable();
+    ids.dedup();
+
+    if ids.is_empty() {
+        return Err(format!(
+            "Linux uncore PMU exposes no units matching {:?}",
+            prefixes
+        ));
+    }
+
+    Ok(ids)
+}
+
+pub(crate) fn linux_uncore_unit_id_from_event_source_name(
+    name: &str,
+    prefixes: &[&str],
+    max_count: usize,
+) -> Option<usize> {
+    for prefix in prefixes {
+        let Some(id) = name.strip_prefix(prefix) else {
+            continue;
+        };
+        let Ok(id) = id.parse::<usize>() else {
+            continue;
+        };
+
+        if id < max_count {
+            return Some(id);
+        }
+    }
+
+    None
+}
+
+pub(crate) fn pci_location_for_cpu(
+    cpu: u32,
+    locations: &[pci::PciLocation],
+    device_name: &str,
+) -> Result<pci::PciLocation, String> {
+    pci_location_for_cpu_with_local_cpus(cpu, locations, device_name, pci::local_cpus)
+}
+
+pub(crate) fn pci_location_for_cpu_with_local_cpus(
+    cpu: u32,
+    locations: &[pci::PciLocation],
+    device_name: &str,
+    mut local_cpus: impl FnMut(pci::PciLocation) -> Result<Vec<u32>, String>,
+) -> Result<pci::PciLocation, String> {
+    match locations {
+        [] => Err(format!("failed to find {device_name} PCI device")),
+        [location] => Ok(*location),
+        _ => locations
+            .iter()
+            .copied()
+            .find(|location| {
+                local_cpus(*location).is_ok_and(|local_cpus| local_cpus.contains(&cpu))
+            })
+            .ok_or_else(|| format!("failed to map CPU {cpu} to a {device_name} PCI device")),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -654,6 +742,92 @@ mod tests {
         assert!(!ChaCollector::is_supported(&test_architecture(0x6c)));
         assert!(ChaCollector::is_supported(&test_architecture(0x8f)));
         assert!(ChaCollector::is_supported(&test_architecture(0xcf)));
+    }
+
+    #[test]
+    fn parses_linux_uncore_cha_event_source_names() {
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_cha_0", &["uncore_cha_"], 28),
+            Some(0)
+        );
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_cha_27", &["uncore_cha_"], 28),
+            Some(27)
+        );
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_cha_28", &["uncore_cha_"], 28),
+            None
+        );
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_iio_0", &["uncore_cha_"], 28),
+            None
+        );
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_cha", &["uncore_cha_"], 28),
+            None
+        );
+    }
+
+    #[test]
+    fn parses_linux_uncore_cbox_event_source_names() {
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_cbox_0", &["uncore_cbox_"], 32),
+            Some(0)
+        );
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_cbox_31", &["uncore_cbox_"], 32),
+            Some(31)
+        );
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_cbox_32", &["uncore_cbox_"], 32),
+            None
+        );
+        assert_eq!(
+            linux_uncore_unit_id_from_event_source_name("uncore_cha_0", &["uncore_cbox_"], 32),
+            None
+        );
+    }
+
+    #[test]
+    fn maps_cpu_to_socket_local_pci_location() {
+        let locations = [
+            crate::metal::pci::PciLocation {
+                bus: 0,
+                device: 0x1e,
+                function: 3,
+                group: 0,
+            },
+            crate::metal::pci::PciLocation {
+                bus: 1,
+                device: 0x1e,
+                function: 3,
+                group: 0,
+            },
+        ];
+
+        assert_eq!(
+            pci_location_for_cpu_with_local_cpus(12, &locations, "test CAPID", |location| {
+                Ok(match location.bus {
+                    0 => vec![0, 2, 4, 6],
+                    1 => vec![1, 3, 12, 14],
+                    _ => Vec::new(),
+                })
+            })
+            .unwrap(),
+            locations[1]
+        );
+        assert_eq!(
+            pci_location_for_cpu_with_local_cpus(0, &[], "test CAPID", |_| Ok(Vec::new()))
+                .unwrap_err(),
+            "failed to find test CAPID PCI device"
+        );
+        assert_eq!(
+            pci_location_for_cpu_with_local_cpus(99, &locations, "test CAPID", |_| {
+                Ok(Vec::new())
+            })
+            .unwrap_err(),
+            "failed to map CPU 99 to a test CAPID PCI device"
+        );
     }
 
     fn test_architecture(model: u8) -> Architecture {

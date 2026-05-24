@@ -14,7 +14,8 @@ use crate::metrics::cha::{
     ChaHaRequestMetrics, ChaMultiplexMode, ChaRequestOperation, ChaRequestQueueMetrics,
     ChaRequestSource, ChaScopeMetrics, ChaSfEvictionMetrics, ChaTransactionLabel,
     ChaTransactionMetrics, ChaTransactionResult, ChaTransactionResultMetrics, bytes_per_second,
-    event_rate, llc_victim_metrics, required_measurement, scale_measurement_value,
+    event_rate, linux_uncore_unit_ids, llc_victim_metrics, pci_location_for_cpu,
+    required_measurement, scale_measurement_value,
 };
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, frequency_hz, mask_counter, measurement_round_count,
@@ -1700,7 +1701,7 @@ fn discover_packages(architecture: IcxChaArchitecture) -> Result<Vec<IcxChaPacka
 }
 
 fn discover_units(architecture: IcxChaArchitecture, cpu: u32) -> Result<Vec<IcxChaUnit>, String> {
-    let cha_ids = icx_cha_ids()?;
+    let cha_ids = icx_cha_ids(cpu)?;
     let msr = Msr::open_readonly(cpu)?;
     let mut units = Vec::new();
 
@@ -1737,11 +1738,19 @@ fn discover_units(architecture: IcxChaArchitecture, cpu: u32) -> Result<Vec<IcxC
     Ok(units)
 }
 
-fn icx_cha_ids() -> Result<Vec<usize>, String> {
+fn icx_cha_ids(cpu: u32) -> Result<Vec<usize>, String> {
+    match linux_uncore_unit_ids(&["uncore_cha_"], ICX_MAX_CHA_COUNT) {
+        Ok(ids) => Ok(ids),
+        Err(error) => {
+            eprintln!("ocellus: falling back to ICX CAPID for CHA discovery: {error}");
+            icx_cha_ids_from_capid_pci(cpu)
+        }
+    }
+}
+
+fn icx_cha_ids_from_capid_pci(cpu: u32) -> Result<Vec<usize>, String> {
     let locations = metal::pci::find_intel_devices_matching_device_id(ICX_CAPID_DEVICE_ID)?;
-    let location = *locations
-        .first()
-        .ok_or_else(|| "failed to find Ice Lake-SP CAPID PCI device".to_string())?;
+    let location = pci_location_for_cpu(cpu, &locations, "Ice Lake-SP CAPID")?;
     let device = metal::pci::PciDevice::open_readonly(location)?;
     let capid6 = device.read_u32(ICX_CAPID6_OFFSET)?;
     let capid7 = device.read_u32(ICX_CAPID7_OFFSET)?;
@@ -1752,14 +1761,14 @@ fn icx_cha_ids() -> Result<Vec<usize>, String> {
 fn icx_cha_ids_from_capid(capid6: u32, capid7: u32) -> Result<Vec<usize>, String> {
     let bitmap = u64::from(capid6) | ((u64::from(capid7) & 0xff) << 32);
     let max_count = ICX_CAPID_BITMAP_WIDTH.min(ICX_CHA_MSR_PMON_BOX_CTL.len());
-    let ids: Vec<_> = (0..max_count)
+    let count = (0..max_count)
         .filter(|id| ((bitmap >> id) & 1) != 0)
-        .collect();
+        .count();
 
-    if ids.is_empty() {
+    if count == 0 {
         Err("Ice Lake-SP CAPID reports zero available CHAs".to_string())
     } else {
-        Ok(ids)
+        Ok((0..count).collect())
     }
 }
 
@@ -2351,11 +2360,11 @@ mod tests {
     fn discovers_icx_cha_ids_from_capid_bitmap() {
         assert_eq!(
             icx_cha_ids_from_capid(0x0000_0f0f, 0).unwrap(),
-            vec![0, 1, 2, 3, 8, 9, 10, 11]
+            (0..8).collect::<Vec<usize>>()
         );
         assert_eq!(
             icx_cha_ids_from_capid(0, 0xff).unwrap(),
-            vec![32, 33, 34, 35, 36, 37, 38, 39]
+            (0..8).collect::<Vec<usize>>()
         );
         assert!(icx_cha_ids_from_capid(0, 0).is_err());
     }

@@ -9,9 +9,11 @@ use prometheus_client::registry::Registry;
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::arch::skx::pmon;
 use crate::metal::msr::Msr;
+use crate::metal::pci;
 use crate::metrics::cha::{
     CHA_COUNTER_COUNT, ChaEventKind, ChaEventMeasurement, ChaTransactionLabel, bytes_per_second,
-    event_rate, llc_victim_metrics, required_measurement, scale_measurement_value,
+    event_rate, linux_uncore_unit_ids, llc_victim_metrics, pci_location_for_cpu,
+    required_measurement, scale_measurement_value,
 };
 pub use crate::metrics::cha::{
     ChaCacheState, ChaEvictionMetrics, ChaHaRequestLocality, ChaHaRequestMetrics,
@@ -26,6 +28,9 @@ use crate::metrics::uncore::skx::{
 };
 
 const SKX_CHA_EVENT_GROUP_COUNT: usize = 37;
+const SKX_CAPID6_OFFSET: u64 = 0x9c;
+const SKX_CAPID_DEVICE_ID: u16 = 0x2083;
+const SKX_CHA_CAPID6_MASK: u32 = (1_u32 << SKX_MAX_CHA_COUNT) - 1;
 const SKX_MAX_CHA_COUNT: usize = 28;
 
 const CHA_COUNTER_BASE: u64 = 0x0e08;
@@ -1477,7 +1482,7 @@ fn discover_units(cpu: u32) -> Result<Vec<ChaUnit>, String> {
     let msr = Msr::open_readonly(cpu)?;
     let mut units = Vec::new();
 
-    for id in 0..SKX_MAX_CHA_COUNT {
+    for id in skx_cha_unit_ids(cpu)? {
         if msr.read(cha_unit_control_offset(id)).is_ok()
             && msr.read(cha_counter_offset(id, 0)).is_ok()
             && msr.read(cha_control_offset(id, 0)).is_ok()
@@ -1493,6 +1498,50 @@ fn discover_units(cpu: u32) -> Result<Vec<ChaUnit>, String> {
     }
 
     Ok(units)
+}
+
+fn skx_cha_unit_ids(cpu: u32) -> Result<Vec<usize>, String> {
+    match skx_cha_unit_ids_from_linux_uncore_pmu() {
+        Ok(ids) => Ok(ids),
+        Err(error) => {
+            eprintln!("ocellus: falling back to SKX CAPID6 for CHA discovery: {error}");
+            match skx_cha_unit_ids_from_capid_pci(cpu) {
+                Ok(ids) => Ok(ids),
+                Err(error) => {
+                    eprintln!(
+                        "ocellus: falling back to MSR probing for SKX CHA discovery: {error}"
+                    );
+                    Ok(skx_cha_unit_ids_for_msr_probe())
+                }
+            }
+        }
+    }
+}
+
+fn skx_cha_unit_ids_from_linux_uncore_pmu() -> Result<Vec<usize>, String> {
+    linux_uncore_unit_ids(&["uncore_cha_"], SKX_MAX_CHA_COUNT)
+}
+
+fn skx_cha_unit_ids_from_capid_pci(cpu: u32) -> Result<Vec<usize>, String> {
+    let locations = pci::find_intel_devices_matching_device_id(SKX_CAPID_DEVICE_ID)?;
+    let location = pci_location_for_cpu(cpu, &locations, "SKX CAPID")?;
+    let device = pci::PciDevice::open_readonly(location)?;
+    let capid6 = device.read_u32(SKX_CAPID6_OFFSET)?;
+
+    skx_cha_unit_ids_from_capid6(capid6)
+}
+
+fn skx_cha_unit_ids_from_capid6(capid6: u32) -> Result<Vec<usize>, String> {
+    let count = (capid6 & SKX_CHA_CAPID6_MASK).count_ones() as usize;
+    if count == 0 {
+        return Err("SKX CAPID6 reports zero available CHAs".to_string());
+    }
+
+    Ok((0..count).collect())
+}
+
+fn skx_cha_unit_ids_for_msr_probe() -> Vec<usize> {
+    (0..SKX_MAX_CHA_COUNT).collect()
 }
 
 fn eviction_metrics(
@@ -2235,6 +2284,36 @@ mod tests {
         assert_eq!(cha_unit_control_offset(27), 0x0fb0);
         assert_eq!(cha_control_offset(27, 3), 0x0fb4);
         assert_eq!(cha_counter_offset(27, 3), 0x0fbb);
+    }
+
+    #[test]
+    fn decodes_skx_cha_count_from_capid6() {
+        assert_eq!(
+            skx_cha_unit_ids_from_capid6(0x000f).unwrap(),
+            (0..4).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            skx_cha_unit_ids_from_capid6(0xf0f0).unwrap(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        assert_eq!(skx_cha_unit_ids_from_capid6(0xf000_0001).unwrap(), vec![0]);
+        assert_eq!(
+            skx_cha_unit_ids_from_capid6(0x03d2_f4f4).unwrap(),
+            (0..16).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            skx_cha_unit_ids_from_capid6(0x02e9_eb74).unwrap(),
+            (0..16).collect::<Vec<usize>>()
+        );
+        assert!(skx_cha_unit_ids_from_capid6(0).is_err());
+    }
+
+    #[test]
+    fn falls_back_to_full_skx_cha_msr_probe_range() {
+        assert_eq!(
+            skx_cha_unit_ids_for_msr_probe(),
+            (0..SKX_MAX_CHA_COUNT).collect::<Vec<usize>>()
+        );
     }
 
     #[test]

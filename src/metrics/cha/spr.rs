@@ -13,7 +13,8 @@ use crate::metrics::cha::{
     ChaHaRequestMetrics, ChaMultiplexMode, ChaRequestOperation, ChaRequestQueueMetrics,
     ChaRequestSource, ChaScopeMetrics, ChaSfEvictionMetrics, ChaTransactionLabel,
     ChaTransactionMetrics, ChaTransactionResult, ChaTransactionResultMetrics, bytes_per_second,
-    event_rate, llc_victim_metrics, required_measurement, scale_measurement_value,
+    event_rate, linux_uncore_unit_ids, llc_victim_metrics, pci_location_for_cpu,
+    required_measurement, scale_measurement_value,
 };
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, frequency_hz, mask_counter, measurement_round_count,
@@ -26,6 +27,7 @@ const SPR_CHA_COUNT_HIGH_OFFSET: u64 = 0xa0;
 const SPR_EMR_CHA_NAME: &str = "SPR/EMR";
 const SPR_CHA_CLOCK_EVENT: u8 = 0x01;
 const SPR_MAX_CHA_COUNT: usize = 128;
+const SPR_MSR_UNC_CBO_CONFIG: u64 = 0x2ffe;
 const SPR_UNIT_COUNTER_RESET_BIT: u64 = 1 << 9;
 const SPR_UNIT_CONTROL_RESET_BIT: u64 = 1 << 8;
 const SPR_UNIT_FREEZE_BIT: u64 = 1 << 0;
@@ -1498,13 +1500,11 @@ fn discover_packages() -> Result<Vec<SprChaPackage>, String> {
 }
 
 fn discover_units(cpu: u32) -> Result<Vec<SprChaUnit>, String> {
-    let count = spr_cha_count(cpu)?;
-    let max_count = SPR_MAX_CHA_COUNT;
-    let count = count.min(max_count);
+    let ids = spr_cha_ids(cpu)?;
     let msr = Msr::open_readonly(cpu)?;
     let mut units = Vec::new();
 
-    for id in 0..count {
+    for id in ids {
         if msr.read(spr_cha_unit_control_offset(id)).is_ok()
             && msr.read(spr_cha_counter_offset(id, 0)).is_ok()
             && msr.read(spr_cha_control_offset(id, 0)).is_ok()
@@ -1529,8 +1529,19 @@ fn discover_units(cpu: u32) -> Result<Vec<SprChaUnit>, String> {
     Ok(units)
 }
 
+fn spr_cha_ids(cpu: u32) -> Result<Vec<usize>, String> {
+    match linux_uncore_unit_ids(&["uncore_cha_"], SPR_MAX_CHA_COUNT) {
+        Ok(ids) => Ok(ids),
+        Err(error) => {
+            eprintln!("ocellus: falling back to {SPR_EMR_CHA_NAME} PCI CHA count: {error}");
+            let count = spr_cha_count(cpu)?.min(SPR_MAX_CHA_COUNT);
+            Ok((0..count).collect())
+        }
+    }
+}
+
 fn spr_cha_count(cpu: u32) -> Result<usize, String> {
-    match spr_cha_count_from_pci() {
+    match spr_cha_count_from_msr(cpu).or_else(|_| spr_cha_count_from_pci(cpu)) {
         Ok(count) if count > 0 => Ok(count),
         Ok(_) | Err(_) => {
             let msr = Msr::open_readonly(cpu)?;
@@ -1553,11 +1564,20 @@ fn spr_cha_count(cpu: u32) -> Result<usize, String> {
     }
 }
 
-fn spr_cha_count_from_pci() -> Result<usize, String> {
+fn spr_cha_count_from_msr(cpu: u32) -> Result<usize, String> {
+    let count = Msr::open_readonly(cpu)?.read(SPR_MSR_UNC_CBO_CONFIG)? as usize;
+    if count == 0 || count > SPR_MAX_CHA_COUNT {
+        Err(format!(
+            "{SPR_EMR_CHA_NAME} MSR 0x{SPR_MSR_UNC_CBO_CONFIG:x} reports invalid CHA count {count}"
+        ))
+    } else {
+        Ok(count)
+    }
+}
+
+fn spr_cha_count_from_pci(cpu: u32) -> Result<usize, String> {
     let locations = metal::pci::find_intel_devices_matching_device_id(SPR_CHA_COUNT_DEVICE_ID)?;
-    let location = *locations
-        .first()
-        .ok_or_else(|| format!("failed to find {SPR_EMR_CHA_NAME} CHA count PCI device"))?;
+    let location = pci_location_for_cpu(cpu, &locations, &format!("{SPR_EMR_CHA_NAME} CHA count"))?;
     let device = metal::pci::PciDevice::open_readonly(location)?;
     let low = device.read_u32(SPR_CHA_COUNT_LOW_OFFSET)?;
     let high = device.read_u32(SPR_CHA_COUNT_HIGH_OFFSET)?;

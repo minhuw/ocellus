@@ -14,7 +14,8 @@ use crate::metrics::cha::{
     CHA_COUNTER_COUNT, ChaCacheState, ChaEventKind, ChaEventMeasurement, ChaLlcLookupMetrics,
     ChaLlcVictimMetrics, ChaLookupOperation, ChaMultiplexMode, ChaScopeMetrics,
     ChaTransactionLabel, ChaTransactionMetrics, ChaTransactionResult, ChaTransactionResultMetrics,
-    bytes_per_second, llc_victim_metrics, required_measurement, scale_measurement_value,
+    bytes_per_second, linux_uncore_unit_ids, llc_victim_metrics, required_measurement,
+    scale_measurement_value,
 };
 use crate::metrics::uncore::hsx::{self, HsxUncoreScope};
 use crate::metrics::uncore::skx::{UncoreScope, queue_residency_seconds, ratio};
@@ -1344,7 +1345,7 @@ fn discover_units(cpu: u32) -> Result<Vec<HsxChaUnit>, String> {
     let msr = Msr::open_readonly(cpu)?;
     let mut units = Vec::new();
 
-    for id in 0..HSX_MAX_CBO_COUNT {
+    for id in hsx_cbo_unit_ids()? {
         if msr.read(cbo_unit_control_offset(id)).is_ok()
             && msr.read(cbo_counter_offset(id, 0)).is_ok()
             && msr.read(cbo_control_offset(id, 0)).is_ok()
@@ -1372,6 +1373,18 @@ fn discover_units(cpu: u32) -> Result<Vec<HsxChaUnit>, String> {
     }
 
     Ok(units)
+}
+
+fn hsx_cbo_unit_ids() -> Result<Vec<usize>, String> {
+    match linux_uncore_unit_ids(&["uncore_cbox_"], HSX_MAX_CBO_COUNT) {
+        Ok(ids) => Ok(ids),
+        Err(error) => {
+            eprintln!(
+                "ocellus: falling back to MSR probing for Haswell/Broadwell CBo discovery: {error}"
+            );
+            Ok((0..HSX_MAX_CBO_COUNT).collect())
+        }
+    }
 }
 
 fn program_packages(

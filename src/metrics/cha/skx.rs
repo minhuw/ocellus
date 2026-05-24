@@ -192,8 +192,8 @@ impl ChaEventGroup {
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
-                ChaEventSpec::sum(ChaEventKind::EvictionOccupancy, 0x36, 0x02),
-                ChaEventSpec::sum(ChaEventKind::EvictionInsert, 0x35, 0x02),
+                ChaEventSpec::sum(ChaEventKind::EvictionOccupancy, 0x36, 0x32),
+                ChaEventSpec::sum(ChaEventKind::EvictionInsert, 0x35, 0x32),
                 ChaEventSpec::clockticks(ChaEventKind::EvictionClockticks),
                 ChaEventSpec::unused(),
             ],
@@ -2071,6 +2071,23 @@ mod tests {
         assert_eq!(ChaFilter0::llc_lookup_any_state().value(), 0xff << 17);
         assert_eq!(ChaFilter1::total_all_opcodes().value(), 0x3b);
         assert_eq!(ChaFilter1::total_opcode(0x202).value(), 0x40433);
+    }
+
+    #[test]
+    fn uses_counting_eviction_tor_events() {
+        let eviction_group = SKX_CHA_EVENT_GROUPS[0];
+
+        assert_eq!(eviction_group.filter0, ChaFilter0::none());
+        assert_eq!(eviction_group.filter1, ChaFilter1::total_all_opcodes());
+        assert_eq!(
+            eviction_group.events,
+            [
+                ChaEventSpec::sum(ChaEventKind::EvictionOccupancy, 0x36, 0x32),
+                ChaEventSpec::sum(ChaEventKind::EvictionInsert, 0x35, 0x32),
+                ChaEventSpec::clockticks(ChaEventKind::EvictionClockticks),
+                ChaEventSpec::unused(),
+            ]
+        );
     }
 
     #[test]

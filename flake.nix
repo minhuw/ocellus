@@ -11,6 +11,38 @@
       let
         pkgs = import nixpkgs { inherit system; };
         manifest = (pkgs.lib.importTOML ./Cargo.toml).package;
+        dashboardSync = pkgs.stdenvNoCC.mkDerivation {
+          pname = "ocellus-dashboard-sync";
+          version = manifest.version;
+          src = self;
+
+          nativeBuildInputs = [
+            pkgs.esbuild
+            pkgs.makeWrapper
+          ];
+
+          buildPhase = ''
+            runHook preBuild
+            esbuild site/scripts/sync-grafana-dashboards.ts \
+              --bundle \
+              --platform=node \
+              --format=esm \
+              --target=node20 \
+              --banner:js='#!/usr/bin/env node' \
+              --outfile=ocellus-sync-dashboards.js
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 ocellus-sync-dashboards.js $out/libexec/ocellus-sync-dashboards.js
+            makeWrapper ${pkgs.nodejs_22}/bin/node $out/bin/ocellus-sync-dashboards \
+              --add-flags $out/libexec/ocellus-sync-dashboards.js
+            runHook postInstall
+          '';
+
+          meta.mainProgram = "ocellus-sync-dashboards";
+        };
       in
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
@@ -25,6 +57,7 @@
             rm -f .cargo/config.toml
           '';
         };
+        packages.dashboard-sync = dashboardSync;
 
         apps.default = {
           type = "app";

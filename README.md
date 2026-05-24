@@ -74,3 +74,13 @@ Use `--format classic` if your Grafana provisioning flow expects classic
 dashboard JSON. Classic sync rewrites import placeholders to the datasource UID
 `Prometheus`; pass `--datasource-uid UID` if your Grafana datasource uses a
 different UID.
+
+The sync CLI is also available from Nix:
+
+```sh
+nix run github:minhuw/ocellus#dashboard-sync -- \
+  --output /var/lib/grafana/dashboards/ocellus \
+  --datasource-name VictoriaMetrics \
+  --datasource-uid victoria \
+  --prune
+```

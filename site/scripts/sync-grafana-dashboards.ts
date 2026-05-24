@@ -1,26 +1,37 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, normalize } from "node:path";
 import type { DashboardManifest } from "../lib/dashboard-types";
 
 const defaultManifest = "https://ocellus.minhuw.dev/dashboards/index.json";
+const defaultDatasourceUid = "Prometheus";
+const datasourcePlaceholder = "${DS_PROMETHEUS}";
 
 type Args = {
   manifest: string;
   output?: string;
   dashboardBaseUrl?: string;
   format: "v2" | "classic";
+  datasourceName?: string;
   datasourceUid: string;
   intervalSeconds?: number;
   dryRun: boolean;
+  prune: boolean;
+};
+
+type PlannedDashboard = {
+  file: string;
+  destination: string;
+  payload: Buffer;
 };
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     manifest: defaultManifest,
     format: "v2",
-    datasourceUid: "Prometheus",
+    datasourceUid: defaultDatasourceUid,
     dryRun: false,
+    prune: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -45,11 +56,16 @@ function parseArgs(argv: string[]): Args {
     } else if (arg === "--datasource-uid" && next) {
       args.datasourceUid = next;
       index += 1;
+    } else if (arg === "--datasource-name" && next) {
+      args.datasourceName = next;
+      index += 1;
     } else if (arg === "--interval-seconds" && next) {
       args.intervalSeconds = Number.parseInt(next, 10);
       index += 1;
     } else if (arg === "--dry-run") {
       args.dryRun = true;
+    } else if (arg === "--prune") {
+      args.prune = true;
     } else if (arg === "--help" || arg === "-h") {
       usage(0);
     } else {
@@ -79,8 +95,10 @@ Options:
   --manifest URL             Manifest URL. Defaults to ${defaultManifest}
   --dashboard-base-url URL   Override dashboard URLs from the manifest.
   --format v2|classic        Dashboard format to sync. Defaults to v2.
+  --datasource-name NAME     Rewrite Prometheus datasource names to NAME.
   --datasource-uid UID       Classic provisioning datasource UID. Defaults to Prometheus.
   --interval-seconds N       Run continuously and sync every N seconds.
+  --prune                    Remove old *.json files that are not in the manifest.
   --dry-run                  Fetch and verify without writing files.
 `);
   process.exit(code);
@@ -130,29 +148,111 @@ function safeDashboardFile(file: string): string {
   return file;
 }
 
-function classicProvisioningPayload(payload: Buffer, datasourceUid: string): Buffer {
-  const dashboard = JSON.parse(payload.toString("utf8")) as unknown;
-  const rewrite = (value: unknown): unknown => {
-    if (typeof value === "string") {
-      return value === "${DS_PROMETHEUS}" ? datasourceUid : value;
-    }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
-    if (Array.isArray(value)) {
-      return value.map(rewrite);
-    }
+function shouldRewriteDatasource(args: Args): boolean {
+  return args.datasourceName !== undefined || args.datasourceUid !== defaultDatasourceUid;
+}
 
-    if (value && typeof value === "object") {
-      return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, rewrite(item)]),
-      );
-    }
+function rewriteDatasourceReferences(
+  value: unknown,
+  args: Args,
+  parentKey?: string,
+): unknown {
+  if (typeof value === "string") {
+    return value === datasourcePlaceholder ? args.datasourceUid : value;
+  }
 
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteDatasourceReferences(item, args));
+  }
+
+  if (!isRecord(value)) {
     return value;
-  };
+  }
 
-  const rewritten = rewrite(dashboard) as Record<string, unknown>;
-  delete rewritten.__inputs;
+  const rewritten = Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      rewriteDatasourceReferences(item, args, key),
+    ]),
+  );
+  const originalName = typeof value.name === "string" ? value.name : undefined;
+  const originalUid = typeof value.uid === "string" ? value.uid : undefined;
+  const pointsAtPrometheus =
+    originalName === "Prometheus" ||
+    originalUid === defaultDatasourceUid ||
+    originalUid === datasourcePlaceholder;
+
+  if (parentKey === "datasource" && pointsAtPrometheus) {
+    if (args.datasourceName !== undefined) {
+      rewritten.name = args.datasourceName;
+    }
+
+    if (args.datasourceUid !== defaultDatasourceUid || originalUid === datasourcePlaceholder) {
+      rewritten.uid = args.datasourceUid;
+    }
+  }
+
+  if (
+    args.datasourceName !== undefined &&
+    value.type === "datasource" &&
+    originalName === "Prometheus"
+  ) {
+    rewritten.name = args.datasourceName;
+  }
+
+  return rewritten;
+}
+
+function dashboardProvisioningPayload(payload: Buffer, args: Args): Buffer {
+  if (args.format !== "classic" && !shouldRewriteDatasource(args)) {
+    return payload;
+  }
+
+  const dashboard = JSON.parse(payload.toString("utf8")) as unknown;
+  const rewritten = rewriteDatasourceReferences(dashboard, args) as Record<string, unknown>;
+  if (args.format === "classic") {
+    delete rewritten.__inputs;
+  }
+
   return Buffer.from(`${JSON.stringify(rewritten, null, 2)}\n`);
+}
+
+async function readCurrentFile(file: string): Promise<Buffer | null> {
+  try {
+    return await readFile(file);
+  } catch {
+    return null;
+  }
+}
+
+async function existingJsonFiles(output: string): Promise<string[]> {
+  try {
+    const entries = await readdir(output, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+async function writeAtomically(destination: string, payload: Buffer): Promise<void> {
+  const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(temporary, payload);
+    await rename(temporary, destination);
+  } catch (error) {
+    try {
+      await unlink(temporary);
+    } catch {
+      // Best effort cleanup for a failed atomic write.
+    }
+    throw error;
+  }
 }
 
 async function syncOnce(args: Args): Promise<void> {
@@ -162,10 +262,17 @@ async function syncOnce(args: Args): Promise<void> {
     throw new Error("--output is required");
   }
 
+  const plannedDashboards: PlannedDashboard[] = [];
+  const manifestFiles = new Set<string>();
   for (const item of manifest.dashboards) {
     const file = safeDashboardFile(
       args.format === "classic" ? item.classicFile : item.file,
     );
+    if (manifestFiles.has(file)) {
+      throw new Error(`${file}: duplicate dashboard filename in manifest`);
+    }
+    manifestFiles.add(file);
+
     const itemUrl = args.format === "classic" ? item.classicUrl : item.url;
     const expectedSha = args.format === "classic" ? item.classicSha256 : item.sha256;
     const url = dashboardUrl(file, itemUrl, args.dashboardBaseUrl);
@@ -174,33 +281,48 @@ async function syncOnce(args: Args): Promise<void> {
     if (actualSha !== expectedSha) {
       throw new Error(`${file}: sha256 mismatch, expected ${expectedSha}, got ${actualSha}`);
     }
-    const payload = args.format === "classic"
-      ? classicProvisioningPayload(fetchedPayload, args.datasourceUid)
-      : fetchedPayload;
+    const payload = dashboardProvisioningPayload(fetchedPayload, args);
 
-    const destination = join(output, file);
-    let current: Buffer | null = null;
-    try {
-      current = await readFile(destination);
-    } catch {
-      current = null;
-    }
+    plannedDashboards.push({
+      file,
+      destination: join(output, file),
+      payload,
+    });
+  }
 
-    if (current && current.equals(payload)) {
-      console.log(`unchanged: ${destination}`);
+  const oldFiles = args.prune
+    ? (await existingJsonFiles(output)).filter((file) => !manifestFiles.has(file))
+    : [];
+
+  if (!args.dryRun) {
+    await mkdir(output, { recursive: true });
+  }
+
+  for (const dashboard of plannedDashboards) {
+    const current = await readCurrentFile(dashboard.destination);
+    if (current && current.equals(dashboard.payload)) {
+      console.log(`unchanged: ${dashboard.destination}`);
       continue;
     }
 
     if (args.dryRun) {
-      console.log(`would_update: ${destination}`);
+      console.log(`would_update: ${dashboard.destination}`);
       continue;
     }
 
-    await mkdir(output, { recursive: true });
-    const temporary = join(output, `.${file}.${process.pid}.tmp`);
-    await writeFile(temporary, payload);
-    await rename(temporary, destination);
-    console.log(`updated: ${destination}`);
+    await writeAtomically(dashboard.destination, dashboard.payload);
+    console.log(`updated: ${dashboard.destination}`);
+  }
+
+  for (const file of oldFiles) {
+    const destination = join(output, file);
+    if (args.dryRun) {
+      console.log(`would_remove: ${destination}`);
+      continue;
+    }
+
+    await unlink(destination);
+    console.log(`removed: ${destination}`);
   }
 }
 

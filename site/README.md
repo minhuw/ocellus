@@ -60,6 +60,12 @@ sync rewrites import placeholders to the datasource UID `Prometheus`; pass
 `--datasource-uid UID` if your Grafana datasource uses a different UID. For a
 long-running sidecar style process, add `--interval-seconds 300`.
 
+Use `--datasource-name NAME` and `--datasource-uid UID` to rewrite the
+provisioned dashboard datasource references away from the default Prometheus
+datasource. Use `--prune` to remove stale dashboard JSON files in the output
+directory after a successful sync. The same CLI is available as the Nix package
+`.#dashboard-sync` for systemd timer usage.
+
 To pin dashboards to a release, use a versioned manifest URL:
 
 ```sh

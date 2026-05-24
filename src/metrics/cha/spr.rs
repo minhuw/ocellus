@@ -731,7 +731,10 @@ impl SprChaCollector {
         let mut measurements = SprChaMeasurementAccumulator::new();
         let packages = &self.packages;
 
-        for slice in self.schedule(interval) {
+        let slices = self.schedule(interval);
+        let measured_slice_count = slices.len();
+
+        for slice in slices {
             program_packages(packages, slice)?;
 
             let started_at = Instant::now();
@@ -748,15 +751,17 @@ impl SprChaCollector {
             )?;
         }
 
-        self.rotate_schedule();
+        self.rotate_schedule(measured_slice_count);
 
         SprChaMetrics::from_measurements(measurements.into_measurements())
     }
 
-    fn rotate_schedule(&mut self) {
+    fn rotate_schedule(&mut self, measured_slice_count: usize) {
         self.next_group =
             (self.next_group + self.multiplex_mode.partitions()) % SPR_EMR_CHA_EVENT_GROUPS.len();
-        self.next_partition_offset = self.next_partition_offset.wrapping_add(1);
+        self.next_partition_offset = self
+            .next_partition_offset
+            .wrapping_add(measured_slice_count);
     }
 
     fn schedule(&self, interval: Duration) -> Vec<SprChaMeasurementSlice> {
@@ -778,7 +783,9 @@ impl SprChaCollector {
                 slices.push(SprChaMeasurementSlice {
                     duration: slice_duration,
                     groups,
-                    partition_offset: self.next_partition_offset + round + slice_index,
+                    partition_offset: self.next_partition_offset
+                        + (round * slice_count_per_round)
+                        + slice_index,
                     partition_width: partitions,
                 });
             }

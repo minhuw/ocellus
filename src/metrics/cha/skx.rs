@@ -810,7 +810,10 @@ impl SkxChaCollector {
         let mut measurements = ChaMeasurementAccumulator::new();
         let packages = &self.packages;
 
-        for slice in self.schedule(interval) {
+        let slices = self.schedule(interval);
+        let measured_slice_count = slices.len();
+
+        for slice in slices {
             program_packages(packages, slice)?;
 
             let started_at = Instant::now();
@@ -827,20 +830,22 @@ impl SkxChaCollector {
             )?;
         }
 
-        self.rotate_schedule();
+        self.rotate_schedule(measured_slice_count);
 
         SkxChaMetrics::from_measurements(measurements.into_measurements())
     }
 
-    fn rotate_schedule(&mut self) {
+    fn rotate_schedule(&mut self, measured_slice_count: usize) {
         self.next_group =
             (self.next_group + self.multiplex_mode.partitions()) % SKX_CHA_EVENT_GROUPS.len();
-        self.next_partition_offset = self.next_partition_offset.wrapping_add(1);
+        self.next_partition_offset = self
+            .next_partition_offset
+            .wrapping_add(measured_slice_count);
     }
 
     #[cfg(test)]
     fn rotate_group(&mut self) {
-        self.rotate_schedule();
+        self.rotate_schedule(1);
     }
 
     fn schedule(&self, interval: Duration) -> Vec<ChaMeasurementSlice> {
@@ -860,7 +865,9 @@ impl SkxChaCollector {
                 slices.push(ChaMeasurementSlice {
                     duration: slice_duration,
                     groups,
-                    partition_offset: self.next_partition_offset + round + slice_index,
+                    partition_offset: self.next_partition_offset
+                        + (round * slice_count_per_round)
+                        + slice_index,
                     partition_width: partitions,
                 });
             }
@@ -2271,6 +2278,34 @@ mod tests {
     }
 
     #[test]
+    fn spatial_multiplexing_uses_contiguous_partition_offsets() {
+        let mut collector = test_collector_with_units(SKX_MAX_CHA_COUNT);
+        collector.set_multiplex_mode(ChaMultiplexMode::spatial(4));
+
+        let slices = collector.schedule(Duration::from_secs(2));
+        let partition_offsets: Vec<usize> =
+            slices.iter().map(|slice| slice.partition_offset).collect();
+
+        assert_eq!(partition_offsets, (0..slices.len()).collect::<Vec<usize>>());
+    }
+
+    #[test]
+    fn spatial_multiplexing_advances_sampled_units_after_full_sample() {
+        let mut collector = test_collector_with_units(SKX_MAX_CHA_COUNT);
+        collector.set_multiplex_mode(ChaMultiplexMode::spatial(4));
+        let group = SKX_CHA_EVENT_GROUPS[0];
+        let mut sampled_units = Vec::new();
+
+        for _ in 0..3 {
+            let slices = collector.schedule(Duration::from_millis(100));
+            sampled_units.push(sampled_units_for_group(&slices, group, SKX_MAX_CHA_COUNT));
+            collector.rotate_schedule(slices.len());
+        }
+
+        assert_ne!(sampled_units[1], sampled_units[2]);
+    }
+
+    #[test]
     fn spatial_multiplexing_falls_back_when_partitions_exceed_cha_units() {
         let mut collector = test_collector_with_units(3);
         collector.set_multiplex_mode(ChaMultiplexMode::spatial(4));
@@ -2315,6 +2350,26 @@ mod tests {
         slices
             .into_iter()
             .map(|slice| slice.groups.into_iter().flatten().collect())
+            .collect()
+    }
+
+    fn sampled_units_for_group(
+        slices: &[ChaMeasurementSlice],
+        group: ChaEventGroup,
+        unit_count: usize,
+    ) -> Vec<usize> {
+        let slice = slices
+            .iter()
+            .find(|slice| slice.groups.contains(&Some(group)))
+            .expect("group should be scheduled");
+        let partition = slice
+            .groups
+            .iter()
+            .position(|candidate| *candidate == Some(group))
+            .expect("group should be assigned to a partition");
+
+        (0..unit_count)
+            .filter(|unit_index| cha_partition(*unit_index, *slice, unit_count) == partition)
             .collect()
     }
 

@@ -434,7 +434,10 @@ impl HsxChaCollector {
         let mut measurements = HsxChaMeasurementAccumulator::new();
         let packages = &self.packages;
 
-        for slice in self.schedule(interval) {
+        let slices = self.schedule(interval);
+        let measured_slice_count = slices.len();
+
+        for slice in slices {
             program_packages(packages, slice)?;
 
             let started_at = Instant::now();
@@ -451,20 +454,22 @@ impl HsxChaCollector {
             )?;
         }
 
-        self.rotate_schedule();
+        self.rotate_schedule(measured_slice_count);
 
         HsxChaMetrics::from_measurements(measurements.into_measurements())
     }
 
-    fn rotate_schedule(&mut self) {
+    fn rotate_schedule(&mut self, measured_slice_count: usize) {
         self.next_group =
             (self.next_group + self.multiplex_mode.partitions()) % HSX_CBO_EVENT_GROUPS.len();
-        self.next_partition_offset = self.next_partition_offset.wrapping_add(1);
+        self.next_partition_offset = self
+            .next_partition_offset
+            .wrapping_add(measured_slice_count);
     }
 
     #[cfg(test)]
     fn rotate_group(&mut self) {
-        self.rotate_schedule();
+        self.rotate_schedule(1);
     }
 
     fn schedule(&self, interval: Duration) -> Vec<HsxChaMeasurementSlice> {
@@ -484,7 +489,9 @@ impl HsxChaCollector {
                 slices.push(HsxChaMeasurementSlice {
                     duration: slice_duration,
                     groups,
-                    partition_offset: self.next_partition_offset + round + slice_index,
+                    partition_offset: self.next_partition_offset
+                        + (round * slice_count_per_round)
+                        + slice_index,
                     partition_width: partitions,
                 });
             }

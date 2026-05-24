@@ -4,10 +4,16 @@ export type DashboardEntry = {
   architecture: string;
   file: string;
   url: string;
+  classicFile: string;
+  classicUrl: string;
   releaseUrl: string | null;
+  classicReleaseUrl: string | null;
   versionedUrl: string | null;
+  classicVersionedUrl: string | null;
   sha256: string;
+  classicSha256: string;
   bytes: number;
+  classicBytes: number;
   sourcePath: string;
 };
 

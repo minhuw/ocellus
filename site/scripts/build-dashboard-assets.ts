@@ -9,6 +9,11 @@ import {
   publicBaseUrl,
 } from "../lib/dashboard-metadata";
 import type { DashboardEntry, DashboardManifest } from "../lib/dashboard-types";
+import {
+  classicDashboardFile,
+  convertDashboardV2ToClassic,
+} from "../lib/grafana-dashboard-converter";
+import type { GrafanaDashboardV2 } from "../lib/grafana-dashboard-converter";
 
 type GrafanaDashboard = {
   metadata?: {
@@ -26,6 +31,9 @@ const repoRoot = resolve(siteDir, "..");
 const dashboardSourceDir = join(repoRoot, "demo", "grafana", "dashboards");
 const publicDir = join(siteDir, "public");
 const publicDashboardDir = join(publicDir, "dashboards");
+const publicDashboardAssetDir = join(publicDir, "dashboard-assets");
+const publicClassicDashboardDir = join(publicDashboardAssetDir, "classic");
+const publicV2DashboardDir = join(publicDashboardAssetDir, "v2");
 
 function dashboardTitle(payload: GrafanaDashboard): string {
   return (
@@ -107,8 +115,8 @@ function manifestPayload(
   };
 }
 
-async function loadDashboard(file: string): Promise<GrafanaDashboard> {
-  return JSON.parse(await readFile(join(dashboardSourceDir, file), "utf8")) as GrafanaDashboard;
+async function loadDashboard(file: string): Promise<GrafanaDashboardV2> {
+  return JSON.parse(await readFile(join(dashboardSourceDir, file), "utf8")) as GrafanaDashboardV2;
 }
 
 async function buildDashboardEntries(
@@ -117,16 +125,25 @@ async function buildDashboardEntries(
 ): Promise<DashboardEntry[]> {
   const entries: DashboardEntry[] = [];
   await mkdir(publicDashboardDir, { recursive: true });
+  await mkdir(publicClassicDashboardDir, { recursive: true });
+  await mkdir(publicV2DashboardDir, { recursive: true });
 
   for (const item of dashboardMetadata) {
     const source = join(dashboardSourceDir, item.file);
-    const destination = join(publicDashboardDir, item.file);
+    const v2Destination = join(publicV2DashboardDir, item.file);
+    const classicFile = classicDashboardFile(item.file);
+    const classicDestination = join(publicClassicDashboardDir, classicFile);
     const payload = await loadDashboard(item.file);
+    const classicDashboard = convertDashboardV2ToClassic(payload);
 
-    await copyFile(source, destination);
+    await copyFile(source, v2Destination);
+    await writeJson(classicDestination, classicDashboard);
 
     const releaseUrl = hasRelease
       ? githubReleaseAssetUrl(version, item.file)
+      : null;
+    const classicReleaseUrl = hasRelease
+      ? githubReleaseAssetUrl(version, classicFile)
       : null;
 
     entries.push({
@@ -134,13 +151,21 @@ async function buildDashboardEntries(
       uid: dashboardUid(payload, item.file),
       architecture: item.architecture,
       file: item.file,
-      url: `${publicBaseUrl}/dashboards/${item.file}`,
+      url: `${publicBaseUrl}/dashboard-assets/v2/${item.file}`,
+      classicFile,
+      classicUrl: `${publicBaseUrl}/dashboard-assets/classic/${classicFile}`,
       releaseUrl,
+      classicReleaseUrl,
       versionedUrl: hasRelease
-        ? `${publicBaseUrl}/dashboards/${version}/${item.file}`
+        ? `${publicBaseUrl}/dashboards/${version}/v2/${item.file}`
         : null,
-      sha256: await sha256File(destination),
-      bytes: (await stat(destination)).size,
+      classicVersionedUrl: hasRelease
+        ? `${publicBaseUrl}/dashboards/${version}/classic/${classicFile}`
+        : null,
+      sha256: await sha256File(v2Destination),
+      classicSha256: await sha256File(classicDestination),
+      bytes: (await stat(v2Destination)).size,
+      classicBytes: (await stat(classicDestination)).size,
       sourcePath: relative(repoRoot, source),
     });
   }
@@ -167,6 +192,14 @@ async function writeHeaders(): Promise<void> {
   Cache-Control: public, max-age=300
   Access-Control-Allow-Origin: *
 
+/dashboard-assets/classic/*.json
+  Cache-Control: public, max-age=300
+  Access-Control-Allow-Origin: *
+
+/dashboard-assets/v2/*.json
+  Cache-Control: public, max-age=300
+  Access-Control-Allow-Origin: *
+
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
@@ -178,8 +211,12 @@ async function writeRedirects(): Promise<void> {
   await writeFile(
     join(publicDir, "_redirects"),
     `/manifest.json /dashboards/index.json 200
+/dashboards/index.json /dashboards/index.json 200
+/dashboards/release-index.json /dashboards/release-index.json 200
 /dashboards/:version/index.json https://github.com/${githubRepo}/releases/download/:version/ocellus-dashboards-:version.json 302
 /dashboards/:version/:file https://github.com/${githubRepo}/releases/download/:version/:file 302
+/dashboards/:version/:format/:file https://github.com/${githubRepo}/releases/download/:version/:file 302
+/dashboards/:file /dashboard-assets/v2/:file 301
 `,
   );
 }
@@ -189,6 +226,7 @@ async function main(): Promise<void> {
   const hasRelease = hasReleaseArtifacts(version);
 
   await rm(publicDashboardDir, { recursive: true, force: true });
+  await rm(publicDashboardAssetDir, { recursive: true, force: true });
   const dashboards = await buildDashboardEntries(version, hasRelease);
 
   await writeJson(
@@ -203,6 +241,7 @@ async function main(): Promise<void> {
         dashboards.map((dashboard) => ({
           ...dashboard,
           url: dashboard.releaseUrl ?? dashboard.url,
+          classicUrl: dashboard.classicReleaseUrl ?? dashboard.classicUrl,
         })),
         version,
         version,

@@ -51,13 +51,16 @@ Each release also includes versioned aliases such as `ocellus-v0.1.0` and
 
 ## Dashboards
 
-The demo Grafana dashboards are published from `demo/grafana/dashboards` to `https://ocellus.minhuw.dev`.
+The demo Grafana dashboards are maintained as Grafana v2 resources in
+`demo/grafana/dashboards` and published to `https://ocellus.minhuw.dev`.
+The website also generates classic dashboard JSON for Grafana's import dialog.
 
 - Catalog: `https://ocellus.minhuw.dev/`
 - Manifest: `https://ocellus.minhuw.dev/dashboards/index.json`
 - Versioned release manifest: `https://ocellus.minhuw.dev/dashboards/v0.12.0/index.json`
 
-Existing Grafana installations can use the manifest with file provisioning:
+Existing Grafana installations can use the manifest with file provisioning.
+The default sync format is the v2 resource JSON:
 
 ```sh
 npx --yes --package=github:minhuw/ocellus ocellus-sync-dashboards \
@@ -67,3 +70,7 @@ npx --yes --package=github:minhuw/ocellus ocellus-sync-dashboards \
 
 Add `--interval-seconds 300` to keep syncing dashboards in a long-running process.
 Use a versioned manifest URL to pin dashboards to a tagged Ocellus release.
+Use `--format classic` if your Grafana provisioning flow expects classic
+dashboard JSON. Classic sync rewrites import placeholders to the datasource UID
+`Prometheus`; pass `--datasource-uid UID` if your Grafana datasource uses a
+different UID.

@@ -9,6 +9,8 @@ type Args = {
   manifest: string;
   output?: string;
   dashboardBaseUrl?: string;
+  format: "v2" | "classic";
+  datasourceUid: string;
   intervalSeconds?: number;
   dryRun: boolean;
 };
@@ -16,6 +18,8 @@ type Args = {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     manifest: defaultManifest,
+    format: "v2",
+    datasourceUid: "Prometheus",
     dryRun: false,
   };
 
@@ -31,6 +35,15 @@ function parseArgs(argv: string[]): Args {
       index += 1;
     } else if (arg === "--dashboard-base-url" && next) {
       args.dashboardBaseUrl = next;
+      index += 1;
+    } else if (arg === "--format" && next) {
+      if (next !== "v2" && next !== "classic") {
+        throw new Error("--format must be v2 or classic");
+      }
+      args.format = next;
+      index += 1;
+    } else if (arg === "--datasource-uid" && next) {
+      args.datasourceUid = next;
       index += 1;
     } else if (arg === "--interval-seconds" && next) {
       args.intervalSeconds = Number.parseInt(next, 10);
@@ -65,6 +78,8 @@ function usage(code: number): never {
 Options:
   --manifest URL             Manifest URL. Defaults to ${defaultManifest}
   --dashboard-base-url URL   Override dashboard URLs from the manifest.
+  --format v2|classic        Dashboard format to sync. Defaults to v2.
+  --datasource-uid UID       Classic provisioning datasource UID. Defaults to Prometheus.
   --interval-seconds N       Run continuously and sync every N seconds.
   --dry-run                  Fetch and verify without writing files.
 `);
@@ -115,6 +130,31 @@ function safeDashboardFile(file: string): string {
   return file;
 }
 
+function classicProvisioningPayload(payload: Buffer, datasourceUid: string): Buffer {
+  const dashboard = JSON.parse(payload.toString("utf8")) as unknown;
+  const rewrite = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      return value === "${DS_PROMETHEUS}" ? datasourceUid : value;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map(rewrite);
+    }
+
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, rewrite(item)]),
+      );
+    }
+
+    return value;
+  };
+
+  const rewritten = rewrite(dashboard) as Record<string, unknown>;
+  delete rewritten.__inputs;
+  return Buffer.from(`${JSON.stringify(rewritten, null, 2)}\n`);
+}
+
 async function syncOnce(args: Args): Promise<void> {
   const manifest = await fetchJson<DashboardManifest>(args.manifest);
   const output = args.output;
@@ -123,13 +163,20 @@ async function syncOnce(args: Args): Promise<void> {
   }
 
   for (const item of manifest.dashboards) {
-    const file = safeDashboardFile(item.file);
-    const url = dashboardUrl(file, item.url, args.dashboardBaseUrl);
-    const payload = await fetchBytes(url);
-    const actualSha = sha256(payload);
-    if (actualSha !== item.sha256) {
-      throw new Error(`${file}: sha256 mismatch, expected ${item.sha256}, got ${actualSha}`);
+    const file = safeDashboardFile(
+      args.format === "classic" ? item.classicFile : item.file,
+    );
+    const itemUrl = args.format === "classic" ? item.classicUrl : item.url;
+    const expectedSha = args.format === "classic" ? item.classicSha256 : item.sha256;
+    const url = dashboardUrl(file, itemUrl, args.dashboardBaseUrl);
+    const fetchedPayload = await fetchBytes(url);
+    const actualSha = sha256(fetchedPayload);
+    if (actualSha !== expectedSha) {
+      throw new Error(`${file}: sha256 mismatch, expected ${expectedSha}, got ${actualSha}`);
     }
+    const payload = args.format === "classic"
+      ? classicProvisioningPayload(fetchedPayload, args.datasourceUid)
+      : fetchedPayload;
 
     const destination = join(output, file);
     let current: Buffer | null = null;

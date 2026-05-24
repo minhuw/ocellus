@@ -19,8 +19,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body suppressHydrationWarning>
-        <header className="site-shell site-header">
-          <nav className="nav" aria-label="Primary">
+        <header className="site-header">
+          <nav className="site-shell nav" aria-label="Primary">
             <Link className="brand" href="/">
               Ocellus
             </Link>

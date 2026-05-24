@@ -50,7 +50,7 @@ jobs:
           npm run prebuild
 
       - name: Validate dashboard JSON
-        run: jq empty demo/grafana/dashboards/*.json site/public/dashboards/*.json
+        run: jq empty demo/grafana/dashboards/*.json site/public/dashboards/*.json site/public/dashboard-assets/*/*.json
 
       - name: Publish dashboard release assets
         env:
@@ -65,6 +65,7 @@ jobs:
             ocellus.sha256 \
             "ocellus-${TAG_NAME}" \
             "ocellus-${TAG_NAME}.sha256" \
-            demo/grafana/dashboards/*.json \
+            site/public/dashboard-assets/classic/*.json \
+            site/public/dashboard-assets/v2/*.json \
             "ocellus-dashboards-${TAG_NAME}.json" \
             --clobber

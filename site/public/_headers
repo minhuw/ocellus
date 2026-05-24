@@ -10,6 +10,14 @@
   Cache-Control: public, max-age=300
   Access-Control-Allow-Origin: *
 
+/dashboard-assets/classic/*.json
+  Cache-Control: public, max-age=300
+  Access-Control-Allow-Origin: *
+
+/dashboard-assets/v2/*.json
+  Cache-Control: public, max-age=300
+  Access-Control-Allow-Origin: *
+
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin

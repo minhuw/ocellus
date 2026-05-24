@@ -36,20 +36,30 @@ export default async function HomePage() {
   return (
     <main>
       <section className="site-shell hero home-hero">
-        <p className="eyebrow">Xeon uncore observability</p>
-        <h1 className="hero-title">
-          <span>
-            Turn <strong>Intel Uncore PMU Counters</strong>
-          </span>
-          <span>
-            into <strong>Production Telemetry</strong>
-          </span>
-        </h1>
-        <p className="lede">
-          Ocellus exports memory, cache, interconnect, power, and fabric
-          counters as Prometheus metrics, with Grafana dashboards built for each
-          Intel server generation.
-        </p>
+        <div className="hero-copy">
+          <p className="eyebrow">Xeon uncore observability</p>
+          <h1 className="hero-title">
+            <span>
+              Turn <strong>Intel Uncore PMU Counters</strong>
+            </span>
+            <span>
+              into <strong>Production Telemetry</strong>
+            </span>
+          </h1>
+          <p className="lede">
+            Ocellus exports memory, cache, interconnect, power, and fabric
+            counters as Prometheus metrics, with Grafana dashboards built for
+            each Intel server generation.
+          </p>
+        </div>
+        <div className="hero-panel" aria-label="Telemetry coverage">
+          <span>RAPL</span>
+          <span>IMC</span>
+          <span>CHA</span>
+          <span>IIO</span>
+          <span>PCU</span>
+          <span>UPI</span>
+        </div>
       </section>
 
       <section className="site-shell how-to-section" id="how-to">
@@ -75,8 +85,9 @@ export default async function HomePage() {
           <li>
             <h3>Import a Grafana dashboard</h3>
             <p>
-              Pick the matching Xeon family and version, then copy the dashboard
-              URL into Grafana's import flow.
+              Pick the matching Xeon family and version, then copy or download
+              classic JSON for one-off import. Use v2 resource JSON for
+              provisioning.
             </p>
             <DashboardPicker
               dashboards={manifest.dashboards}

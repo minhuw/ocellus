@@ -107,6 +107,38 @@ function dashboardUrl(dashboard: DashboardEntry, versionMode: string): string {
   return dashboard.versionedUrl ?? dashboard.releaseUrl ?? dashboard.url;
 }
 
+function classicDashboardUrl(dashboard: DashboardEntry, versionMode: string): string {
+  if (versionMode === "latest") {
+    return dashboard.classicUrl;
+  }
+  return (
+    dashboard.classicVersionedUrl ??
+    dashboard.classicReleaseUrl ??
+    dashboard.classicUrl
+  );
+}
+
+function dashboardActionPath(dashboard: DashboardEntry, versionMode: string): string {
+  if (versionMode === "latest") {
+    return `/dashboard-assets/v2/${dashboard.file}`;
+  }
+  return dashboard.versionedUrl
+    ? new URL(dashboard.versionedUrl).pathname
+    : `/dashboard-assets/v2/${dashboard.file}`;
+}
+
+function classicDashboardActionPath(
+  dashboard: DashboardEntry,
+  versionMode: string,
+): string {
+  if (versionMode === "latest") {
+    return `/dashboard-assets/classic/${dashboard.classicFile}`;
+  }
+  return dashboard.classicVersionedUrl
+    ? new URL(dashboard.classicVersionedUrl).pathname
+    : `/dashboard-assets/classic/${dashboard.classicFile}`;
+}
+
 export function DashboardPicker({ dashboards, version }: DashboardPickerProps) {
   const options = useMemo(() => dashboardOptions(dashboards), [dashboards]);
   const searchInputId = useId();
@@ -114,7 +146,8 @@ export function DashboardPicker({ dashboards, version }: DashboardPickerProps) {
   const listboxId = useId();
   const searchRef = useRef<HTMLInputElement>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [copiedItem, setCopiedItem] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [versionMode, setVersionMode] = useState("latest");
   const [selectedOptionId, setSelectedOptionId] = useState(options[0]?.id ?? "");
   const [query, setQuery] = useState(options[0]?.architecture.name ?? "");
@@ -136,6 +169,18 @@ export function DashboardPicker({ dashboards, version }: DashboardPickerProps) {
   const selectedDashboardUrl = selectedDashboard
     ? dashboardUrl(selectedDashboard, versionMode)
     : "";
+  const selectedClassicDashboardUrl = selectedDashboard
+    ? classicDashboardUrl(selectedDashboard, versionMode)
+    : "";
+  const selectedDashboardActionUrl = selectedDashboardUrl
+    ? dashboardActionPath(selectedDashboard, versionMode)
+    : "";
+  const selectedClassicDashboardActionUrl = selectedClassicDashboardUrl
+    ? classicDashboardActionPath(selectedDashboard, versionMode)
+    : "";
+  const selectedVersionLabel =
+    versionMode === "latest" ? "Latest channel" : version;
+  const canCopyClassicDashboard = versionMode === "latest";
   const hasPinnedVersion = dashboards.some((dashboard) => dashboard.versionedUrl);
 
   useEffect(() => {
@@ -162,10 +207,28 @@ export function DashboardPicker({ dashboards, version }: DashboardPickerProps) {
     searchRef.current?.focus();
   }
 
-  async function copyDashboardUrl(url: string) {
-    await navigator.clipboard.writeText(url);
-    setCopiedUrl(url);
-    window.setTimeout(() => setCopiedUrl(null), 1600);
+  async function copyDashboardJson(url: string) {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`failed to fetch dashboard JSON: ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const payload = await response.text();
+    if (!contentType.includes("application/json") && !payload.trimStart().startsWith("{")) {
+      throw new Error("dashboard endpoint returned non-JSON content");
+    }
+
+    await navigator.clipboard.writeText(payload);
+    setCopiedItem(url);
+    setCopyError(null);
+    window.setTimeout(() => setCopiedItem(null), 1600);
+  }
+
+  function copyClassicDashboardJson(url: string) {
+    void copyDashboardJson(url).catch((error) => {
+      setCopyError((error as Error).message);
+    });
   }
 
   return (
@@ -282,29 +345,83 @@ export function DashboardPicker({ dashboards, version }: DashboardPickerProps) {
                   : ""}
               </p>
             </div>
-            <span>Grafana dashboard</span>
+            <span>{selectedVersionLabel}</span>
           </div>
 
-          <div className="dashboard-card-body">
-            <p className="muted">Copy this URL into Grafana's dashboard import flow.</p>
+          <div className="dashboard-facts" aria-label="Dashboard details">
+            <div>
+              <span>Dashboard</span>
+              <strong>{selectedDashboard.title}</strong>
+            </div>
+            <div>
+              <span>Classic JSON</span>
+              <strong>{Math.ceil(selectedDashboard.classicBytes / 1024)} KB</strong>
+            </div>
+            <div>
+              <span>V2 Resource</span>
+              <strong>{Math.ceil(selectedDashboard.bytes / 1024)} KB</strong>
+            </div>
           </div>
 
-          <div className="dashboard-url-copy">
-            <code
-              className="dashboard-url-value"
-              data-full-url={selectedDashboardUrl}
-              tabIndex={0}
-              title={selectedDashboardUrl}
-            >
-              {selectedDashboardUrl}
-            </code>
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => void copyDashboardUrl(selectedDashboardUrl)}
-            >
-              {copiedUrl === selectedDashboardUrl ? "Copied" : "Copy URL"}
-            </button>
+          <div className="dashboard-downloads">
+            <section className="dashboard-action-card primary-action">
+              <div className="action-copy">
+                <span>Recommended for the import dialog</span>
+                <h4>Classic Import JSON</h4>
+                <p>
+                  Copy the dashboard body into Grafana&apos;s import text area,
+                  or download it and upload the file.
+                </p>
+              </div>
+              <div className="dashboard-actions">
+                {canCopyClassicDashboard ? (
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick={() => copyClassicDashboardJson(selectedClassicDashboardActionUrl)}
+                  >
+                    {copiedItem === selectedClassicDashboardActionUrl
+                      ? "Copied"
+                      : "Copy JSON"}
+                  </button>
+                ) : null}
+                <a
+                  className={canCopyClassicDashboard ? "button secondary" : "button primary"}
+                  href={selectedClassicDashboardActionUrl}
+                  download={selectedDashboard.classicFile}
+                >
+                  Download
+                </a>
+              </div>
+              {canCopyClassicDashboard ? null : (
+                <p className="dashboard-note">
+                  Pinned releases are downloaded from immutable release assets.
+                  Download the JSON, then upload it in Grafana.
+                </p>
+              )}
+              {copyError ? <p className="dashboard-error">{copyError}</p> : null}
+            </section>
+
+            <section className="dashboard-action-card">
+              <div className="action-copy">
+                <span>For Git Sync and file provisioning</span>
+                <h4>Grafana V2 Resource JSON</h4>
+                <p>
+                  Keep this format for automated provisioning workflows and
+                  version-controlled dashboard resources. Download the resource
+                  file and place it in your provisioning path or repository.
+                </p>
+              </div>
+              <div className="dashboard-actions">
+                <a
+                  className="button secondary"
+                  href={selectedDashboardActionUrl}
+                  download={selectedDashboard.file}
+                >
+                  Download
+                </a>
+              </div>
+            </section>
           </div>
         </article>
       ) : (

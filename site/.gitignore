@@ -8,6 +8,7 @@
 /.turbo
 
 # Generated dashboard assets copied from demo/grafana/dashboards
+/public/dashboard-assets
 /public/dashboards
 
 # TypeScript incremental cache

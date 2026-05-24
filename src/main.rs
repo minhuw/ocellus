@@ -110,3 +110,18 @@ async fn run(config: Config) -> Result<(), String> {
 
     runtime::run(config.runtime_mode(), sampler).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_to_spatial_cha_multiplexing() {
+        let config = Config::parse_from(["ocellus"]);
+
+        assert_eq!(
+            config.cha_multiplex_mode(),
+            metrics::cha::ChaMultiplexMode::spatial(4)
+        );
+    }
+}

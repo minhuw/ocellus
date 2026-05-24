@@ -103,6 +103,7 @@ type GrafanaTabsLayoutTabV2 = {
   spec: {
     title: string;
     layout: GrafanaGridLayoutV2 | GrafanaRowsLayoutV2;
+    variables?: GrafanaVariableV2[];
   };
 };
 
@@ -450,6 +451,53 @@ function convertLayout(
   return panels;
 }
 
+function variableName(variable: GrafanaVariableV2): string {
+  const name = variable.spec.name;
+  if (typeof name !== "string" || name.length === 0) {
+    throw new Error("dashboard variable is missing a name");
+  }
+  return name;
+}
+
+function appendVariable(
+  variables: Map<string, GrafanaVariableV2>,
+  variable: GrafanaVariableV2,
+): void {
+  const name = variableName(variable);
+  const existing = variables.get(name);
+  if (existing && JSON.stringify(existing) !== JSON.stringify(variable)) {
+    throw new Error(`dashboard variable ${name} is defined more than once`);
+  }
+  variables.set(name, variable);
+}
+
+function collectLayoutVariables(
+  layout: GrafanaDashboardV2["spec"]["layout"],
+  variables: Map<string, GrafanaVariableV2>,
+): void {
+  if (layout.kind !== "TabsLayout") {
+    return;
+  }
+
+  for (const tab of layout.spec.tabs) {
+    for (const variable of tab.spec.variables ?? []) {
+      appendVariable(variables, variable);
+    }
+    collectLayoutVariables(tab.spec.layout, variables);
+  }
+}
+
+function collectVariables(dashboard: GrafanaDashboardV2): GrafanaVariableV2[] {
+  const variables = new Map<string, GrafanaVariableV2>();
+
+  for (const variable of dashboard.spec.variables ?? []) {
+    appendVariable(variables, variable);
+  }
+  collectLayoutVariables(dashboard.spec.layout, variables);
+
+  return [...variables.values()];
+}
+
 export function classicDashboardFile(file: string): string {
   return file.replace(/\.json$/u, ".classic.json");
 }
@@ -465,6 +513,7 @@ export function convertDashboardV2ToClassic(
   }
 
   const timeSettings = dashboard.spec.timeSettings ?? {};
+  const variables = collectVariables(dashboard);
 
   return {
     __inputs: [
@@ -512,7 +561,7 @@ export function convertDashboardV2ToClassic(
     style: "dark",
     tags: dashboard.spec.tags ?? [],
     templating: {
-      list: dashboard.spec.variables?.map(convertVariable) ?? [],
+      list: variables.map(convertVariable),
     },
     time: {
       from: timeSettings.from ?? "now-15m",

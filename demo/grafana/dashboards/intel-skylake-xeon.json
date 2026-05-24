@@ -3705,7 +3705,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=~\"$iio_port\",instance=\"$instance\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
                         "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
@@ -3728,7 +3728,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=~\"$iio_port\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
                         "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
@@ -3751,7 +3751,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "expr": "((ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=~\"$iio_port\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
                         "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
@@ -3891,7 +3891,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=~\"$iio_port\",instance=\"$instance\"}) / 64) and on() (vector(${traffic_mode}) == 0)",
                         "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
@@ -3914,7 +3914,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=~\"$iio_port\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
                         "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
@@ -3937,7 +3937,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "expr": "((ocellus_iio_pcie_write_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",port=~\"$iio_port\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
                         "legendFormat": "{{instance}} stack {{stack}} port {{port}}",
                         "range": true,
                         "interval": "1s",
@@ -18323,6 +18323,42 @@
                     "options": [],
                     "multi": false,
                     "includeAll": false,
+                    "allowCustomValue": true
+                  }
+                },
+                {
+                  "kind": "QueryVariable",
+                  "spec": {
+                    "name": "iio_port",
+                    "current": {
+                      "selected": true,
+                      "text": "All",
+                      "value": "$__all"
+                    },
+                    "label": "IIO Port",
+                    "hide": "dontHide",
+                    "refresh": "onDashboardLoad",
+                    "skipUrlSync": true,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "query": "label_values(ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}, port)",
+                        "refId": "StandardVariableQuery"
+                      }
+                    },
+                    "regex": "",
+                    "regexApplyTo": "value",
+                    "sort": "numericalAsc",
+                    "definition": "label_values(ocellus_iio_pcie_read_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",stack=\"$iio_stack\",instance=\"$instance\"}, port)",
+                    "options": [],
+                    "multi": false,
+                    "includeAll": true,
+                    "allValue": ".*",
                     "allowCustomValue": true
                   }
                 }

@@ -9,7 +9,8 @@ use prometheus_client::registry::Registry;
 use crate::metal::msr::Msr;
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, events_per_second, frequency_hz, mask_counter,
-    measurement_round_count, scale_to_enabled, uncore_leaders, wrapping_delta,
+    measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled, uncore_leaders,
+    wrapping_delta,
 };
 
 const IIO_CHANNEL_MASK_SHIFT: u32 = 36;
@@ -51,6 +52,8 @@ pub const SPR_IIO_STACKS: [SprIioStack; IIO_UNIT_COUNT] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum IioEventKind {
     Clockticks,
+    CompletionInserts,
+    CompletionOccupancy,
     InboundReadDwords,
     InboundReadTransactions,
     InboundWriteDwords,
@@ -68,16 +71,6 @@ struct IioEventSpec {
 }
 
 impl IioEventSpec {
-    const fn unused() -> Self {
-        Self {
-            channel_mask: 0,
-            event: 0,
-            function_class_mask: 0,
-            kind: IioEventKind::Unused,
-            umask: 0,
-        }
-    }
-
     const fn sum(
         kind: IioEventKind,
         event: u8,
@@ -105,7 +98,7 @@ const SPR_IIO_EVENT_GROUPS: [IioEventGroup; 2] = [
         events: [
             IioEventSpec::sum(IioEventKind::InboundWriteDwords, 0x83, 0x01, 0x00ff, 0x07),
             IioEventSpec::sum(IioEventKind::InboundReadDwords, 0x83, 0x04, 0x00ff, 0x07),
-            IioEventSpec::unused(),
+            IioEventSpec::sum(IioEventKind::CompletionOccupancy, 0xd5, 0xff, 0x00ff, 0x07),
             IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00),
         ],
     },
@@ -125,7 +118,7 @@ const SPR_IIO_EVENT_GROUPS: [IioEventGroup; 2] = [
                 0x00ff,
                 0x07,
             ),
-            IioEventSpec::unused(),
+            IioEventSpec::sum(IioEventKind::CompletionInserts, 0xc2, 0x04, 0x00ff, 0x07),
             IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00),
         ],
     },
@@ -201,6 +194,9 @@ pub struct SprIioPciePortMetrics {
 pub struct SprIioScopeMetrics {
     #[serde(flatten)]
     pub scope: UncoreScope,
+    pub completion_inserts_per_second: f64,
+    pub completion_latency_seconds: f64,
+    pub completion_occupancy_entries: f64,
     pub frequency_hz: f64,
     pub stack: SprIioStack,
     pub inbound_read_bytes_per_second: f64,
@@ -215,6 +211,10 @@ impl SprIioScopeMetrics {
         measurements: &BTreeMap<IioEventKind, IioEventMeasurement>,
     ) -> Result<Self, String> {
         let clockticks = required_measurement(measurements, IioEventKind::Clockticks)?;
+        let completion_inserts =
+            required_measurement(measurements, IioEventKind::CompletionInserts)?;
+        let completion_occupancy =
+            required_measurement(measurements, IioEventKind::CompletionOccupancy)?;
         let inbound_read_dwords =
             required_measurement(measurements, IioEventKind::InboundReadDwords)?;
         let inbound_read_transactions =
@@ -226,6 +226,16 @@ impl SprIioScopeMetrics {
 
         Ok(Self {
             scope: stack_scope.scope,
+            completion_inserts_per_second: event_rate(completion_inserts),
+            completion_latency_seconds: completion_latency_seconds(
+                completion_occupancy,
+                completion_inserts,
+                clockticks,
+            ),
+            completion_occupancy_entries: ratio(
+                completion_occupancy.value,
+                completion_occupancy.ticks,
+            ),
             frequency_hz: frequency_hz(clockticks.value, clockticks.running),
             inbound_read_bytes_per_second: dwords_per_second(inbound_read_dwords),
             inbound_reads_per_second: event_rate(inbound_read_transactions),
@@ -384,6 +394,9 @@ impl IioScopeLabels {
 
 #[derive(Debug)]
 pub struct SprIioPrometheusMetrics {
+    completion_inserts_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
+    completion_latency_seconds: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
+    completion_occupancy_entries: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     frequency_hz: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     inbound_read_bytes_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     inbound_reads_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
@@ -396,6 +409,11 @@ pub struct SprIioPrometheusMetrics {
 impl SprIioPrometheusMetrics {
     pub fn register(registry: &mut Registry) -> Self {
         let metrics = Self {
+            completion_inserts_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
+            ),
+            completion_latency_seconds: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            completion_occupancy_entries: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
+            ),
             frequency_hz: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
             inbound_read_bytes_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
             ),
@@ -409,6 +427,21 @@ impl SprIioPrometheusMetrics {
                 Family::<IioPciePortLabels, Gauge<f64, AtomicU64>>::default(),
         };
 
+        registry.register(
+            "ocellus_iio_completion_inserts_per_second",
+            "Interval-derived IIO completion inserts per second",
+            metrics.completion_inserts_per_second.clone(),
+        );
+        registry.register(
+            "ocellus_iio_completion_latency_seconds",
+            "Interval-derived IIO completion residency latency in seconds",
+            metrics.completion_latency_seconds.clone(),
+        );
+        registry.register(
+            "ocellus_iio_completion_occupancy_entries",
+            "Average IIO completion occupancy in entries",
+            metrics.completion_occupancy_entries.clone(),
+        );
         registry.register(
             "ocellus_iio_frequency_hz",
             "Interval-derived IIO clock frequency in hertz",
@@ -452,6 +485,15 @@ impl SprIioPrometheusMetrics {
         for scope in metrics.scopes {
             let labels = IioScopeLabels::from_scope(scope.scope, scope.stack);
 
+            self.completion_inserts_per_second
+                .get_or_create(&labels)
+                .set(scope.completion_inserts_per_second);
+            self.completion_latency_seconds
+                .get_or_create(&labels)
+                .set(scope.completion_latency_seconds);
+            self.completion_occupancy_entries
+                .get_or_create(&labels)
+                .set(scope.completion_occupancy_entries);
             self.frequency_hz
                 .get_or_create(&labels)
                 .set(scope.frequency_hz);
@@ -775,6 +817,18 @@ fn event_rate(measurement: &IioEventMeasurement) -> f64 {
     )
 }
 
+fn completion_latency_seconds(
+    occupancy: &IioEventMeasurement,
+    inserts: &IioEventMeasurement,
+    clockticks: &IioEventMeasurement,
+) -> f64 {
+    let occupancy = scale_to_enabled(occupancy.value, occupancy.enabled, occupancy.running);
+    let insert_count = scale_to_enabled(inserts.value, inserts.enabled, inserts.running);
+    let clockticks = scale_to_enabled(clockticks.value, clockticks.enabled, clockticks.running);
+
+    queue_residency_seconds(occupancy, insert_count, clockticks, inserts.enabled)
+}
+
 fn freeze_packages(packages: &[IioPackage]) -> Result<(), String> {
     for package in packages {
         for unit in &package.units {
@@ -971,6 +1025,8 @@ mod tests {
                 test_stack_scope(scope, SPR_IIO_STACKS[0]),
                 BTreeMap::from([
                     measurement(IioEventKind::Clockticks, 1_000, 1_000, 100),
+                    measurement(IioEventKind::CompletionInserts, 200, 1_000, 100),
+                    measurement(IioEventKind::CompletionOccupancy, 400, 1_000, 100),
                     measurement(IioEventKind::InboundReadDwords, 300, 1_000, 100),
                     measurement(IioEventKind::InboundReadTransactions, 30, 1_000, 100),
                     measurement(IioEventKind::InboundWriteDwords, 500, 1_000, 100),
@@ -982,6 +1038,9 @@ mod tests {
         .unwrap();
 
         let scope_metrics = metrics.scopes[0];
+        assert_eq!(scope_metrics.completion_inserts_per_second, 2_000.0);
+        assert_eq!(scope_metrics.completion_latency_seconds, 0.0002);
+        assert_eq!(scope_metrics.completion_occupancy_entries, 0.4);
         assert_eq!(scope_metrics.frequency_hz, 10_000.0);
         assert_eq!(scope_metrics.inbound_read_bytes_per_second, 12_000.0);
         assert_eq!(scope_metrics.inbound_reads_per_second, 300.0);
@@ -1047,17 +1106,15 @@ mod tests {
     }
 
     #[test]
-    fn does_not_schedule_unsupported_spr_completion_event() {
-        for group in SPR_IIO_EVENT_GROUPS {
-            for event in group.events {
-                if event.kind != IioEventKind::Unused {
-                    assert_ne!(
-                        event.event, 0xc2,
-                        "SPR IIO must not program unsupported completion inserts"
-                    );
-                }
-            }
-        }
+    fn schedules_documented_spr_completion_buffer_events() {
+        assert_eq!(
+            SPR_IIO_EVENT_GROUPS[0].events[2],
+            IioEventSpec::sum(IioEventKind::CompletionOccupancy, 0xd5, 0xff, 0x00ff, 0x07)
+        );
+        assert_eq!(
+            SPR_IIO_EVENT_GROUPS[1].events[2],
+            IioEventSpec::sum(IioEventKind::CompletionInserts, 0xc2, 0x04, 0x00ff, 0x07)
+        );
     }
 
     #[test]

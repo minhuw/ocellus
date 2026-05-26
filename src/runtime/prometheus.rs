@@ -878,8 +878,10 @@ mod tests {
         assert!(metrics.contains("# TYPE ocellus_iio_inbound_write_bytes_per_second gauge"));
         assert!(metrics.contains("# TYPE ocellus_iio_pcie_read_bytes_per_second gauge"));
         assert!(metrics.contains("# TYPE ocellus_iio_pcie_write_bytes_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_iio_completion_inserts_per_second gauge"));
+        assert!(metrics.contains("# TYPE ocellus_iio_completion_latency_seconds gauge"));
+        assert!(metrics.contains("# TYPE ocellus_iio_completion_occupancy_entries gauge"));
         assert!(metrics.contains("stack=\"m2iosf10\""));
-        assert!(!metrics.contains("ocellus_iio_completion_inserts_per_second"));
     }
 
     fn spr_iio_metrics() -> crate::metrics::iio::spr::SprIioMetrics {
@@ -896,6 +898,9 @@ mod tests {
                 write_bytes_per_second: 2048.0,
             }],
             scopes: vec![crate::metrics::iio::spr::SprIioScopeMetrics {
+                completion_inserts_per_second: 3.0,
+                completion_latency_seconds: 0.000004,
+                completion_occupancy_entries: 5.0,
                 frequency_hz: 1_000_000_000.0,
                 scope: crate::metrics::uncore::skx::UncoreScope {
                     die_group_id: 0,

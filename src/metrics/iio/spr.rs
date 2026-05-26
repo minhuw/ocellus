@@ -58,7 +58,6 @@ enum IioEventKind {
     InboundReadTransactions,
     InboundWriteDwords,
     InboundWriteTransactions,
-    Unused,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -619,17 +618,13 @@ impl IioUnit {
     fn program(self, group: IioEventGroup) -> Result<(), String> {
         let msr = Msr::open(self.cpu)?;
         for (counter_index, event) in group.events.into_iter().enumerate() {
-            let control = if event.kind == IioEventKind::Unused {
-                0
-            } else {
-                iio_counter_control(
-                    event.event,
-                    event.umask,
-                    event.channel_mask,
-                    event.function_class_mask,
-                    true,
-                )
-            };
+            let control = iio_counter_control(
+                event.event,
+                event.umask,
+                event.channel_mask,
+                event.function_class_mask,
+                true,
+            );
 
             msr.write(iio_control_offset(self.stack, counter_index), control)?;
         }
@@ -948,16 +943,14 @@ fn read_packages(
             for counter_index in 0..IIO_COUNTER_COUNT {
                 let event = measurement.group.events[counter_index];
 
-                if event.kind != IioEventKind::Unused {
-                    measurements.add(
-                        package.scope,
-                        unit.stack(),
-                        event.kind,
-                        reading.counters[counter_index],
-                        reading.ticks,
-                        measurement,
-                    );
-                }
+                measurements.add(
+                    package.scope,
+                    unit.stack(),
+                    event.kind,
+                    reading.counters[counter_index],
+                    reading.ticks,
+                    measurement,
+                );
             }
         }
     }
@@ -1106,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn schedules_documented_spr_completion_buffer_events() {
+    fn schedules_perfmon_experimental_spr_completion_occupancy_event() {
         assert_eq!(
             SPR_IIO_EVENT_GROUPS[0].events[2],
             IioEventSpec::sum(IioEventKind::CompletionOccupancy, 0xd5, 0xff, 0x00ff, 0x07)

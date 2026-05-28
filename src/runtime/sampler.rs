@@ -13,6 +13,7 @@ use crate::metrics::interconnect::{InterconnectCollector, InterconnectTask};
 use crate::metrics::irp::{IrpCollector, IrpTask};
 use crate::metrics::pcu::{PcuCollector, PcuTask};
 use crate::metrics::rapl::{RaplCollector, RaplTask};
+use crate::metrics::rdt::{RdtCollector, RdtTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
 use crate::metrics::{CollectorMetadata, InfoMetadata, MetricEvent, MetricUpdate, MetricsState};
 
@@ -106,6 +107,7 @@ pub fn spawn(
     spawn_irp_collector(&architecture, measure_interval, &event_tx);
     spawn_pcu_collector(&architecture, measure_interval, &event_tx);
     spawn_interconnect_collector(&architecture, measure_interval, &event_tx);
+    spawn_rdt_collector(&architecture, measure_interval, &event_tx);
     spawn_collector(
         "tsc",
         TscTask::new(TscCollector::new(), measure_interval, event_tx.clone()).run(),
@@ -135,6 +137,7 @@ fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> 
                 interconnect_supported: InterconnectCollector::is_supported(architecture),
                 irp_supported: IrpCollector::is_supported(architecture),
                 pcu_supported: PcuCollector::is_supported(architecture),
+                rdt_supported: RdtCollector::is_supported(architecture),
             },
             processor: crate::metrics::ProcessorMetadata {
                 brand: architecture.brand.clone(),
@@ -288,6 +291,26 @@ fn spawn_interconnect_collector(
         }
         Err(error) => {
             eprintln!("ocellus: skipping interconnect collector: {error}");
+        }
+    }
+}
+
+fn spawn_rdt_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    events: &mpsc::Sender<MetricEvent>,
+) {
+    match RdtCollector::new(architecture) {
+        Ok(rdt) => {
+            eprintln!("ocellus: starting RDT collector");
+            spawn_collector(
+                "rdt",
+                RdtTask::new(rdt, measure_interval, events.clone()).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping RDT collector: {error}");
         }
     }
 }

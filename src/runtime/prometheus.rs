@@ -152,6 +152,7 @@ mod tests {
                 interconnect_supported: false,
                 irp_supported: true,
                 pcu_supported: true,
+                rdt_supported: true,
             },
             processor: crate::metrics::ProcessorMetadata {
                 brand: "Intel(R) Xeon(R) Gold 6252 CPU @ 2.10GHz".to_string(),
@@ -222,6 +223,7 @@ mod tests {
                 interconnect_supported: false,
                 irp_supported: false,
                 pcu_supported: false,
+                rdt_supported: false,
             },
             processor: crate::metrics::ProcessorMetadata {
                 brand: "unsupported".to_string(),
@@ -308,6 +310,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: Some(crate::metrics::tsc::TscMetrics {
                 frequency_hz: 2_400_000_000.0,
             }),
@@ -351,6 +354,7 @@ mod tests {
                     },
                 }],
             }),
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -373,6 +377,55 @@ mod tests {
         assert!(metrics.contains("package=\"0\""));
         assert!(metrics.contains("# TYPE ocellus_rapl_power_watts gauge"));
         assert!(metrics.contains("ocellus_rapl_power_watts"));
+    }
+
+    #[test]
+    fn renders_rdt_metrics() {
+        let state = crate::metrics::MetricsState {
+            cha: None,
+            iio: None,
+            imc: None,
+            interconnect: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            irp: None,
+            pcu: None,
+            rapl: None,
+            rdt: Some(crate::metrics::rdt::RdtMetrics {
+                scopes: vec![crate::metrics::rdt::RdtScopeMetrics {
+                    l3_occupancy_bytes: Some(4096.0),
+                    local_memory_bandwidth_bytes_per_second: Some(2048.0),
+                    remote_memory_bandwidth_bytes_per_second: Some(1024.0),
+                    scope: crate::metrics::rdt::RdtScope {
+                        cpu: 2,
+                        die_group_id: 0,
+                        die_id: 0,
+                        package_id: 0,
+                    },
+                    total_memory_bandwidth_bytes_per_second: Some(3072.0),
+                }],
+            }),
+            tsc: None,
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(metrics.contains("# TYPE ocellus_rdt_l3_occupancy_bytes gauge"));
+        assert!(metrics.contains("ocellus_rdt_l3_occupancy_bytes"));
+        assert!(metrics.contains("# TYPE ocellus_rdt_memory_bandwidth_bytes_per_second gauge"));
+        assert!(metrics.contains("ocellus_rdt_memory_bandwidth_bytes_per_second"));
+        assert!(metrics.contains("cpu=\"2\""));
+        assert!(metrics.contains("traffic=\"total\""));
+        assert!(metrics.contains("traffic=\"local\""));
+        assert!(metrics.contains("traffic=\"remote\""));
     }
 
     #[test]
@@ -408,6 +461,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -609,6 +663,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -662,6 +717,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -802,6 +858,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -859,6 +916,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -953,6 +1011,7 @@ mod tests {
             )),
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1013,6 +1072,7 @@ mod tests {
             )),
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1060,6 +1120,7 @@ mod tests {
             irp: None,
             pcu: Some(crate::metrics::pcu::PcuMetrics::Bdx(hsx_pcu_metrics())),
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1097,6 +1158,7 @@ mod tests {
             irp: None,
             pcu: Some(crate::metrics::pcu::PcuMetrics::Skx(skx_pcu_metrics())),
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1146,6 +1208,7 @@ mod tests {
                 },
             )),
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1195,6 +1258,7 @@ mod tests {
             irp: None,
             pcu: Some(pcu),
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1232,6 +1296,7 @@ mod tests {
             irp: None,
             pcu: Some(pcu),
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1429,6 +1494,7 @@ mod tests {
             irp: Some(irp),
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1561,6 +1627,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1660,6 +1727,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1746,6 +1814,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1784,6 +1853,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(
@@ -1983,6 +2053,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let sampler = SamplerReader::new_for_test(

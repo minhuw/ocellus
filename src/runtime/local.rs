@@ -10,7 +10,7 @@ use tokio::time::MissedTickBehavior;
 use crate::metrics::MetricsState;
 use crate::runtime::sampler::SamplerReader;
 
-const SCHEMA_VERSION: u32 = 10;
+const SCHEMA_VERSION: u32 = 11;
 
 #[derive(Debug, Serialize)]
 struct LocalMetadata {
@@ -157,6 +157,7 @@ mod tests {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         };
         let record = LocalRecord::sample(state);
@@ -190,6 +191,7 @@ mod tests {
                 irp: None,
                 pcu: None,
                 rapl: None,
+                rdt: None,
                 tsc: None,
             };
             let record = LocalRecord::sample(state);
@@ -220,6 +222,7 @@ mod tests {
                 irp: None,
                 pcu: None,
                 rapl: None,
+                rdt: None,
                 tsc: None,
             };
             let record = LocalRecord::sample(state);
@@ -250,6 +253,7 @@ mod tests {
                 irp: Some(irp),
                 pcu: None,
                 rapl: None,
+                rdt: None,
                 tsc: None,
             };
             let record = LocalRecord::sample(state);
@@ -308,6 +312,7 @@ mod tests {
                 irp: None,
                 pcu: Some(pcu),
                 rapl: None,
+                rdt: None,
                 tsc: None,
             };
             let record = LocalRecord::sample(state);
@@ -378,6 +383,7 @@ mod tests {
                 irp: None,
                 pcu: None,
                 rapl: None,
+                rdt: None,
                 tsc: None,
             };
             let record = LocalRecord::sample(state);
@@ -409,6 +415,7 @@ mod tests {
                     },
                 }],
             }),
+            rdt: None,
             tsc: None,
         };
         let record = LocalRecord::sample(state);

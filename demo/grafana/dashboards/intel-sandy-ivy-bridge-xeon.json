@@ -96,14 +96,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|cha_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
               "refId": "packageVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|cha_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
           "options": [],
           "multi": false,
           "includeAll": false,
@@ -131,14 +131,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(cha_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
               "refId": "die_groupVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(cha_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
           "options": [],
           "multi": false,
           "includeAll": false,
@@ -166,14 +166,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(cha_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
               "refId": "dieVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(cha_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
           "options": [],
           "multi": false,
           "includeAll": false,

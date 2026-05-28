@@ -8039,6 +8039,121 @@
           },
           "transparent": false
         }
+      },
+      "panel-rdt-l3-occupancy": {
+        "kind": "Panel",
+        "spec": {
+          "id": 64,
+          "title": "RDT L3 Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_rdt_l3_occupancy_bytes{package=\"$package\",die_group=\"0\",die=\"0\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} L3 Occupancy",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "bytes"
+                },
+                "overrides": []
+              }
+            }
+          },
+          "transparent": false
+        }
       }
     },
     "layout": {
@@ -8076,6 +8191,32 @@
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-4"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "TabsLayoutTab",
+            "spec": {
+              "title": "RDT",
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-rdt-l3-occupancy"
                         }
                       }
                     }
@@ -9063,7 +9204,7 @@
             "group": "prometheus",
             "version": "v0",
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(haswell_imc_frequency_hz|cha_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|rdt_l3_occupancy_bytes|cha_frequency_hz|haswell_imc_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
               "refId": "PackageVariableQuery"
             },
             "datasource": {
@@ -9083,7 +9224,7 @@
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(haswell_imc_frequency_hz|cha_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|rdt_l3_occupancy_bytes|cha_frequency_hz|haswell_imc_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
           "options": [],
           "allowCustomValue": true
         }

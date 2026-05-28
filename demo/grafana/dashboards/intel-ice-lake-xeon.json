@@ -11932,6 +11932,610 @@
           },
           "transparent": false
         }
+      },
+      "panel-rdt-l3-occupancy": {
+        "kind": "Panel",
+        "spec": {
+          "id": 92,
+          "title": "RDT L3 Occupancy",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "ocellus_rdt_l3_occupancy_bytes{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
+                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} L3 Occupancy",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "bytes"
+                },
+                "overrides": []
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-rdt-memory-bandwidth-total": {
+        "kind": "Panel",
+        "spec": {
+          "id": 93,
+          "title": "RDT Total Memory Bandwidth",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"total\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} total MBM",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"total\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} total MBM",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "A"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-rdt-memory-bandwidth-local": {
+        "kind": "Panel",
+        "spec": {
+          "id": 94,
+          "title": "RDT Local Memory Bandwidth",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"local\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} local MBM",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"local\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} local MBM",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "A"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-rdt-memory-bandwidth-remote": {
+        "kind": "Panel",
+        "spec": {
+          "id": 95,
+          "title": "RDT Remote Memory Bandwidth",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"remote\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} remote MBM",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"remote\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} remote MBM",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "A"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
       }
     },
     "layout": {
@@ -11969,6 +12573,71 @@
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-2"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "TabsLayoutTab",
+            "spec": {
+              "title": "RDT",
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-rdt-l3-occupancy"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 12,
+                        "y": 0,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-rdt-memory-bandwidth-total"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 8,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-rdt-memory-bandwidth-local"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 12,
+                        "y": 8,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-rdt-memory-bandwidth-remote"
                         }
                       }
                     }
@@ -13374,14 +14043,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|rdt_l3_occupancy_bytes|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|rdt_l3_occupancy_bytes|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",instance=\"$instance\"}, package)",
           "options": [],
           "multi": false,
           "includeAll": false,
@@ -13409,14 +14078,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|rdt_l3_occupancy_bytes|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|rdt_l3_occupancy_bytes|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",instance=\"$instance\"}, die_group)",
           "options": [],
           "multi": false,
           "includeAll": false,
@@ -13444,14 +14113,14 @@
               "name": "Prometheus"
             },
             "spec": {
-              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
+              "query": "label_values({__name__=~\"ocellus_(rapl_power_watts|rdt_l3_occupancy_bytes|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
               "refId": "StandardVariableQuery"
             }
           },
           "regex": "",
           "regexApplyTo": "value",
           "sort": "alphabeticalAsc",
-          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|imc_frequency_hz|irp_frequency_hz|iio_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
+          "definition": "label_values({__name__=~\"ocellus_(rapl_power_watts|rdt_l3_occupancy_bytes|cha_frequency_hz|imc_frequency_hz|iio_frequency_hz|irp_frequency_hz|pcu_frequency_hz|interconnect_frequency_hz)\",package=\"$package\",die_group=\"$die_group\",instance=\"$instance\"}, die)",
           "options": [],
           "multi": false,
           "includeAll": false,

@@ -7,6 +7,7 @@ pub mod interconnect;
 pub mod irp;
 pub mod pcu;
 pub mod rapl;
+pub mod rdt;
 pub mod tsc;
 pub mod uncore;
 
@@ -31,6 +32,8 @@ pub struct MetricsState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rapl: Option<rapl::RaplMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub rdt: Option<rdt::RdtMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tsc: Option<tsc::TscMetrics>,
 }
 
@@ -44,6 +47,7 @@ impl MetricsState {
             MetricUpdate::Irp(irp) => self.irp = Some(*irp),
             MetricUpdate::Pcu(pcu) => self.pcu = Some(*pcu),
             MetricUpdate::Rapl(rapl) => self.rapl = Some(*rapl),
+            MetricUpdate::Rdt(rdt) => self.rdt = Some(*rdt),
             MetricUpdate::Tsc(tsc) => self.tsc = Some(*tsc),
         }
     }
@@ -60,6 +64,7 @@ impl Default for MetricsState {
             irp: None,
             pcu: None,
             rapl: None,
+            rdt: None,
             tsc: None,
         }
     }
@@ -73,6 +78,7 @@ pub struct CollectorMetadata {
     pub interconnect_supported: bool,
     pub irp_supported: bool,
     pub pcu_supported: bool,
+    pub rdt_supported: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +112,7 @@ pub enum MetricUpdate {
     Irp(Box<irp::IrpMetrics>),
     Pcu(Box<pcu::PcuMetrics>),
     Rapl(Box<rapl::RaplMetrics>),
+    Rdt(Box<rdt::RdtMetrics>),
     Tsc(Box<tsc::TscMetrics>),
 }
 
@@ -118,6 +125,7 @@ pub struct MetricsRegistry {
     irp: Option<irp::IrpPrometheusMetrics>,
     pcu: Option<pcu::PcuPrometheusMetrics>,
     rapl: Option<rapl::RaplPrometheusMetrics>,
+    rdt: Option<rdt::RdtPrometheusMetrics>,
     tsc: tsc::TscPrometheusMetrics,
 }
 
@@ -135,6 +143,7 @@ impl MetricsRegistry {
             irp: irp::IrpPrometheusMetrics::register(registry, &metadata),
             pcu: pcu::PcuPrometheusMetrics::register(registry, &metadata),
             rapl: rapl::RaplPrometheusMetrics::register(registry, &metadata),
+            rdt: rdt::RdtPrometheusMetrics::register(registry, &metadata),
             tsc: tsc::TscPrometheusMetrics::register(registry),
         }
     }
@@ -150,6 +159,7 @@ impl MetricsRegistry {
             MetricUpdate::Irp(irp) => expect_registered(&self.irp, "IRP").update(*irp),
             MetricUpdate::Pcu(pcu) => expect_registered(&self.pcu, "PCU").update(*pcu),
             MetricUpdate::Rapl(rapl) => expect_registered(&self.rapl, "RAPL").update(*rapl),
+            MetricUpdate::Rdt(rdt) => expect_registered(&self.rdt, "RDT").update(*rdt),
             MetricUpdate::Tsc(tsc) => self.tsc.update(*tsc),
         }
     }
@@ -176,6 +186,9 @@ impl MetricsRegistry {
         }
         if let Some(rapl) = state.rapl {
             expect_registered(&self.rapl, "RAPL").update(rapl);
+        }
+        if let Some(rdt) = state.rdt {
+            expect_registered(&self.rdt, "RDT").update(rdt);
         }
         if let Some(tsc) = state.tsc {
             self.tsc.update(tsc);

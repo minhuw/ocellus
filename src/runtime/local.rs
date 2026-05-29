@@ -10,7 +10,7 @@ use tokio::time::MissedTickBehavior;
 use crate::metrics::MetricsState;
 use crate::runtime::sampler::SamplerReader;
 
-const SCHEMA_VERSION: u32 = 12;
+const SCHEMA_VERSION: u32 = 13;
 
 #[derive(Debug, Serialize)]
 struct LocalMetadata {
@@ -409,8 +409,8 @@ mod tests {
                     energy_joules_total: 10.0,
                     power_watts: 5.0,
                     scope: crate::metrics::rapl::RaplScope {
-                        die_group_id: 0,
-                        die_id: 0,
+                        die_group_id: None,
+                        die_id: None,
                         package_id: 0,
                     },
                 }],
@@ -422,8 +422,20 @@ mod tests {
         let json = serde_json::to_value(&record).unwrap();
 
         assert_eq!(json["rapl"]["domains"][0]["domain"], "dram");
-        assert_eq!(json["rapl"]["domains"][0]["die_group_id"], 0);
-        assert_eq!(json["rapl"]["domains"][0]["die_id"], 0);
+        assert!(
+            json["rapl"]["domains"][0]
+                .as_object()
+                .unwrap()
+                .get("die_group_id")
+                .is_none()
+        );
+        assert!(
+            json["rapl"]["domains"][0]
+                .as_object()
+                .unwrap()
+                .get("die_id")
+                .is_none()
+        );
         assert_eq!(json["rapl"]["domains"][0]["energy_joules_total"], 10.0);
         assert_eq!(json["rapl"]["domains"][0]["package_id"], 0);
         assert_eq!(json["rapl"]["domains"][0]["power_watts"], 5.0);

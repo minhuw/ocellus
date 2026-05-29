@@ -12,6 +12,7 @@ use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
+use crate::metrics::common::topology_label;
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
@@ -76,8 +77,10 @@ impl PcuThermalThrottleSource {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct PcuScope {
-    pub die_group_id: u32,
-    pub die_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_group_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_id: Option<u32>,
     pub package_id: u32,
 }
 
@@ -368,8 +371,8 @@ pub(crate) struct PcuScopeLabels {
 impl PcuScopeLabels {
     pub(crate) fn new(scope: PcuScope) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
         }
     }
@@ -402,8 +405,8 @@ impl PcuScopeCStateLabels {
     pub(crate) fn new(scope: PcuScope, c_state: PcuCoreCState) -> Self {
         Self {
             c_state: c_state.label().to_string(),
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
         }
     }
@@ -435,8 +438,8 @@ pub(crate) struct PcuScopeFrequencyLimitLabels {
 impl PcuScopeFrequencyLimitLabels {
     pub(crate) fn new(scope: PcuScope, reason: PcuFrequencyLimitReason) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
             reason: reason.label().to_string(),
         }
@@ -469,8 +472,8 @@ pub(crate) struct PcuScopeThermalThrottleLabels {
 impl PcuScopeThermalThrottleLabels {
     pub(crate) fn new(scope: PcuScope, source: PcuThermalThrottleSource) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
             source: source.label().to_string(),
         }

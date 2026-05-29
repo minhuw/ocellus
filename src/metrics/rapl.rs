@@ -13,6 +13,7 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metrics::common::topology_label;
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 const ENERGY_STATUS_WIDTH: u32 = 32;
@@ -59,16 +60,18 @@ struct RaplReading {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct RaplScope {
-    pub die_group_id: u32,
-    pub die_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_group_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_id: Option<u32>,
     pub package_id: u32,
 }
 
 impl RaplScope {
     fn from_topology(topology: &CpuTopology) -> Result<Self, String> {
         Ok(Self {
-            die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
-            die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
+            die_group_id: topology.level_id(TopologyLevelKind::DieGroup),
+            die_id: topology.level_id(TopologyLevelKind::Die),
             package_id: topology
                 .level_id(TopologyLevelKind::Package)
                 .ok_or_else(|| "CPU topology is missing package level".to_string())?,
@@ -312,8 +315,8 @@ impl RaplPrometheusMetrics {
     pub fn update(&self, metrics: RaplMetrics) {
         for domain in metrics.domains {
             let labels = RaplDomainLabels {
-                die_group: domain.scope.die_group_id.to_string(),
-                die: domain.scope.die_id.to_string(),
+                die: topology_label(domain.scope.die_id),
+                die_group: topology_label(domain.scope.die_group_id),
                 domain: domain.domain.label(),
                 package: domain.scope.package_id.to_string(),
             };
@@ -483,8 +486,8 @@ mod tests {
     #[test]
     fn keeps_die_groups_distinct() {
         let scope = RaplScope {
-            die_group_id: 2,
-            die_id: 0,
+            die_group_id: Some(2),
+            die_id: Some(0),
             package_id: 0,
         };
 
@@ -495,8 +498,8 @@ mod tests {
         RaplDomainKey {
             domain,
             scope: RaplScope {
-                die_group_id: 0,
-                die_id,
+                die_group_id: None,
+                die_id: Some(die_id),
                 package_id,
             },
         }

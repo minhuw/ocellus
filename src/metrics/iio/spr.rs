@@ -7,6 +7,7 @@ use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
 use crate::metal::msr::Msr;
+use crate::metrics::common::topology_label;
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, events_per_second, frequency_hz, mask_counter,
     measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled, uncore_leaders,
@@ -363,8 +364,8 @@ struct IioPciePortLabels {
 impl IioPciePortLabels {
     fn from_port(port: SprIioPciePortMetrics) -> Self {
         Self {
-            die: port.scope.die_id.to_string(),
-            die_group: port.scope.die_group_id.to_string(),
+            die: topology_label(port.scope.die_id),
+            die_group: topology_label(port.scope.die_group_id),
             package: port.scope.package_id.to_string(),
             port: port.port_id.to_string(),
             stack: port.stack.label().to_string(),
@@ -383,8 +384,8 @@ struct IioScopeLabels {
 impl IioScopeLabels {
     fn from_scope(scope: UncoreScope, stack: SprIioStack) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
             stack: stack.label().to_string(),
         }
@@ -1145,8 +1146,8 @@ mod tests {
 
     fn test_scope() -> UncoreScope {
         UncoreScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         }
     }

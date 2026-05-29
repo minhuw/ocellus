@@ -13,6 +13,7 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metrics::common::topology_label;
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 const IA32_QM_EVTSEL: u64 = 0xC8D;
@@ -41,8 +42,10 @@ const QM_CTR_ERROR_BIT: u64 = 1_u64 << 63;
 pub struct RdtScope {
     pub core_id: u32,
     pub cpu: u32,
-    pub die_group_id: u32,
-    pub die_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_group_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_id: Option<u32>,
     pub package_id: u32,
 }
 
@@ -51,8 +54,8 @@ impl RdtScope {
         Ok(Self {
             core_id: package_local_core_id(topology)?,
             cpu: topology.cpu,
-            die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
-            die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
+            die_group_id: topology.level_id(TopologyLevelKind::DieGroup),
+            die_id: topology.level_id(TopologyLevelKind::Die),
             package_id: topology
                 .level_id(TopologyLevelKind::Package)
                 .ok_or_else(|| "CPU topology is missing package level".to_string())?,
@@ -74,8 +77,8 @@ impl RdtDomainKey {
     fn from_scope(scope: RdtScope, node_id: u32, cache: RdtCacheDomain) -> Self {
         Self {
             package_id: scope.package_id,
-            die_group_id: scope.die_group_id,
-            die_id: scope.die_id,
+            die_group_id: scope.die_group_id.unwrap_or(0),
+            die_id: scope.die_id.unwrap_or(0),
             node_id,
             core_id: scope.core_id,
             cache,
@@ -466,8 +469,8 @@ impl RdtPrometheusMetrics {
             let scope_labels = RdtScopeLabels {
                 core: scope_metrics.scope.core_id.to_string(),
                 cpu: scope_metrics.scope.cpu.to_string(),
-                die_group: scope_metrics.scope.die_group_id.to_string(),
-                die: scope_metrics.scope.die_id.to_string(),
+                die: topology_label(scope_metrics.scope.die_id),
+                die_group: topology_label(scope_metrics.scope.die_group_id),
                 package: scope_metrics.scope.package_id.to_string(),
             };
 
@@ -497,8 +500,8 @@ impl RdtPrometheusMetrics {
                         .get_or_create(&RdtMemoryBandwidthLabels {
                             core: scope_metrics.scope.core_id.to_string(),
                             cpu: scope_metrics.scope.cpu.to_string(),
-                            die_group: scope_metrics.scope.die_group_id.to_string(),
-                            die: scope_metrics.scope.die_id.to_string(),
+                            die: topology_label(scope_metrics.scope.die_id),
+                            die_group: topology_label(scope_metrics.scope.die_group_id),
                             package: scope_metrics.scope.package_id.to_string(),
                             traffic,
                         })
@@ -784,6 +787,7 @@ fn rdt_domains(max_rmid: u32) -> Result<Vec<RdtDomain>, String> {
     )
 }
 
+#[cfg(test)]
 fn rdt_domains_from_topologies(
     topologies: impl IntoIterator<Item = CpuTopology>,
     max_rmid: u32,
@@ -805,7 +809,7 @@ fn rdt_domains_from_topologies_with_numa(
 
     for topology in &topologies {
         let scope = RdtScope::from_topology(topology)?;
-        let node_id = numa_node(topology.cpu)?.unwrap_or(scope.die_id);
+        let node_id = numa_node(topology.cpu)?.or(scope.die_id).unwrap_or(0);
 
         scopes_by_cpu.insert(topology.cpu, scope);
         node_ids_by_cpu.insert(topology.cpu, node_id);
@@ -1366,8 +1370,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(domains.len(), 2);
-        assert_eq!(domains[0].scope.die_id, 0);
-        assert_eq!(domains[1].scope.die_id, 1);
+        assert_eq!(domains[0].scope.die_id, Some(0));
+        assert_eq!(domains[1].scope.die_id, Some(1));
     }
 
     #[test]
@@ -1564,8 +1568,8 @@ mod tests {
         RdtScope {
             core_id: 0,
             cpu: 0,
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         }
     }

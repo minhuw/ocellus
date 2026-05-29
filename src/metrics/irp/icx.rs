@@ -10,7 +10,7 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
-use crate::metrics::common::BYTES_PER_CACHE_LINE;
+use crate::metrics::common::{BYTES_PER_CACHE_LINE, topology_label};
 
 const COUNTER_ENABLE_BIT: u32 = 1 << 22;
 const COUNTER_OVERFLOW_ENABLE_BIT: u32 = 1 << 20;
@@ -113,16 +113,18 @@ pub enum IcxIrpEventKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct IcxUncoreScope {
-    pub die_group_id: u32,
-    pub die_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_group_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_id: Option<u32>,
     pub package_id: u32,
 }
 
 impl IcxUncoreScope {
     fn from_topology(topology: &CpuTopology) -> Result<Self, String> {
         Ok(Self {
-            die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
-            die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
+            die_group_id: topology.level_id(TopologyLevelKind::DieGroup),
+            die_id: topology.level_id(TopologyLevelKind::Die),
             package_id: topology
                 .level_id(TopologyLevelKind::Package)
                 .ok_or_else(|| "CPU topology is missing package level".to_string())?,
@@ -409,8 +411,8 @@ struct IcxIrpScopeLabels {
 impl IcxIrpScopeLabels {
     fn from_scope(scope: IcxUncoreScope, stack: IcxIrpStack) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
             stack: stack.label().to_string(),
         }

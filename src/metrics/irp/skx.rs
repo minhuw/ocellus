@@ -9,7 +9,7 @@ use prometheus_client::registry::Registry;
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::arch::skx::pmon;
 use crate::metal::msr::Msr;
-use crate::metrics::common::BYTES_PER_CACHE_LINE;
+use crate::metrics::common::{BYTES_PER_CACHE_LINE, topology_label};
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, SkxIioStack, UncoreScope, events_per_second, frequency_hz,
     mask_counter, measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled,
@@ -307,8 +307,8 @@ struct IrpScopeLabels {
 impl IrpScopeLabels {
     fn from_scope(scope: UncoreScope, stack: SkxIioStack) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
             stack: stack.label().to_string(),
         }
@@ -926,8 +926,8 @@ mod tests {
 
     fn test_scope() -> UncoreScope {
         UncoreScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         }
     }

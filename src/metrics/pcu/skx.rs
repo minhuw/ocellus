@@ -653,7 +653,7 @@ fn read_packages(
                 .and_then(|estimates| estimates.get(&package.scope))
                 .ok_or_else(|| {
                     format!(
-                        "PCU clock estimate is missing for package {} die_group {} die {}",
+                        "PCU clock estimate is missing for package {} die_group {:?} die {:?}",
                         package.scope.package_id, package.scope.die_group_id, package.scope.die_id
                     )
                 })?
@@ -755,8 +755,8 @@ mod tests {
     #[test]
     fn derives_ratios_from_measurements() {
         let scope = PcuScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
         let metrics = SkxPcuMetrics::from_measurements(BTreeMap::from([(

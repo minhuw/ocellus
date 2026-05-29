@@ -7,7 +7,7 @@ use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
 use crate::metal;
-use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE};
+use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE, topology_label};
 
 const COUNTER_COUNT: usize = 4;
 const COUNTER_WIDTH: u32 = 48;
@@ -56,8 +56,10 @@ const SPR_EMR_IMC_EVENT_GROUPS: [SprImcEventGroup; 3] = [
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct SprImcScope {
-    pub die_group_id: u32,
-    pub die_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_group_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_id: Option<u32>,
     pub package_id: u32,
 }
 
@@ -372,8 +374,8 @@ struct SprImcScopeLabels {
 impl SprImcScopeLabels {
     fn from_scope(scope: SprImcScope) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
         }
     }
@@ -851,8 +853,8 @@ mod tests {
     #[test]
     fn computes_multiplexed_metrics() {
         let scope = SprImcScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
         let metrics = SprImcMetrics::from_measurements(BTreeMap::from([(

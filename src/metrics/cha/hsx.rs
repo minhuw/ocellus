@@ -17,6 +17,7 @@ use crate::metrics::cha::{
     bytes_per_second, linux_uncore_unit_ids, llc_victim_metrics, required_measurement,
     scale_measurement_value,
 };
+use crate::metrics::common::topology_label;
 use crate::metrics::uncore::hsx::{self, HsxUncoreScope};
 use crate::metrics::uncore::skx::{UncoreScope, queue_residency_seconds, ratio};
 
@@ -309,8 +310,8 @@ struct HsxChaScopeLabels {
 impl HsxChaScopeLabels {
     fn from_scope(scope: UncoreScope) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
         }
     }
@@ -327,8 +328,8 @@ struct HsxChaStateLabels {
 impl HsxChaStateLabels {
     fn from_llc_victim(metric: ChaLlcVictimMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             package: metric.scope.package_id.to_string(),
             state: metric.state.label().to_string(),
         }
@@ -347,8 +348,8 @@ struct HsxChaLlcLookupLabels {
 impl HsxChaLlcLookupLabels {
     fn from_metric(metric: ChaLlcLookupMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             operation: metric.operation.label().to_string(),
             package: metric.scope.package_id.to_string(),
             state: metric.state.label().to_string(),
@@ -367,8 +368,8 @@ struct HsxChaTransactionLabels {
 impl HsxChaTransactionLabels {
     fn from_metric(metric: ChaTransactionMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             package: metric.scope.package_id.to_string(),
             transaction: metric.transaction.as_str().to_string(),
         }
@@ -387,8 +388,8 @@ struct HsxChaTransactionResultLabels {
 impl HsxChaTransactionResultLabels {
     fn from_metric(metric: ChaTransactionResultMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             package: metric.scope.package_id.to_string(),
             result: metric.result.label().to_string(),
             transaction: metric.transaction.as_str().to_string(),
@@ -1696,8 +1697,8 @@ fn measurement_round_count(interval: Duration, group_count: usize) -> usize {
 
 fn to_skx_scope(scope: HsxUncoreScope) -> UncoreScope {
     UncoreScope {
-        die_group_id: 0,
-        die_id: 0,
+        die_group_id: None,
+        die_id: None,
         package_id: scope.package_id,
     }
 }

@@ -12,6 +12,7 @@ use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
+use crate::metrics::common::topology_label;
 use crate::metrics::uncore::skx::UncoreScope;
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
@@ -65,14 +66,16 @@ impl InterconnectPowerState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct InterconnectScope {
-    pub die_group_id: u32,
-    pub die_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_group_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_id: Option<u32>,
     pub link_id: u32,
     pub package_id: u32,
 }
 
 impl InterconnectScope {
-    pub(crate) const fn new(scope: UncoreScope, link_id: u32) -> Self {
+    pub(crate) fn new(scope: UncoreScope, link_id: u32) -> Self {
         Self {
             die_group_id: scope.die_group_id,
             die_id: scope.die_id,
@@ -530,9 +533,9 @@ impl From<spr::SprInterconnectMetrics> for InterconnectMetricsView {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct InterconnectDirectionLabels {
+    direction: String,
     die: String,
     die_group: String,
-    direction: String,
     link: String,
     package: String,
 }
@@ -540,9 +543,9 @@ struct InterconnectDirectionLabels {
 impl InterconnectDirectionLabels {
     fn new(scope: InterconnectScope, direction: InterconnectDirection) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
             direction: direction.label().to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             link: scope.link_id.to_string(),
             package: scope.package_id.to_string(),
         }
@@ -551,9 +554,9 @@ impl InterconnectDirectionLabels {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct InterconnectPowerStateLabels {
+    direction: String,
     die: String,
     die_group: String,
-    direction: String,
     link: String,
     package: String,
     state: String,
@@ -566,11 +569,11 @@ impl InterconnectPowerStateLabels {
         state: InterconnectPowerState,
     ) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
             direction: direction
                 .map_or("link", InterconnectDirection::label)
                 .to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             link: scope.link_id.to_string(),
             package: scope.package_id.to_string(),
             state: state.label().to_string(),
@@ -589,8 +592,8 @@ struct InterconnectScopeLabels {
 impl InterconnectScopeLabels {
     fn new(scope: InterconnectScope) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             link: scope.link_id.to_string(),
             package: scope.package_id.to_string(),
         }
@@ -599,9 +602,9 @@ impl InterconnectScopeLabels {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct InterconnectTrafficLabels {
+    direction: String,
     die: String,
     die_group: String,
-    direction: String,
     link: String,
     package: String,
     traffic: String,
@@ -614,9 +617,9 @@ impl InterconnectTrafficLabels {
         traffic: InterconnectTrafficClass,
     ) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
             direction: direction.label().to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             link: scope.link_id.to_string(),
             package: scope.package_id.to_string(),
             traffic: traffic.label().to_string(),
@@ -1349,8 +1352,8 @@ mod qpi_common {
                     group: location.group,
                 },
                 scope: UncoreScope {
-                    die_group_id: 0,
-                    die_id: 0,
+                    die_group_id: None,
+                    die_id: None,
                     package_id,
                 },
             });
@@ -1415,8 +1418,8 @@ mod qpi_common {
 
     fn uncore_scope_from_topology(topology: &CpuTopology) -> Result<UncoreScope, String> {
         Ok(UncoreScope {
-            die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
-            die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
+            die_group_id: topology.level_id(TopologyLevelKind::DieGroup),
+            die_id: topology.level_id(TopologyLevelKind::Die),
             package_id: topology
                 .level_id(TopologyLevelKind::Package)
                 .ok_or_else(|| "CPU topology is missing package level".to_string())?,
@@ -1663,8 +1666,8 @@ mod qpi_common {
         #[test]
         fn derives_link_power_and_queue_metrics() {
             let scope = InterconnectScope {
-                die_group_id: 0,
-                die_id: 0,
+                die_group_id: None,
+                die_id: None,
                 link_id: 1,
                 package_id: 0,
             };
@@ -2450,7 +2453,7 @@ mod upi_common {
         leaders
             .iter()
             .map(|leader| leader.scope)
-            .find(|scope| scope.die_id == logical_id)
+            .find(|scope| scope.die_id == Some(logical_id))
             .or_else(|| {
                 leaders
                     .iter()
@@ -2659,8 +2662,8 @@ mod upi_common {
         #[test]
         fn derives_upi_metrics() {
             let scope = InterconnectScope {
-                die_group_id: 0,
-                die_id: 0,
+                die_group_id: None,
+                die_id: None,
                 link_id: 0,
                 package_id: 0,
             };

@@ -396,7 +396,7 @@ fn read_packages(
             .copied()
             .ok_or_else(|| {
                 format!(
-                    "PCU clockticks measurement is missing for package {} die_group {} die {}",
+                    "PCU clockticks measurement is missing for package {} die_group {:?} die {:?}",
                     package.scope.package_id, package.scope.die_group_id, package.scope.die_id
                 )
             })?;
@@ -478,8 +478,8 @@ mod tests {
     #[test]
     fn derives_core_c_state_average() {
         let scope = PcuScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
         let metrics = SprPcuMetrics::from_measurements(BTreeMap::from([(

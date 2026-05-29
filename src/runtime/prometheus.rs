@@ -348,8 +348,8 @@ mod tests {
                     energy_joules_total: 42.0,
                     power_watts: 21.0,
                     scope: crate::metrics::rapl::RaplScope {
-                        die_group_id: 0,
-                        die_id: 0,
+                        die_group_id: None,
+                        die_id: None,
                         package_id: 0,
                     },
                 }],
@@ -371,8 +371,8 @@ mod tests {
 
         assert!(metrics.contains("# TYPE ocellus_rapl_energy_joules counter"));
         assert!(metrics.contains("ocellus_rapl_energy_joules_total"));
-        assert!(metrics.contains("die_group=\"0\""));
-        assert!(metrics.contains("die=\"0\""));
+        assert!(metrics.contains("die_group=\"unknown\""));
+        assert!(metrics.contains("die=\"unknown\""));
         assert!(metrics.contains("domain=\"package\""));
         assert!(metrics.contains("package=\"0\""));
         assert!(metrics.contains("# TYPE ocellus_rapl_power_watts gauge"));
@@ -398,8 +398,8 @@ mod tests {
                     scope: crate::metrics::rdt::RdtScope {
                         core_id: 1,
                         cpu: 2,
-                        die_group_id: 0,
-                        die_id: 0,
+                        die_group_id: None,
+                        die_id: None,
                         package_id: 0,
                     },
                     total_memory_bandwidth_bytes_per_second: Some(3072.0),
@@ -425,6 +425,8 @@ mod tests {
         assert!(metrics.contains("ocellus_rdt_memory_bandwidth_bytes_per_second"));
         assert!(metrics.contains("core=\"1\""));
         assert!(metrics.contains("cpu=\"2\""));
+        assert!(metrics.contains("die_group=\"unknown\""));
+        assert!(metrics.contains("die=\"unknown\""));
         assert!(metrics.contains("traffic=\"total\""));
         assert!(metrics.contains("traffic=\"local\""));
         assert!(metrics.contains("traffic=\"remote\""));
@@ -557,8 +559,8 @@ mod tests {
 
     fn interconnect_scope() -> crate::metrics::interconnect::InterconnectScope {
         crate::metrics::interconnect::InterconnectScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             link_id: 1,
             package_id: 0,
         }
@@ -599,8 +601,8 @@ mod tests {
                     rpq_residency_seconds: 0.000001,
                     rpq_occupancy_entries: 0.5,
                     scope: crate::metrics::imc::skx::ImcScope {
-                        die_group_id: 0,
-                        die_id: 0,
+                        die_group_id: None,
+                        die_id: None,
                         package_id: 0,
                     },
                     write_cas_commands_per_second: 2048.0,
@@ -762,8 +764,8 @@ mod tests {
                 rpq_residency_seconds: 0.000001,
                 rpq_occupancy_entries: 0.5,
                 scope: crate::metrics::imc::icx::IcxImcScope {
-                    die_group_id: 0,
-                    die_id: 0,
+                    die_group_id: None,
+                    die_id: None,
                     package_id: 0,
                 },
                 write_cas_commands_per_second: 2048.0,
@@ -803,8 +805,8 @@ mod tests {
                 rpq_residency_seconds: 0.000001,
                 rpq_occupancy_entries: 0.5,
                 scope: crate::metrics::imc::spr::SprImcScope {
-                    die_group_id: 0,
-                    die_id: 0,
+                    die_group_id: None,
+                    die_id: None,
                     package_id: 0,
                 },
                 write_cas_commands_per_second: 2048.0,
@@ -825,8 +827,8 @@ mod tests {
                         port_id: 1,
                         read_bytes_per_second: 1024.0,
                         scope: crate::metrics::uncore::skx::UncoreScope {
-                            die_group_id: 0,
-                            die_id: 0,
+                            die_group_id: None,
+                            die_id: None,
                             package_id: 0,
                         },
                         stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
@@ -841,8 +843,8 @@ mod tests {
                         l2_misses_per_second: 5.0,
                         l3_misses_per_second: 6.0,
                         scope: crate::metrics::uncore::skx::UncoreScope {
-                            die_group_id: 0,
-                            die_id: 0,
+                            die_group_id: None,
+                            die_id: None,
                             package_id: 0,
                         },
                         stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
@@ -950,8 +952,8 @@ mod tests {
                 port_id: 1,
                 read_bytes_per_second: 1024.0,
                 scope: crate::metrics::uncore::skx::UncoreScope {
-                    die_group_id: 0,
-                    die_id: 0,
+                    die_group_id: None,
+                    die_id: None,
                     package_id: 0,
                 },
                 stack: crate::metrics::iio::spr::SPR_IIO_STACKS[10],
@@ -963,8 +965,8 @@ mod tests {
                 completion_occupancy_entries: 5.0,
                 frequency_hz: 1_000_000_000.0,
                 scope: crate::metrics::uncore::skx::UncoreScope {
-                    die_group_id: 0,
-                    die_id: 0,
+                    die_group_id: None,
+                    die_id: None,
                     package_id: 0,
                 },
                 stack: crate::metrics::iio::spr::SPR_IIO_STACKS[10],
@@ -999,8 +1001,8 @@ mod tests {
                         pcie_read_current_bytes_per_second: 5.0,
                         read_for_ownership_bytes_per_second: 6.0,
                         scope: crate::metrics::uncore::skx::UncoreScope {
-                            die_group_id: 0,
-                            die_id: 0,
+                            die_group_id: None,
+                            die_id: None,
                             package_id: 0,
                         },
                         stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
@@ -1061,8 +1063,8 @@ mod tests {
                         frequency_hz: 1_000_000_000.0,
                         io_write_conflict_ratio: 0.5,
                         scope: crate::metrics::irp::spr::SprUncoreScope {
-                            die_group_id: 0,
-                            die_id: 0,
+                            die_group_id: None,
+                            die_id: None,
                             package_id: 0,
                         },
                         stack: crate::metrics::irp::spr::SprIrpStack::new(10, "m2iosf10"),
@@ -1184,7 +1186,8 @@ mod tests {
         assert!(metrics.contains("# TYPE ocellus_pcu_thermal_throttle_ratio gauge"));
         assert!(metrics.contains("reason=\"io_p\""));
         assert!(metrics.contains("source=\"vr_hot\""));
-        assert!(metrics.contains("die_group=\"0\""));
+        assert!(metrics.contains("die_group=\"unknown\""));
+        assert!(metrics.contains("die=\"unknown\""));
         assert!(!metrics.contains("reason=\"os\""));
     }
 
@@ -1202,8 +1205,8 @@ mod tests {
                     clocks: vec![crate::metrics::pcu::PcuClockMetrics {
                         frequency_hz: 1_000_000_000.0,
                         scope: crate::metrics::pcu::PcuScope {
-                            die_group_id: 0,
-                            die_id: 0,
+                            die_group_id: None,
+                            die_id: None,
                             package_id: 0,
                         },
                     }],
@@ -1226,7 +1229,8 @@ mod tests {
         let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
 
         assert!(metrics.contains("# TYPE ocellus_pcu_frequency_hz gauge"));
-        assert!(metrics.contains("die_group=\"0\""));
+        assert!(metrics.contains("die_group=\"unknown\""));
+        assert!(metrics.contains("die=\"unknown\""));
         assert!(!metrics.contains("ocellus_pcu_core_c_state_average_cores"));
         assert!(!metrics.contains("ocellus_pcu_frequency_limit_ratio"));
     }
@@ -1399,8 +1403,8 @@ mod tests {
 
     fn skx_pcu_metrics() -> crate::metrics::pcu::skx::SkxPcuMetrics {
         let scope = crate::metrics::pcu::PcuScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
         crate::metrics::pcu::skx::SkxPcuMetrics {
@@ -1443,8 +1447,8 @@ mod tests {
 
     fn spr_pcu_metrics() -> crate::metrics::pcu::spr::SprPcuMetrics {
         let scope = crate::metrics::pcu::PcuScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
         crate::metrics::pcu::spr::SprPcuMetrics {
@@ -1545,8 +1549,8 @@ mod tests {
     #[test]
     fn renders_cha_metrics() {
         let scope = crate::metrics::uncore::skx::UncoreScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
         let state = crate::metrics::MetricsState {
@@ -1682,8 +1686,8 @@ mod tests {
     #[test]
     fn renders_hsx_cha_metrics() {
         let scope = crate::metrics::uncore::skx::UncoreScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
         let state = crate::metrics::MetricsState {
@@ -1913,8 +1917,8 @@ mod tests {
         lookup_operation: crate::metrics::cha::ChaLookupOperation,
     ) -> crate::metrics::cha::snb::SnbChaMetrics {
         let scope = crate::metrics::uncore::skx::UncoreScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
 
@@ -1962,8 +1966,8 @@ mod tests {
         Vec<crate::metrics::cha::ChaTransactionMetrics>,
     ) {
         let scope = crate::metrics::uncore::skx::UncoreScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
 

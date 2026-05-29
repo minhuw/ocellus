@@ -150,8 +150,8 @@ fn scope_from_local_cpus(local_cpus: &[u32], topologies: &[CpuTopology]) -> Opti
 
 fn uncore_scope_from_topology(topology: &CpuTopology) -> Result<UncoreScope, String> {
     Ok(UncoreScope {
-        die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
-        die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
+        die_group_id: topology.level_id(TopologyLevelKind::DieGroup),
+        die_id: topology.level_id(TopologyLevelKind::Die),
         package_id: topology
             .level_id(TopologyLevelKind::Package)
             .ok_or_else(|| "CPU topology is missing package level".to_string())?,

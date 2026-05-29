@@ -256,8 +256,8 @@ mod tests {
         let metrics = IcxPcuMetrics::from_readings(vec![IcxPcuReading {
             running: Duration::from_secs(2),
             scope: UncoreScope {
-                die_group_id: 0,
-                die_id: 0,
+                die_group_id: None,
+                die_id: None,
                 package_id: 0,
             },
             ticks: 200,

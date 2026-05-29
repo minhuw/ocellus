@@ -9,6 +9,7 @@ use prometheus_client::registry::Registry;
 use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metrics::common::topology_label;
 
 const DEFAULT_MAX_SLICE: Duration = Duration::from_millis(100);
 const SPR_IRP_COUNTER_COUNT: usize = 2;
@@ -98,16 +99,18 @@ pub enum SprIrpEventKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct SprUncoreScope {
-    pub die_group_id: u32,
-    pub die_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_group_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_id: Option<u32>,
     pub package_id: u32,
 }
 
 impl SprUncoreScope {
     fn from_topology(topology: &CpuTopology) -> Result<Self, String> {
         Ok(Self {
-            die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
-            die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
+            die_group_id: topology.level_id(TopologyLevelKind::DieGroup),
+            die_id: topology.level_id(TopologyLevelKind::Die),
             package_id: topology
                 .level_id(TopologyLevelKind::Package)
                 .ok_or_else(|| "CPU topology is missing package level".to_string())?,
@@ -362,8 +365,8 @@ struct SprIrpScopeLabels {
 impl SprIrpScopeLabels {
     fn from_scope(scope: SprUncoreScope, stack: SprIrpStack) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
             stack: stack.label().to_string(),
         }

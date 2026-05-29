@@ -17,6 +17,7 @@ use crate::metrics::cha::{
     event_rate, linux_uncore_unit_ids, llc_victim_metrics, pci_location_for_cpu,
     required_measurement, scale_measurement_value,
 };
+use crate::metrics::common::topology_label;
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, frequency_hz, mask_counter, measurement_round_count,
     queue_residency_seconds, ratio, uncore_leaders,
@@ -1538,8 +1539,8 @@ impl ChaHaRequestBandwidthLabels {
         operation: ChaRequestOperation,
     ) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             locality: locality.label().to_string(),
             operation: operation.label().to_string(),
             package: scope.package_id.to_string(),
@@ -1558,8 +1559,8 @@ struct ChaHaRequestRatioLabels {
 impl ChaHaRequestRatioLabels {
     fn new(scope: UncoreScope, operation: ChaRequestOperation) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             operation: operation.label().to_string(),
             package: scope.package_id.to_string(),
         }
@@ -1576,8 +1577,8 @@ struct ChaScopeLabels {
 impl ChaScopeLabels {
     fn from_scope(scope: UncoreScope) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
         }
     }
@@ -1594,8 +1595,8 @@ struct ChaStateLabels {
 impl ChaStateLabels {
     fn from_llc_victim(metric: crate::metrics::cha::ChaLlcVictimMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             package: metric.scope.package_id.to_string(),
             state: metric.state.label().to_string(),
         }
@@ -1613,8 +1614,8 @@ struct ChaRequestQueueLabels {
 impl ChaRequestQueueLabels {
     fn from_metric(metric: ChaRequestQueueMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             package: metric.scope.package_id.to_string(),
             source: metric.source.label().to_string(),
         }
@@ -1632,8 +1633,8 @@ struct ChaSfEvictionLabels {
 impl ChaSfEvictionLabels {
     fn from_metric(metric: ChaSfEvictionMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             package: metric.scope.package_id.to_string(),
             state: metric.state.label().to_string(),
         }
@@ -1651,8 +1652,8 @@ struct ChaTransactionLabels {
 impl ChaTransactionLabels {
     fn from_metric(metric: ChaTransactionMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             package: metric.scope.package_id.to_string(),
             transaction: metric.transaction.as_str().to_string(),
         }
@@ -1671,8 +1672,8 @@ struct ChaTransactionResultLabels {
 impl ChaTransactionResultLabels {
     fn from_metric(metric: ChaTransactionResultMetrics) -> Self {
         Self {
-            die: metric.scope.die_id.to_string(),
-            die_group: metric.scope.die_group_id.to_string(),
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
             package: metric.scope.package_id.to_string(),
             result: metric.result.label().to_string(),
             transaction: metric.transaction.as_str().to_string(),
@@ -2405,8 +2406,8 @@ mod tests {
     fn exports_direct_hit_and_miss_for_icx_transactions() {
         let mut accumulator = IcxChaMeasurementAccumulator::new();
         let scope = UncoreScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         };
         let measurement = IcxChaMeasurement {

@@ -11,7 +11,7 @@ use crate::metal;
 use crate::metal::arch::skx::pmon;
 use crate::metal::pci::PciDevice;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
-use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE};
+use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE, topology_label};
 
 const IMC_COUNTER_WIDTH: u32 = 48;
 const IMC_CTL_OFFSETS: [u64; 4] = [0xd8, 0xdc, 0xe0, 0xe4];
@@ -41,16 +41,18 @@ const SKX_IMC_EVENT_GROUPS: [ImcEventGroup; 2] = [
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct ImcScope {
-    pub die_group_id: u32,
-    pub die_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_group_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub die_id: Option<u32>,
     pub package_id: u32,
 }
 
 impl ImcScope {
     fn from_topology(topology: &CpuTopology) -> Result<Self, String> {
         Ok(Self {
-            die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
-            die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
+            die_group_id: topology.level_id(TopologyLevelKind::DieGroup),
+            die_id: topology.level_id(TopologyLevelKind::Die),
             package_id: topology
                 .level_id(TopologyLevelKind::Package)
                 .ok_or_else(|| "CPU topology is missing package level".to_string())?,
@@ -357,8 +359,8 @@ struct ImcScopeLabels {
 impl ImcScopeLabels {
     fn from_scope(scope: ImcScope) -> Self {
         Self {
-            die: scope.die_id.to_string(),
-            die_group: scope.die_group_id.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
             package: scope.package_id.to_string(),
         }
     }
@@ -976,8 +978,8 @@ mod tests {
 
     fn test_scope() -> ImcScope {
         ImcScope {
-            die_group_id: 0,
-            die_id: 0,
+            die_group_id: None,
+            die_id: None,
             package_id: 0,
         }
     }

@@ -11937,7 +11937,7 @@
         "kind": "Panel",
         "spec": {
           "id": 92,
-          "title": "RDT L3 Occupancy",
+          "title": "RDT Per-Core L3 Occupancy",
           "description": "",
           "links": [],
           "data": {
@@ -11957,7 +11957,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_rdt_l3_occupancy_bytes{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} L3 Occupancy",
+                        "legendFormat": "{{instance}} pkg {{package}} core {{core}} L3",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -12052,7 +12052,7 @@
         "kind": "Panel",
         "spec": {
           "id": 93,
-          "title": "RDT Total Memory Bandwidth",
+          "title": "RDT Per-Core Total Memory Bandwidth",
           "description": "",
           "links": [],
           "data": {
@@ -12072,7 +12072,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"total\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} total MBM",
+                        "legendFormat": "{{instance}} pkg {{package}} core {{core}} total MBM",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -12095,7 +12095,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"total\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} total MBM",
+                        "legendFormat": "{{instance}} pkg {{package}} core {{core}} total MBM",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -12215,7 +12215,7 @@
         "kind": "Panel",
         "spec": {
           "id": 94,
-          "title": "RDT Local Memory Bandwidth",
+          "title": "RDT Per-Core Local Memory Bandwidth",
           "description": "",
           "links": [],
           "data": {
@@ -12235,7 +12235,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"local\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} local MBM",
+                        "legendFormat": "{{instance}} pkg {{package}} core {{core}} local MBM",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -12258,7 +12258,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"local\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} local MBM",
+                        "legendFormat": "{{instance}} pkg {{package}} core {{core}} local MBM",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -12378,7 +12378,7 @@
         "kind": "Panel",
         "spec": {
           "id": 95,
-          "title": "RDT Remote Memory Bandwidth",
+          "title": "RDT Per-Core Remote Memory Bandwidth",
           "description": "",
           "links": [],
           "data": {
@@ -12398,7 +12398,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"remote\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} remote MBM",
+                        "legendFormat": "{{instance}} pkg {{package}} core {{core}} remote MBM",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -12421,7 +12421,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_rdt_memory_bandwidth_bytes_per_second{package=\"$package\",die_group=\"$die_group\",die=\"$die\",instance=\"$instance\",traffic=\"remote\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} package {{package}} CPU {{cpu}} remote MBM",
+                        "legendFormat": "{{instance}} pkg {{package}} core {{core}} remote MBM",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -12594,7 +12594,7 @@
                       "spec": {
                         "x": 0,
                         "y": 0,
-                        "width": 12,
+                        "width": 6,
                         "height": 8,
                         "element": {
                           "kind": "ElementReference",
@@ -12605,9 +12605,9 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
-                        "x": 12,
+                        "x": 6,
                         "y": 0,
-                        "width": 12,
+                        "width": 6,
                         "height": 8,
                         "element": {
                           "kind": "ElementReference",
@@ -12618,9 +12618,9 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
-                        "x": 0,
-                        "y": 8,
-                        "width": 12,
+                        "x": 12,
+                        "y": 0,
+                        "width": 6,
                         "height": 8,
                         "element": {
                           "kind": "ElementReference",
@@ -12631,9 +12631,9 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
-                        "x": 12,
-                        "y": 8,
-                        "width": 12,
+                        "x": 18,
+                        "y": 0,
+                        "width": 6,
                         "height": 8,
                         "element": {
                           "kind": "ElementReference",

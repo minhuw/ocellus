@@ -396,6 +396,7 @@ mod tests {
                     local_memory_bandwidth_bytes_per_second: Some(2048.0),
                     remote_memory_bandwidth_bytes_per_second: Some(1024.0),
                     scope: crate::metrics::rdt::RdtScope {
+                        core_id: 1,
                         cpu: 2,
                         die_group_id: 0,
                         die_id: 0,
@@ -422,6 +423,7 @@ mod tests {
         assert!(metrics.contains("ocellus_rdt_l3_occupancy_bytes"));
         assert!(metrics.contains("# TYPE ocellus_rdt_memory_bandwidth_bytes_per_second gauge"));
         assert!(metrics.contains("ocellus_rdt_memory_bandwidth_bytes_per_second"));
+        assert!(metrics.contains("core=\"1\""));
         assert!(metrics.contains("cpu=\"2\""));
         assert!(metrics.contains("traffic=\"total\""));
         assert!(metrics.contains("traffic=\"local\""));

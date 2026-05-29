@@ -39,6 +39,7 @@ const QM_CTR_ERROR_BIT: u64 = 1_u64 << 63;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct RdtScope {
+    pub core_id: u32,
     pub cpu: u32,
     pub die_group_id: u32,
     pub die_id: u32,
@@ -48,6 +49,7 @@ pub struct RdtScope {
 impl RdtScope {
     fn from_topology(topology: &CpuTopology) -> Result<Self, String> {
         Ok(Self {
+            core_id: package_local_core_id(topology)?,
             cpu: topology.cpu,
             die_group_id: topology.level_id(TopologyLevelKind::DieGroup).unwrap_or(0),
             die_id: topology.level_id(TopologyLevelKind::Die).unwrap_or(0),
@@ -63,15 +65,19 @@ struct RdtDomainKey {
     package_id: u32,
     die_group_id: u32,
     die_id: u32,
+    node_id: u32,
+    core_id: u32,
     cache: RdtCacheDomain,
 }
 
 impl RdtDomainKey {
-    fn from_scope(scope: RdtScope, cache: RdtCacheDomain) -> Self {
+    fn from_scope(scope: RdtScope, node_id: u32, cache: RdtCacheDomain) -> Self {
         Self {
             package_id: scope.package_id,
             die_group_id: scope.die_group_id,
             die_id: scope.die_id,
+            node_id,
+            core_id: scope.core_id,
             cache,
         }
     }
@@ -88,16 +94,23 @@ impl RdtCacheDomain {
         &self,
         topology_cpu: u32,
         scope: RdtScope,
+        node_id: u32,
         scopes_by_cpu: &BTreeMap<u32, RdtScope>,
+        node_ids_by_cpu: &BTreeMap<u32, u32>,
     ) -> Vec<u32> {
         match self {
             Self::SharedCpuList(cpus) => cpus
                 .iter()
                 .copied()
                 .filter(|cpu| {
-                    scopes_by_cpu
-                        .get(cpu)
-                        .is_some_and(|cpu_scope| same_rdt_scope(*cpu_scope, scope))
+                    let Some(cpu_scope) = scopes_by_cpu.get(cpu) else {
+                        return false;
+                    };
+                    let Some(cpu_node_id) = node_ids_by_cpu.get(cpu) else {
+                        return false;
+                    };
+
+                    same_rdt_scope(*cpu_scope, scope) && *cpu_node_id == node_id
                 })
                 .collect(),
             Self::Topology { .. } => vec![topology_cpu],
@@ -398,6 +411,7 @@ impl RdtTask {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct RdtScopeLabels {
+    core: String,
     cpu: String,
     die: String,
     die_group: String,
@@ -406,6 +420,7 @@ struct RdtScopeLabels {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct RdtMemoryBandwidthLabels {
+    core: String,
     cpu: String,
     die: String,
     die_group: String,
@@ -449,6 +464,7 @@ impl RdtPrometheusMetrics {
     pub fn update(&self, metrics: RdtMetrics) {
         for scope_metrics in metrics.scopes {
             let scope_labels = RdtScopeLabels {
+                core: scope_metrics.scope.core_id.to_string(),
                 cpu: scope_metrics.scope.cpu.to_string(),
                 die_group: scope_metrics.scope.die_group_id.to_string(),
                 die: scope_metrics.scope.die_id.to_string(),
@@ -479,6 +495,7 @@ impl RdtPrometheusMetrics {
                 if let Some(bytes_per_second) = bytes_per_second {
                     self.memory_bandwidth_bytes_per_second
                         .get_or_create(&RdtMemoryBandwidthLabels {
+                            core: scope_metrics.scope.core_id.to_string(),
                             cpu: scope_metrics.scope.cpu.to_string(),
                             die_group: scope_metrics.scope.die_group_id.to_string(),
                             die: scope_metrics.scope.die_id.to_string(),
@@ -784,17 +801,32 @@ fn rdt_domains_from_topologies_with_numa(
     let mut domains: BTreeMap<RdtDomainKey, RdtDomainBuilder> = BTreeMap::new();
     let topologies = topologies.into_iter().collect::<Vec<_>>();
     let mut scopes_by_cpu = BTreeMap::new();
+    let mut node_ids_by_cpu = BTreeMap::new();
 
     for topology in &topologies {
-        scopes_by_cpu.insert(topology.cpu, RdtScope::from_topology(topology)?);
+        let scope = RdtScope::from_topology(topology)?;
+        let node_id = numa_node(topology.cpu)?.unwrap_or(scope.die_id);
+
+        scopes_by_cpu.insert(topology.cpu, scope);
+        node_ids_by_cpu.insert(topology.cpu, node_id);
     }
 
     for topology in topologies {
-        let scope = RdtScope::from_topology(&topology)?;
+        let scope = *scopes_by_cpu
+            .get(&topology.cpu)
+            .ok_or_else(|| format!("CPU {} is missing RDT scope", topology.cpu))?;
+        let node_id = *node_ids_by_cpu
+            .get(&topology.cpu)
+            .ok_or_else(|| format!("CPU {} is missing NUMA node", topology.cpu))?;
         let cache = cache_domain(&topology)?;
-        let cpus = cache.cpus_in_scope(topology.cpu, scope, &scopes_by_cpu);
-        let key = RdtDomainKey::from_scope(scope, cache);
-        let node_id = numa_node(topology.cpu)?.unwrap_or(scope.die_id);
+        let cpus = cache.cpus_in_scope(
+            topology.cpu,
+            scope,
+            node_id,
+            &scopes_by_cpu,
+            &node_ids_by_cpu,
+        );
+        let key = RdtDomainKey::from_scope(scope, node_id, cache);
         let builder = domains.entry(key).or_insert_with(|| RdtDomainBuilder {
             cpus: Vec::new(),
             node_id,
@@ -850,6 +882,41 @@ fn same_rdt_scope(left: RdtScope, right: RdtScope) -> bool {
     left.package_id == right.package_id
         && left.die_group_id == right.die_group_id
         && left.die_id == right.die_id
+        && left.core_id == right.core_id
+}
+
+fn package_local_core_id(topology: &CpuTopology) -> Result<u32, String> {
+    let package_shift = topology
+        .levels
+        .iter()
+        .find(|level| level.kind == TopologyLevelKind::Package)
+        .map(|level| level.shift)
+        .ok_or_else(|| "CPU topology is missing package level".to_string())?;
+    let smt_shift = topology
+        .levels
+        .iter()
+        .find(|level| level.kind == TopologyLevelKind::Smt)
+        .map(|level| level.shift)
+        .unwrap_or(0);
+
+    if package_shift < smt_shift {
+        return Err(format!(
+            "CPU topology package shift {package_shift} is below SMT shift {smt_shift}"
+        ));
+    }
+
+    let core_width = package_shift - smt_shift;
+    if core_width == 0 {
+        return Ok(0);
+    }
+
+    let core_mask = if core_width >= u32::BITS {
+        u32::MAX
+    } else {
+        (1_u32 << core_width) - 1
+    };
+
+    Ok((topology.x2apic_id >> smt_shift) & core_mask)
 }
 
 fn snc_nodes_by_cache(
@@ -1192,7 +1259,7 @@ mod tests {
     }
 
     #[test]
-    fn groups_rdt_domains_by_shared_l3_cpu_list() {
+    fn assigns_one_rdt_domain_per_core_inside_shared_l3() {
         let topologies = [
             test_topology(0, 0, 0, 0, 0, 0),
             test_topology(1, 0, 0, 0, 0, 0),
@@ -1209,13 +1276,64 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(domains.len(), 2);
-        assert_eq!(domains[0].cpus, vec![0, 1]);
+        assert_eq!(domains.len(), 4);
+        assert_eq!(domains[0].cpus, vec![0]);
         assert_eq!(domains[0].rmid, 1);
         assert_eq!(domains[0].scope.cpu, 0);
-        assert_eq!(domains[1].cpus, vec![2, 3]);
+        assert_eq!(domains[1].cpus, vec![1]);
         assert_eq!(domains[1].rmid, 2);
+        assert_eq!(domains[1].scope.cpu, 1);
+        assert_eq!(domains[2].cpus, vec![2]);
+        assert_eq!(domains[2].rmid, 3);
+        assert_eq!(domains[2].scope.cpu, 2);
+        assert_eq!(domains[3].cpus, vec![3]);
+        assert_eq!(domains[3].rmid, 4);
+        assert_eq!(domains[3].scope.cpu, 3);
+    }
+
+    #[test]
+    fn groups_smt_siblings_by_core_inside_shared_l3() {
+        let topologies = [
+            test_topology_with_core(0, 0, 0, 0, 0, 0, 0, 0),
+            test_topology_with_core(1, 0, 0, 0, 0, 0, 0, 1),
+            test_topology_with_core(2, 0, 0, 0, 0, 0, 1, 2),
+            test_topology_with_core(3, 0, 0, 0, 0, 0, 1, 3),
+        ];
+
+        let domains = rdt_domains_from_topologies(topologies, 8, |_| {
+            Ok(RdtCacheDomain::SharedCpuList(vec![0, 1, 2, 3]))
+        })
+        .unwrap();
+
+        assert_eq!(domains.len(), 2);
+        assert_eq!(domains[0].cpus, vec![0, 1]);
+        assert_eq!(domains[0].scope.core_id, 0);
+        assert_eq!(domains[0].scope.cpu, 0);
+        assert_eq!(domains[1].cpus, vec![2, 3]);
+        assert_eq!(domains[1].scope.core_id, 1);
         assert_eq!(domains[1].scope.cpu, 2);
+    }
+
+    #[test]
+    fn keeps_repeated_local_core_ids_distinct_across_topology_levels() {
+        let topologies = [
+            test_topology_with_core(0, 0, 0, 0, 0, 0, 0, 0b0000),
+            test_topology_with_core(1, 0, 0, 0, 1, 0, 0, 0b0100),
+            test_topology_with_core(2, 0, 0, 0, 0, 1, 0, 0b1000),
+        ];
+
+        let domains = rdt_domains_from_topologies(topologies, 8, |_| {
+            Ok(RdtCacheDomain::SharedCpuList(vec![0, 1, 2]))
+        })
+        .unwrap();
+
+        assert_eq!(domains.len(), 3);
+        assert_eq!(domains[0].cpus, vec![0]);
+        assert_eq!(domains[0].scope.core_id, 0);
+        assert_eq!(domains[1].cpus, vec![1]);
+        assert_eq!(domains[1].scope.core_id, 2);
+        assert_eq!(domains[2].cpus, vec![2]);
+        assert_eq!(domains[2].scope.core_id, 4);
     }
 
     #[test]
@@ -1271,6 +1389,32 @@ mod tests {
         assert_eq!(domains[0].rmid, 1);
         assert_eq!(domains[0].physical_rmid, 1);
         assert_eq!(domains[0].snc_nodes_per_l3_cache, 2);
+        assert_eq!(domains[1].rmid, 2);
+        assert_eq!(domains[1].physical_rmid, 10);
+        assert_eq!(domains[1].snc_nodes_per_l3_cache, 2);
+    }
+
+    #[test]
+    fn keeps_snc_nodes_distinct_when_scope_and_cache_key_match() {
+        let topologies = [
+            test_topology_with_core(0, 0, 0, 0, 0, 0, 0, 0),
+            test_topology_with_core(1, 0, 0, 0, 0, 0, 0, 1),
+        ];
+
+        let domains = rdt_domains_from_topologies_with_numa(
+            topologies,
+            15,
+            |_| Ok(RdtCacheDomain::SharedCpuList(vec![0, 1])),
+            |cpu| Ok(Some(cpu)),
+        )
+        .unwrap();
+
+        assert_eq!(domains.len(), 2);
+        assert_eq!(domains[0].cpus, vec![0]);
+        assert_eq!(domains[0].rmid, 1);
+        assert_eq!(domains[0].physical_rmid, 1);
+        assert_eq!(domains[0].snc_nodes_per_l3_cache, 2);
+        assert_eq!(domains[1].cpus, vec![1]);
         assert_eq!(domains[1].rmid, 2);
         assert_eq!(domains[1].physical_rmid, 10);
         assert_eq!(domains[1].snc_nodes_per_l3_cache, 2);
@@ -1418,6 +1562,7 @@ mod tests {
 
     fn test_scope() -> RdtScope {
         RdtScope {
+            core_id: 0,
             cpu: 0,
             die_group_id: 0,
             die_id: 0,
@@ -1433,6 +1578,29 @@ mod tests {
         module_id: u32,
         tile_id: u32,
     ) -> CpuTopology {
+        let x2apic_id = cpu << 1;
+        test_topology_with_core(
+            cpu,
+            package_id,
+            die_group_id,
+            die_id,
+            module_id,
+            tile_id,
+            cpu,
+            x2apic_id,
+        )
+    }
+
+    fn test_topology_with_core(
+        cpu: u32,
+        package_id: u32,
+        die_group_id: u32,
+        die_id: u32,
+        module_id: u32,
+        tile_id: u32,
+        core_id: u32,
+        x2apic_id: u32,
+    ) -> CpuTopology {
         CpuTopology {
             cpu,
             levels: vec![
@@ -1442,7 +1610,7 @@ mod tests {
                     shift: 1,
                 },
                 crate::metal::topology::TopologyLevel {
-                    id: 0,
+                    id: core_id,
                     kind: TopologyLevelKind::Core,
                     shift: 2,
                 },
@@ -1472,7 +1640,7 @@ mod tests {
                     shift: 6,
                 },
             ],
-            x2apic_id: cpu,
+            x2apic_id,
         }
     }
 }

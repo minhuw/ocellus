@@ -14052,7 +14052,7 @@
                                   },
                                   "x": 0,
                                   "y": 0,
-                                  "width": 8,
+                                  "width": 6,
                                   "height": 8
                                 }
                               },
@@ -14063,9 +14063,9 @@
                                     "kind": "ElementReference",
                                     "name": "panel-cha-sf-evictions-snoop-filter-evictions-m"
                                   },
-                                  "x": 8,
+                                  "x": 6,
                                   "y": 0,
-                                  "width": 8,
+                                  "width": 6,
                                   "height": 8
                                 }
                               },
@@ -14076,9 +14076,9 @@
                                     "kind": "ElementReference",
                                     "name": "panel-cha-sf-evictions-snoop-filter-evictions-s"
                                   },
-                                  "x": 16,
+                                  "x": 12,
                                   "y": 0,
-                                  "width": 8,
+                                  "width": 6,
                                   "height": 8
                                 }
                               }

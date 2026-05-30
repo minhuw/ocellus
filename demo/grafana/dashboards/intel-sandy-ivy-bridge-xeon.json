@@ -155,7 +155,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_tsc_frequency_hz{instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} TSC",
+                        "legendFormat": "TSC",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -270,7 +270,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_rapl_power_watts{package=\"$package\",domain=\"package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} Package",
+                        "legendFormat": "Package",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -385,7 +385,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_rapl_power_watts{package=\"$package\",domain=\"dram\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} DRAM",
+                        "legendFormat": "DRAM",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -500,7 +500,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_imc_frequency_hz{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} IMC",
+                        "legendFormat": "IMC",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -615,7 +615,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_irp_frequency_hz{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} IRP",
+                        "legendFormat": "IRP",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -730,7 +730,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_cha_frequency_hz{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} CHA",
+                        "legendFormat": "CHA",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -845,7 +845,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_pcu_frequency_hz{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} PCU",
+                        "legendFormat": "PCU",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -960,7 +960,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_interconnect_frequency_hz{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} link {{link}}",
+                        "legendFormat": "link {{link}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1075,7 +1075,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_imc_read_bytes_per_second{package=\"$package\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{instance}} read",
+                        "legendFormat": "read",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1098,7 +1098,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_imc_read_bytes_per_second{package=\"$package\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} read",
+                        "legendFormat": "read",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1238,7 +1238,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_imc_write_bytes_per_second{package=\"$package\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{instance}} write",
+                        "legendFormat": "write",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1261,7 +1261,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_imc_write_bytes_per_second{package=\"$package\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} write",
+                        "legendFormat": "write",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1401,7 +1401,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_imc_read_cas_commands_per_second{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} read CAS",
+                        "legendFormat": "read CAS",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1424,7 +1424,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_imc_write_cas_commands_per_second{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} write CAS",
+                        "legendFormat": "write CAS",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1539,7 +1539,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_imc_activate_commands_per_second{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} activate",
+                        "legendFormat": "activate",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1562,7 +1562,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_imc_page_miss_precharge_commands_per_second{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} page-miss precharge",
+                        "legendFormat": "page-miss precharge",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1677,7 +1677,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_imc_rpq_non_empty_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} RPQ non-empty",
+                        "legendFormat": "RPQ non-empty",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1792,7 +1792,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_imc_wpq_non_empty_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} WPQ non-empty",
+                        "legendFormat": "WPQ non-empty",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -1907,7 +1907,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_imc_wpq_full_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} WPQ full",
+                        "legendFormat": "WPQ full",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2022,7 +2022,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_irp_total_occupancy_entries{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} occupancy",
+                        "legendFormat": "occupancy",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2137,7 +2137,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_irp_pcie_inbound_writes_per_second{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} writes",
+                        "legendFormat": "writes",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2252,7 +2252,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_irp_pcie_inbound_reads_per_second{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} reads",
+                        "legendFormat": "reads",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2367,7 +2367,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_irp_io_write_conflict_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} conflict",
+                        "legendFormat": "conflict",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2482,7 +2482,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{instance}} {{state}} {{operation}}",
+                        "legendFormat": "{{state}} {{operation}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2505,7 +2505,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} {{state}} {{operation}}",
+                        "legendFormat": "{{state}} {{operation}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2645,7 +2645,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_cha_llc_victims_per_second{state=\"e\",package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}}",
+                        "legendFormat": "LLC Victim E",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2760,7 +2760,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "(ocellus_cha_transaction_result_inserts_per_second{package=\"$package\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
-                        "legendFormat": "{{instance}} {{transaction}} {{result}}",
+                        "legendFormat": "{{transaction}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2783,7 +2783,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_cha_transaction_bandwidth_bytes_per_second{package=\"$package\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
-                        "legendFormat": "{{instance}} {{transaction}}",
+                        "legendFormat": "{{transaction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2806,7 +2806,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_cha_transaction_bandwidth_bytes_per_second{package=\"$package\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} {{transaction}}",
+                        "legendFormat": "{{transaction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2958,7 +2958,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{instance}} {{transaction}} {{result}}",
+                        "legendFormat": "{{transaction}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2981,7 +2981,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_cha_transaction_result_bandwidth_bytes_per_second{package=\"$package\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} {{transaction}} {{result}}",
+                        "legendFormat": "{{transaction}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3121,7 +3121,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_cha_transaction_result_occupancy_entries{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} {{transaction}} {{result}}",
+                        "legendFormat": "{{transaction}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3236,7 +3236,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_cha_transaction_result_latency_seconds{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} {{transaction}} {{result}}",
+                        "legendFormat": "{{transaction}} {{result}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3351,7 +3351,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_cha_transaction_hit_rate{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} {{transaction}}",
+                        "legendFormat": "{{transaction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3466,7 +3466,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_cha_transaction_latency_seconds{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} {{transaction}}",
+                        "legendFormat": "{{transaction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3581,7 +3581,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_pcu_core_c_state_average_cores{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} core {{c_state}}",
+                        "legendFormat": "core {{c_state}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3696,7 +3696,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_pcu_frequency_limit_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} {{reason}}",
+                        "legendFormat": "{{reason}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3811,7 +3811,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_pcu_frequency_transition_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} transition",
+                        "legendFormat": "transition",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -3926,7 +3926,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_pcu_memory_phase_shedding_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} memory phase shedding",
+                        "legendFormat": "memory phase shedding",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4041,7 +4041,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_pcu_package_c_state_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} package {{c_state}}",
+                        "legendFormat": "package {{c_state}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4156,7 +4156,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_pcu_thermal_throttle_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} {{source}}",
+                        "legendFormat": "{{source}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4271,7 +4271,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_interconnect_data_bytes_per_second{package=\"$package\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{instance}} link {{link}} {{direction}}",
+                        "legendFormat": "link {{link}} {{direction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4294,7 +4294,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "((ocellus_interconnect_data_bytes_per_second{package=\"$package\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{instance}} link {{link}} {{direction}}",
+                        "legendFormat": "link {{link}} {{direction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4434,7 +4434,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_interconnect_flits_per_second{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} link {{link}} {{direction}} {{traffic}}",
+                        "legendFormat": "link {{link}} {{direction}} {{traffic}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4549,7 +4549,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_interconnect_power_state_ratio{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} link {{link}} {{direction}} {{state}}",
+                        "legendFormat": "link {{link}} {{direction}} {{state}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4664,7 +4664,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_interconnect_queue_inserts_per_second{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} link {{link}} {{direction}}",
+                        "legendFormat": "link {{link}} {{direction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4779,7 +4779,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_interconnect_queue_occupancy_flits{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} link {{link}} {{direction}}",
+                        "legendFormat": "link {{link}} {{direction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -4894,7 +4894,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_interconnect_queue_latency_seconds{package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}} link {{link}} {{direction}}",
+                        "legendFormat": "link {{link}} {{direction}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5009,7 +5009,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_cha_llc_victims_per_second{state=\"m\",package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}}",
+                        "legendFormat": "LLC Victim M",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -5124,7 +5124,7 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "ocellus_cha_llc_victims_per_second{state=\"s\",package=\"$package\",instance=\"$instance\"}",
-                        "legendFormat": "{{instance}}",
+                        "legendFormat": "LLC Victim S",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1

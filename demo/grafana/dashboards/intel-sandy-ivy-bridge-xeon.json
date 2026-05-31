@@ -2458,11 +2458,11 @@
           "transparent": false
         }
       },
-      "panel-cha-llc-lookups": {
+      "panel-cha-llc-lookup-i": {
         "kind": "Panel",
         "spec": {
-          "id": 20,
-          "title": "CHA LLC Lookups",
+          "id": 70,
+          "title": "CHA LLC Lookup I",
           "description": "",
           "links": [],
           "data": {
@@ -2481,8 +2481,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
-                        "legendFormat": "{{state}} {{operation}}",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"i\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{operation}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -2504,8 +2504,660 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
-                        "legendFormat": "{{state}} {{operation}}",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"i\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "A"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-s": {
+        "kind": "Panel",
+        "spec": {
+          "id": 71,
+          "title": "CHA LLC Lookup S",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"s\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"s\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "A"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-e": {
+        "kind": "Panel",
+        "spec": {
+          "id": 72,
+          "title": "CHA LLC Lookup E",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"e\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"e\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "A"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-m": {
+        "kind": "Panel",
+        "spec": {
+          "id": 73,
+          "title": "CHA LLC Lookup M",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"m\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"m\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisGridShow": false
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "none"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "A"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-f": {
+        "kind": "Panel",
+        "spec": {
+          "id": 74,
+          "title": "CHA LLC Lookup F",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"f\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "legendFormat": "{{operation}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",state=\"f\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}}",
                         "range": true,
                         "interval": "1s",
                         "intervalFactor": 1
@@ -8541,6 +9193,33 @@
                                     "name": "panel-cha-frequency"
                                   }
                                 }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "RowsLayoutRow",
+                      "spec": {
+                        "title": "CHA LLC Lookups",
+                        "collapse": false,
+                        "layout": {
+                          "kind": "GridLayout",
+                          "spec": {
+                            "items": [
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-i"
+                                  }
+                                }
                               },
                               {
                                 "kind": "GridLayoutItem",
@@ -8551,7 +9230,46 @@
                                   "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-cha-llc-lookups"
+                                    "name": "panel-cha-llc-lookup-s"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-e"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-m"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-f"
                                   }
                                 }
                               }
@@ -8578,7 +9296,7 @@
                                   },
                                   "x": 0,
                                   "y": 0,
-                                  "width": 8,
+                                  "width": 6,
                                   "height": 8
                                 }
                               },
@@ -8589,9 +9307,9 @@
                                     "kind": "ElementReference",
                                     "name": "panel-cha-llc-victims-llc-victim-m"
                                   },
-                                  "x": 8,
+                                  "x": 6,
                                   "y": 0,
-                                  "width": 8,
+                                  "width": 6,
                                   "height": 8
                                 }
                               },
@@ -8602,388 +9320,10 @@
                                     "kind": "ElementReference",
                                     "name": "panel-cha-llc-victims-llc-victim-s"
                                   },
-                                  "x": 16,
+                                  "x": 12,
                                   "y": 0,
-                                  "width": 8,
+                                  "width": 6,
                                   "height": 8
-                                }
-                              }
-                            ]
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "kind": "RowsLayoutRow",
-                      "spec": {
-                        "title": "CHA Transactions",
-                        "collapse": false,
-                        "layout": {
-                          "kind": "GridLayout",
-                          "spec": {
-                            "items": [
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 0,
-                                  "y": 0,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-io_pcirdcur-traffic"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 6,
-                                  "y": 0,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-io_pcirdcur-occupancy"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 12,
-                                  "y": 0,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-io_pcirdcur-latency"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 18,
-                                  "y": 0,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-io_pcirdcur-hit-rate"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 0,
-                                  "y": 8,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-io_pciitom-traffic"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 6,
-                                  "y": 8,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-io_pciitom-occupancy"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 12,
-                                  "y": 8,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-io_pciitom-latency"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 18,
-                                  "y": 8,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-io_pciitom-hit-rate"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 0,
-                                  "y": 16,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-pcie_rfo-traffic"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 6,
-                                  "y": 16,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-pcie_rfo-occupancy"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 12,
-                                  "y": 16,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-pcie_rfo-latency"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 18,
-                                  "y": 16,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-pcie_rfo-hit-rate"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 0,
-                                  "y": 24,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-pcie_itom-traffic"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 6,
-                                  "y": 24,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-pcie_itom-occupancy"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 12,
-                                  "y": 24,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-pcie_itom-latency"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 18,
-                                  "y": 24,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-pcie_itom-hit-rate"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 0,
-                                  "y": 32,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_rfo-traffic"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 6,
-                                  "y": 32,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_rfo-occupancy"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 12,
-                                  "y": 32,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_rfo-latency"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 18,
-                                  "y": 32,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_rfo-hit-rate"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 0,
-                                  "y": 40,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_drd-traffic"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 6,
-                                  "y": 40,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_drd-occupancy"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 12,
-                                  "y": 40,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_drd-latency"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 18,
-                                  "y": 40,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_drd-hit-rate"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 0,
-                                  "y": 48,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_itom-traffic"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 6,
-                                  "y": 48,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_itom-occupancy"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 12,
-                                  "y": 48,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_itom-latency"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 18,
-                                  "y": 48,
-                                  "width": 6,
-                                  "height": 8,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-cha-ia_itom-hit-rate"
-                                  }
                                 }
                               }
                             ]

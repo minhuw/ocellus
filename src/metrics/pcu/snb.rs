@@ -240,9 +240,10 @@ const IVB_PCU_EVENT_GROUPS: [SnbPcuEventGroup; 5] = [
     SNB_PCU_EVENT_GROUPS[3],
     SnbPcuEventGroup {
         events: [
-            SnbPcuEventSpec::ext(SnbPcuEventKind::PackageCState(PcuCoreCState::C0), 0x2a),
-            SnbPcuEventSpec::ext(SnbPcuEventKind::PackageCState(PcuCoreCState::C3), 0x2c),
-            SnbPcuEventSpec::ext(SnbPcuEventKind::PackageCState(PcuCoreCState::C6), 0x2d),
+            // IvyTown hardware and Linux perf encode these without PCU ev_sel_ext.
+            SnbPcuEventSpec::new(SnbPcuEventKind::PackageCState(PcuCoreCState::C0), 0x2a),
+            SnbPcuEventSpec::new(SnbPcuEventKind::PackageCState(PcuCoreCState::C3), 0x2c),
+            SnbPcuEventSpec::new(SnbPcuEventKind::PackageCState(PcuCoreCState::C6), 0x2d),
             SnbPcuEventSpec::unused(),
         ],
     },
@@ -901,13 +902,13 @@ mod tests {
     }
 
     #[test]
-    fn ivy_bridge_package_c_states_use_extended_event_space() {
+    fn ivy_bridge_package_c_states_do_not_use_ext_select() {
         let group = IVB_PCU_EVENT_GROUPS[4];
 
         for event in &group.events[..3] {
             assert!(matches!(event.kind, SnbPcuEventKind::PackageCState(_)));
-            assert!(event.ext_sel);
-            assert_ne!(counter_control(*event) & (1 << 21), 0);
+            assert!(!event.ext_sel);
+            assert_eq!(counter_control(*event) & (1 << 21), 0);
         }
         assert_eq!(group.events[0].event, 0x2a);
         assert_eq!(group.events[1].event, 0x2c);

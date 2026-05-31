@@ -20,8 +20,8 @@ use crate::metrics::common::topology_label;
 use crate::metrics::uncore::hsx::{self, HsxUncoreScope};
 use crate::metrics::uncore::skx::{UncoreScope, queue_residency_seconds, ratio};
 
-const SNB_CBO_EVENT_GROUP_COUNT: usize = 19;
-const SNB_CBO_EXPORTED_TRANSACTION_COUNT: usize = 3;
+const SNB_CBO_EVENT_GROUP_COUNT: usize = 27;
+const SNB_CBO_EXPORTED_TRANSACTION_COUNT: usize = 7;
 const SNB_MAX_CBO_COUNT: usize = 32;
 
 const CBO_COUNTER_BASE: u64 = 0x0d16;
@@ -34,6 +34,8 @@ const CBO_UNIT_STRIDE: u64 = 0x20;
 const COUNTER_ENABLE_BIT: u64 = 1 << 22;
 const COUNTER_OVERFLOW_ENABLE_BIT: u64 = 1 << 20;
 const COUNTER_RESET_BIT: u64 = 1 << 17;
+const CBO_PCIE_REQUEST_TID: u16 = 0x1e;
+const CBO_TID_ENABLE_BIT: u64 = 1 << 19;
 const UNIT_COUNTER_RESET_BIT: u64 = 1 << 1;
 const UNIT_CONTROL_RESET_BIT: u64 = 1 << 0;
 const UNIT_FREEZE_BIT: u64 = 1 << 8;
@@ -65,6 +67,10 @@ const SNB_IVB_LLC_VICTIM_STATES: [ChaCacheState; 3] =
     [ChaCacheState::M, ChaCacheState::E, ChaCacheState::S];
 
 const SNB_CBO_EXPORTED_TRANSACTIONS: [SnbTransactionKind; SNB_CBO_EXPORTED_TRANSACTION_COUNT] = [
+    SnbTransactionKind::IoPciRdCur,
+    SnbTransactionKind::IoPciItoM,
+    SnbTransactionKind::PciRfo,
+    SnbTransactionKind::PciItoM,
     SnbTransactionKind::IaRfo,
     SnbTransactionKind::IaDrd,
     SnbTransactionKind::IaItoM,
@@ -86,12 +92,12 @@ const SNB_CBO_EVENT_GROUPS: [SnbChaEventGroup; SNB_CBO_EVENT_GROUP_COUNT] = [
     SnbChaEventGroup::llc_victims_s(),
     SnbChaEventGroup::transaction(
         SnbChaArchitecture::Snb,
-        SnbTransactionKind::IaRfo,
+        SnbTransactionKind::TotalRfo,
         SnbTorCounterKind::Total,
     ),
     SnbChaEventGroup::transaction(
         SnbChaArchitecture::Snb,
-        SnbTransactionKind::IaRfo,
+        SnbTransactionKind::TotalRfo,
         SnbTorCounterKind::Miss,
     ),
     SnbChaEventGroup::transaction(
@@ -106,12 +112,52 @@ const SNB_CBO_EVENT_GROUPS: [SnbChaEventGroup; SNB_CBO_EVENT_GROUP_COUNT] = [
     ),
     SnbChaEventGroup::transaction(
         SnbChaArchitecture::Snb,
-        SnbTransactionKind::IaItoM,
+        SnbTransactionKind::TotalItoM,
         SnbTorCounterKind::Total,
     ),
     SnbChaEventGroup::transaction(
         SnbChaArchitecture::Snb,
-        SnbTransactionKind::IaItoM,
+        SnbTransactionKind::TotalItoM,
+        SnbTorCounterKind::Miss,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Snb,
+        SnbTransactionKind::PciRfo,
+        SnbTorCounterKind::Total,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Snb,
+        SnbTransactionKind::PciRfo,
+        SnbTorCounterKind::Miss,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Snb,
+        SnbTransactionKind::PciItoM,
+        SnbTorCounterKind::Total,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Snb,
+        SnbTransactionKind::PciItoM,
+        SnbTorCounterKind::Miss,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Snb,
+        SnbTransactionKind::IoPciRdCur,
+        SnbTorCounterKind::Total,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Snb,
+        SnbTransactionKind::IoPciRdCur,
+        SnbTorCounterKind::Miss,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Snb,
+        SnbTransactionKind::IoPciItoM,
+        SnbTorCounterKind::Total,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Snb,
+        SnbTransactionKind::IoPciItoM,
         SnbTorCounterKind::Miss,
     ),
 ];
@@ -132,12 +178,12 @@ const IVB_CBO_EVENT_GROUPS: [SnbChaEventGroup; SNB_CBO_EVENT_GROUP_COUNT] = [
     SnbChaEventGroup::llc_victims_s(),
     SnbChaEventGroup::transaction(
         SnbChaArchitecture::Ivb,
-        SnbTransactionKind::IaRfo,
+        SnbTransactionKind::TotalRfo,
         SnbTorCounterKind::Total,
     ),
     SnbChaEventGroup::transaction(
         SnbChaArchitecture::Ivb,
-        SnbTransactionKind::IaRfo,
+        SnbTransactionKind::TotalRfo,
         SnbTorCounterKind::Miss,
     ),
     SnbChaEventGroup::transaction(
@@ -152,12 +198,52 @@ const IVB_CBO_EVENT_GROUPS: [SnbChaEventGroup; SNB_CBO_EVENT_GROUP_COUNT] = [
     ),
     SnbChaEventGroup::transaction(
         SnbChaArchitecture::Ivb,
-        SnbTransactionKind::IaItoM,
+        SnbTransactionKind::TotalItoM,
         SnbTorCounterKind::Total,
     ),
     SnbChaEventGroup::transaction(
         SnbChaArchitecture::Ivb,
-        SnbTransactionKind::IaItoM,
+        SnbTransactionKind::TotalItoM,
+        SnbTorCounterKind::Miss,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Ivb,
+        SnbTransactionKind::PciRfo,
+        SnbTorCounterKind::Total,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Ivb,
+        SnbTransactionKind::PciRfo,
+        SnbTorCounterKind::Miss,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Ivb,
+        SnbTransactionKind::PciItoM,
+        SnbTorCounterKind::Total,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Ivb,
+        SnbTransactionKind::PciItoM,
+        SnbTorCounterKind::Miss,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Ivb,
+        SnbTransactionKind::IoPciRdCur,
+        SnbTorCounterKind::Total,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Ivb,
+        SnbTransactionKind::IoPciRdCur,
+        SnbTorCounterKind::Miss,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Ivb,
+        SnbTransactionKind::IoPciItoM,
+        SnbTorCounterKind::Total,
+    ),
+    SnbChaEventGroup::transaction(
+        SnbChaArchitecture::Ivb,
+        SnbTransactionKind::IoPciItoM,
         SnbTorCounterKind::Miss,
     ),
 ];
@@ -740,7 +826,7 @@ impl SnbChaUnit {
         for (counter_index, event) in group.events.into_iter().enumerate() {
             msr.write(
                 cbo_control_offset(self.id, counter_index),
-                counter_control(event.event, event.umask),
+                counter_control(event.event, event.umask, event.thread_filter),
             )?;
         }
 
@@ -818,12 +904,32 @@ struct SnbChaFilterSpec {
 struct SnbChaEventSpec {
     event: u8,
     kind: SnbChaEventKind,
+    thread_filter: bool,
     umask: u8,
 }
 
 impl SnbChaEventSpec {
     const fn new(kind: SnbChaEventKind, event: u8, umask: u8) -> Self {
-        Self { event, kind, umask }
+        Self {
+            event,
+            kind,
+            thread_filter: false,
+            umask,
+        }
+    }
+
+    const fn new_with_thread_filter(
+        kind: SnbChaEventKind,
+        event: u8,
+        umask: u8,
+        thread_filter: bool,
+    ) -> Self {
+        Self {
+            event,
+            kind,
+            thread_filter,
+            umask,
+        }
     }
 
     const fn clockticks() -> Self {
@@ -945,22 +1051,26 @@ impl SnbChaEventGroup {
             SnbTorCounterKind::Miss => TOR_MISS_OPCODE_UMASK,
         };
 
+        let thread_filter = transaction.uses_pcie_thread_filter();
+
         Self {
             events: [
-                SnbChaEventSpec::new(
+                SnbChaEventSpec::new_with_thread_filter(
                     SnbChaEventKind::TransactionOccupancy(transaction, counter_kind),
                     TOR_OCCUPANCY_EVENT,
                     umask,
+                    thread_filter,
                 ),
-                SnbChaEventSpec::new(
+                SnbChaEventSpec::new_with_thread_filter(
                     SnbChaEventKind::TransactionInsert(transaction, counter_kind),
                     TOR_INSERTS_EVENT,
                     umask,
+                    thread_filter,
                 ),
                 SnbChaEventSpec::transaction_clockticks(transaction, counter_kind),
                 SnbChaEventSpec::unused(),
             ],
-            filter: SnbChaFilter::opcode(architecture, transaction.opcode()),
+            filter: SnbChaFilter::transaction(architecture, transaction),
         }
     }
 }
@@ -1002,12 +1112,29 @@ impl SnbChaFilter {
         }
     }
 
+    #[cfg(test)]
     const fn opcode(architecture: SnbChaArchitecture, opcode: u16) -> Self {
         Self {
             opcode,
             spec: architecture.filter_spec(),
             state: 0,
             thread_id: 0,
+        }
+    }
+
+    const fn transaction(
+        architecture: SnbChaArchitecture,
+        transaction: SnbTransactionKind,
+    ) -> Self {
+        Self {
+            opcode: transaction.opcode(),
+            spec: architecture.filter_spec(),
+            state: 0,
+            thread_id: if transaction.uses_pcie_thread_filter() {
+                CBO_PCIE_REQUEST_TID
+            } else {
+                0
+            },
         }
     }
 
@@ -1063,6 +1190,12 @@ enum SnbTransactionKind {
     IaDrd,
     IaItoM,
     IaRfo,
+    IoPciItoM,
+    IoPciRdCur,
+    PciItoM,
+    PciRfo,
+    TotalItoM,
+    TotalRfo,
 }
 
 impl SnbTransactionKind {
@@ -1071,6 +1204,12 @@ impl SnbTransactionKind {
             Self::IaDrd => ChaTransactionLabel::new("ia_drd"),
             Self::IaItoM => ChaTransactionLabel::new("ia_itom"),
             Self::IaRfo => ChaTransactionLabel::new("ia_rfo"),
+            Self::IoPciItoM => ChaTransactionLabel::new("io_pciitom"),
+            Self::IoPciRdCur => ChaTransactionLabel::new("io_pcirdcur"),
+            Self::PciItoM => ChaTransactionLabel::new("pcie_itom"),
+            Self::PciRfo => ChaTransactionLabel::new("pcie_rfo"),
+            Self::TotalItoM => ChaTransactionLabel::new("total_itom"),
+            Self::TotalRfo => ChaTransactionLabel::new("total_rfo"),
         }
     }
 
@@ -1079,7 +1218,15 @@ impl SnbTransactionKind {
             Self::IaDrd => 0x182,
             Self::IaItoM => 0x1c8,
             Self::IaRfo => 0x180,
+            Self::IoPciItoM => 0x19c,
+            Self::IoPciRdCur => 0x19e,
+            Self::PciItoM | Self::TotalItoM => 0x1c8,
+            Self::PciRfo | Self::TotalRfo => 0x180,
         }
+    }
+
+    const fn uses_pcie_thread_filter(self) -> bool {
+        matches!(self, Self::PciItoM | Self::PciRfo)
     }
 }
 
@@ -1160,8 +1307,54 @@ impl SnbChaMeasurementAccumulator {
     fn into_measurements(
         mut self,
     ) -> BTreeMap<HsxUncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>> {
+        self.derive_ia_transaction_measurements();
         self.export_transaction_measurements();
         self.exported_measurements
+    }
+
+    fn derive_ia_transaction_measurements(&mut self) {
+        for counter_kind in [SnbTorCounterKind::Total, SnbTorCounterKind::Miss] {
+            derive_transaction_clockticks(
+                &mut self.transaction_clockticks,
+                SnbTransactionKind::TotalRfo,
+                SnbTransactionKind::IaRfo,
+                counter_kind,
+            );
+            derive_transaction_counts(
+                &mut self.transaction_inserts,
+                SnbTransactionKind::TotalRfo,
+                SnbTransactionKind::PciRfo,
+                SnbTransactionKind::IaRfo,
+                counter_kind,
+            );
+            derive_transaction_counts(
+                &mut self.transaction_occupancy,
+                SnbTransactionKind::TotalRfo,
+                SnbTransactionKind::PciRfo,
+                SnbTransactionKind::IaRfo,
+                counter_kind,
+            );
+            derive_transaction_clockticks(
+                &mut self.transaction_clockticks,
+                SnbTransactionKind::TotalItoM,
+                SnbTransactionKind::IaItoM,
+                counter_kind,
+            );
+            derive_transaction_counts(
+                &mut self.transaction_inserts,
+                SnbTransactionKind::TotalItoM,
+                SnbTransactionKind::PciItoM,
+                SnbTransactionKind::IaItoM,
+                counter_kind,
+            );
+            derive_transaction_counts(
+                &mut self.transaction_occupancy,
+                SnbTransactionKind::TotalItoM,
+                SnbTransactionKind::PciItoM,
+                SnbTransactionKind::IaItoM,
+                counter_kind,
+            );
+        }
     }
 
     fn export_transaction_measurements(&mut self) {
@@ -1303,6 +1496,67 @@ impl SnbChaMeasurementAccumulator {
                 event_measurement,
             ),
         }
+    }
+}
+
+fn derive_transaction_clockticks(
+    measurements: &mut BTreeMap<
+        (HsxUncoreScope, SnbTransactionKind, SnbTorCounterKind),
+        ChaEventMeasurement,
+    >,
+    total_transaction: SnbTransactionKind,
+    derived_transaction: SnbTransactionKind,
+    counter_kind: SnbTorCounterKind,
+) {
+    let totals: Vec<_> = measurements
+        .iter()
+        .filter_map(|(&(scope, transaction, kind), &measurement)| {
+            if transaction == total_transaction && kind == counter_kind {
+                Some((scope, measurement))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (scope, total) in totals {
+        measurements.insert((scope, derived_transaction, counter_kind), total);
+    }
+}
+
+fn derive_transaction_counts(
+    measurements: &mut BTreeMap<
+        (HsxUncoreScope, SnbTransactionKind, SnbTorCounterKind),
+        ChaEventMeasurement,
+    >,
+    total_transaction: SnbTransactionKind,
+    excluded_transaction: SnbTransactionKind,
+    derived_transaction: SnbTransactionKind,
+    counter_kind: SnbTorCounterKind,
+) {
+    let totals: Vec<_> = measurements
+        .iter()
+        .filter_map(|(&(scope, transaction, kind), &measurement)| {
+            if transaction == total_transaction && kind == counter_kind {
+                Some((scope, measurement))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (scope, total) in totals {
+        let Some(excluded) = measurements
+            .get(&(scope, excluded_transaction, counter_kind))
+            .copied()
+        else {
+            continue;
+        };
+
+        measurements.insert(
+            (scope, derived_transaction, counter_kind),
+            derived_measurement(total, excluded),
+        );
     }
 }
 
@@ -1659,9 +1913,10 @@ fn snb_transaction_result_metrics(
     })
 }
 
-fn counter_control(event: u8, umask: u8) -> u64 {
+fn counter_control(event: u8, umask: u8, thread_filter: bool) -> u64 {
     u64::from(event)
         | (u64::from(umask) << 8)
+        | if thread_filter { CBO_TID_ENABLE_BIT } else { 0 }
         | COUNTER_RESET_BIT
         | COUNTER_OVERFLOW_ENABLE_BIT
         | COUNTER_ENABLE_BIT
@@ -1882,6 +2137,129 @@ mod tests {
     }
 
     #[test]
+    fn derives_ia_transactions_from_total_and_pcie_transactions() {
+        let scope = HsxUncoreScope { package_id: 0 };
+        let mut measurements = SnbChaMeasurementAccumulator::new();
+        let measurement = SnbChaMeasurement {
+            enabled: Duration::from_millis(100),
+            represented_unit_count: 1,
+            running: Duration::from_millis(100),
+            unit_scale: 1.0,
+        };
+
+        for (transaction, total_insert, miss_insert, total_occupancy, miss_occupancy) in [
+            (SnbTransactionKind::TotalRfo, 1_000, 600, 1_500, 900),
+            (SnbTransactionKind::PciRfo, 250, 100, 500, 400),
+            (SnbTransactionKind::TotalItoM, 2_000, 1_200, 3_000, 1_800),
+            (SnbTransactionKind::PciItoM, 500, 200, 700, 300),
+        ] {
+            measurements.add(
+                scope,
+                SnbChaEventKind::TransactionInsert(transaction, SnbTorCounterKind::Total),
+                total_insert,
+                measurement,
+            );
+            measurements.add(
+                scope,
+                SnbChaEventKind::TransactionInsert(transaction, SnbTorCounterKind::Miss),
+                miss_insert,
+                measurement,
+            );
+            measurements.add(
+                scope,
+                SnbChaEventKind::TransactionOccupancy(transaction, SnbTorCounterKind::Total),
+                total_occupancy,
+                measurement,
+            );
+            measurements.add(
+                scope,
+                SnbChaEventKind::TransactionOccupancy(transaction, SnbTorCounterKind::Miss),
+                miss_occupancy,
+                measurement,
+            );
+            measurements.add(
+                scope,
+                SnbChaEventKind::TransactionClockticks(transaction, SnbTorCounterKind::Total),
+                1_000,
+                measurement,
+            );
+            measurements.add(
+                scope,
+                SnbChaEventKind::TransactionClockticks(transaction, SnbTorCounterKind::Miss),
+                1_000,
+                measurement,
+            );
+        }
+
+        let measurements = measurements.into_measurements().remove(&scope).unwrap();
+
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionInsert(
+                SnbTransactionKind::IaRfo.label(),
+                ChaTransactionResult::Hit,
+            )]
+                .value,
+            250
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionInsert(
+                SnbTransactionKind::IaRfo.label(),
+                ChaTransactionResult::Miss,
+            )]
+                .value,
+            500
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionOccupancy(
+                SnbTransactionKind::IaRfo.label(),
+                ChaTransactionResult::Hit,
+            )]
+                .value,
+            500
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionOccupancy(
+                SnbTransactionKind::IaRfo.label(),
+                ChaTransactionResult::Miss,
+            )]
+                .value,
+            500
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionInsert(
+                SnbTransactionKind::IaItoM.label(),
+                ChaTransactionResult::Hit,
+            )]
+                .value,
+            500
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionInsert(
+                SnbTransactionKind::IaItoM.label(),
+                ChaTransactionResult::Miss,
+            )]
+                .value,
+            1_000
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionOccupancy(
+                SnbTransactionKind::IaItoM.label(),
+                ChaTransactionResult::Hit,
+            )]
+                .value,
+            800
+        );
+        assert_eq!(
+            measurements[&ChaEventKind::TransactionOccupancy(
+                SnbTransactionKind::IaItoM.label(),
+                ChaTransactionResult::Miss,
+            )]
+                .value,
+            1_500
+        );
+    }
+
+    #[test]
     fn encodes_snb_and_ivb_cbo_filters() {
         assert_eq!(SnbChaFilter::none().value(), 0);
         assert_eq!(
@@ -1912,6 +2290,21 @@ mod tests {
             SnbChaFilterValues {
                 filter0: 0,
                 filter1: 0x182 << 20,
+            }
+        );
+        assert_eq!(
+            SnbChaFilter::transaction(SnbChaArchitecture::Snb, SnbTransactionKind::PciRfo).values(),
+            SnbChaFilterValues {
+                filter0: (0x180 << 23) | CBO_PCIE_REQUEST_TID as u64,
+                filter1: 0,
+            }
+        );
+        assert_eq!(
+            SnbChaFilter::transaction(SnbChaArchitecture::Ivb, SnbTransactionKind::PciItoM)
+                .values(),
+            SnbChaFilterValues {
+                filter0: CBO_PCIE_REQUEST_TID as u64,
+                filter1: 0x1c8 << 20,
             }
         );
     }
@@ -1963,6 +2356,75 @@ mod tests {
                 ),
                 SnbChaEventSpec::unused(),
             ]
+        );
+
+        assert_eq!(
+            SnbChaEventGroup::transaction(
+                SnbChaArchitecture::Ivb,
+                SnbTransactionKind::IoPciRdCur,
+                SnbTorCounterKind::Total,
+            )
+            .filter,
+            SnbChaFilter::opcode(SnbChaArchitecture::Ivb, 0x19e)
+        );
+        assert_eq!(
+            SnbChaEventGroup::transaction(
+                SnbChaArchitecture::Ivb,
+                SnbTransactionKind::IoPciItoM,
+                SnbTorCounterKind::Total,
+            )
+            .filter,
+            SnbChaFilter::opcode(SnbChaArchitecture::Ivb, 0x19c)
+        );
+        assert_eq!(
+            SnbTransactionKind::IoPciRdCur.label(),
+            ChaTransactionLabel::new("io_pcirdcur")
+        );
+        assert_eq!(
+            SnbTransactionKind::IoPciItoM.label(),
+            ChaTransactionLabel::new("io_pciitom")
+        );
+
+        let pcie_group = SnbChaEventGroup::transaction(
+            SnbChaArchitecture::Ivb,
+            SnbTransactionKind::PciRfo,
+            SnbTorCounterKind::Miss,
+        );
+        assert_eq!(
+            pcie_group.filter,
+            SnbChaFilter::transaction(SnbChaArchitecture::Ivb, SnbTransactionKind::PciRfo)
+        );
+        assert_eq!(
+            pcie_group.events,
+            [
+                SnbChaEventSpec::new_with_thread_filter(
+                    SnbChaEventKind::TransactionOccupancy(
+                        SnbTransactionKind::PciRfo,
+                        SnbTorCounterKind::Miss,
+                    ),
+                    0x36,
+                    0x03,
+                    true,
+                ),
+                SnbChaEventSpec::new_with_thread_filter(
+                    SnbChaEventKind::TransactionInsert(
+                        SnbTransactionKind::PciRfo,
+                        SnbTorCounterKind::Miss,
+                    ),
+                    0x35,
+                    0x03,
+                    true,
+                ),
+                SnbChaEventSpec::transaction_clockticks(
+                    SnbTransactionKind::PciRfo,
+                    SnbTorCounterKind::Miss,
+                ),
+                SnbChaEventSpec::unused(),
+            ]
+        );
+        assert_eq!(
+            counter_control(TOR_INSERTS_EVENT, TOR_OPCODE_UMASK, true),
+            counter_control(TOR_INSERTS_EVENT, TOR_OPCODE_UMASK, false) | CBO_TID_ENABLE_BIT
         );
     }
 

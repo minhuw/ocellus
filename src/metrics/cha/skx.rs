@@ -12,8 +12,8 @@ use crate::metal::msr::Msr;
 use crate::metal::pci;
 use crate::metrics::cha::{
     CHA_COUNTER_COUNT, ChaEventKind, ChaEventMeasurement, ChaTransactionLabel, bytes_per_second,
-    event_rate, linux_uncore_unit_ids, llc_victim_metrics, pci_location_for_cpu,
-    required_measurement, scale_measurement_value,
+    event_rate, linux_uncore_unit_ids, llc_lookup_metrics, llc_victim_metrics,
+    pci_location_for_cpu, required_measurement, scale_measurement_value,
 };
 pub use crate::metrics::cha::{
     ChaCacheState, ChaEvictionMetrics, ChaHaRequestLocality, ChaHaRequestMetrics,
@@ -1603,43 +1603,6 @@ fn ha_request_metrics(
         remote_write_bytes_per_second: bytes_per_second(remote_write),
         scope,
     })
-}
-
-pub(crate) fn llc_lookup_metrics(
-    scope: UncoreScope,
-    measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
-) -> Result<Vec<ChaLlcLookupMetrics>, String> {
-    let mut metrics = Vec::new();
-
-    for state in [
-        ChaCacheState::SfS,
-        ChaCacheState::SfE,
-        ChaCacheState::SfM,
-        ChaCacheState::I,
-        ChaCacheState::S,
-        ChaCacheState::E,
-        ChaCacheState::M,
-        ChaCacheState::F,
-    ] {
-        for operation in [
-            ChaLookupOperation::Read,
-            ChaLookupOperation::Write,
-            ChaLookupOperation::RemoteSnoop,
-            ChaLookupOperation::Any,
-        ] {
-            metrics.push(ChaLlcLookupMetrics {
-                bytes_per_second: bytes_per_second(required_measurement(
-                    measurements,
-                    ChaEventKind::LlcLookup(state, operation),
-                )?),
-                operation,
-                scope,
-                state,
-            });
-        }
-    }
-
-    Ok(metrics)
 }
 
 fn no_credit_metrics(

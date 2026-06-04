@@ -1890,12 +1890,13 @@ mod tests {
 
         crate::metrics::cha::icx::IcxChaMetrics {
             ha_requests: metrics.0,
+            llc_lookups: metrics.1,
             llc_victims: Vec::new(),
-            request_queues: metrics.1,
-            scopes: metrics.2,
-            sf_evictions: metrics.3,
-            transaction_results: metrics.4,
-            transactions: metrics.5,
+            request_queues: metrics.2,
+            scopes: metrics.3,
+            sf_evictions: metrics.4,
+            transaction_results: metrics.5,
+            transactions: metrics.6,
         }
     }
 
@@ -1905,11 +1906,11 @@ mod tests {
         crate::metrics::cha::spr::SprChaMetrics {
             ha_requests: metrics.0,
             llc_victims: Vec::new(),
-            request_queues: metrics.1,
-            scopes: metrics.2,
-            sf_evictions: metrics.3,
-            transaction_results: metrics.4,
-            transactions: metrics.5,
+            request_queues: metrics.2,
+            scopes: metrics.3,
+            sf_evictions: metrics.4,
+            transaction_results: metrics.5,
+            transactions: metrics.6,
         }
     }
 
@@ -1959,6 +1960,7 @@ mod tests {
 
     fn server_cha_metric_fields() -> (
         Vec<crate::metrics::cha::ChaHaRequestMetrics>,
+        Vec<crate::metrics::cha::ChaLlcLookupMetrics>,
         Vec<crate::metrics::cha::ChaRequestQueueMetrics>,
         Vec<crate::metrics::cha::ChaScopeMetrics>,
         Vec<crate::metrics::cha::ChaSfEvictionMetrics>,
@@ -1980,6 +1982,12 @@ mod tests {
                 remote_read_bytes_per_second: 3.0,
                 remote_write_bytes_per_second: 4.0,
                 scope,
+            }],
+            vec![crate::metrics::cha::ChaLlcLookupMetrics {
+                bytes_per_second: 14.0,
+                operation: crate::metrics::cha::ChaLookupOperation::Read,
+                scope,
+                state: crate::metrics::cha::ChaCacheState::M,
             }],
             vec![crate::metrics::cha::ChaRequestQueueMetrics {
                 occupancy_entries: 11.0,

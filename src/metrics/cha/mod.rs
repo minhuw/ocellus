@@ -527,6 +527,43 @@ pub(crate) fn llc_victim_metrics(
     Ok(metrics)
 }
 
+pub(crate) fn llc_lookup_metrics(
+    scope: UncoreScope,
+    measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+) -> Result<Vec<ChaLlcLookupMetrics>, String> {
+    let mut metrics = Vec::new();
+
+    for state in [
+        ChaCacheState::SfS,
+        ChaCacheState::SfE,
+        ChaCacheState::SfM,
+        ChaCacheState::I,
+        ChaCacheState::S,
+        ChaCacheState::E,
+        ChaCacheState::M,
+        ChaCacheState::F,
+    ] {
+        for operation in [
+            ChaLookupOperation::Read,
+            ChaLookupOperation::Write,
+            ChaLookupOperation::RemoteSnoop,
+            ChaLookupOperation::Any,
+        ] {
+            metrics.push(ChaLlcLookupMetrics {
+                bytes_per_second: bytes_per_second(required_measurement(
+                    measurements,
+                    ChaEventKind::LlcLookup(state, operation),
+                )?),
+                operation,
+                scope,
+                state,
+            });
+        }
+    }
+
+    Ok(metrics)
+}
+
 pub(crate) fn required_measurement(
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
     kind: ChaEventKind,

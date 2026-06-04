@@ -377,36 +377,6 @@ impl IcxChaEventGroup {
             ],
         }
     }
-
-    const fn aggregate_transaction(
-        architecture: IcxChaArchitecture,
-        transaction: IcxChaTransaction,
-    ) -> Self {
-        let tor = transaction.aggregate_tor_spec();
-
-        Self {
-            events: [
-                IcxChaEventSpec::new(
-                    IcxChaEventKind::TransactionOccupancy(transaction, IcxChaCounterKind::All),
-                    0x36,
-                    tor.umask,
-                    tor.umask_ext,
-                ),
-                IcxChaEventSpec::new(
-                    IcxChaEventKind::TransactionInsert(transaction, IcxChaCounterKind::All),
-                    0x35,
-                    tor.umask,
-                    tor.umask_ext,
-                ),
-                IcxChaEventSpec::transaction_clockticks(
-                    transaction,
-                    IcxChaCounterKind::All,
-                    architecture.clock_event(),
-                ),
-                IcxChaEventSpec::unused(),
-            ],
-        }
-    }
 }
 
 const fn icx_cha_request_source_umask(source: ChaRequestSource) -> u8 {
@@ -511,44 +481,16 @@ impl IcxChaTransaction {
             )),
         }
     }
-
-    const fn aggregate_tor_spec(self) -> IcxChaTorSpec {
-        match self {
-            Self::IaSpecItoM => IcxChaTorSpec::ia(IcxChaTorUmaskExt::new(
-                IcxChaTorRequest::SpecItoM,
-                IcxChaTorSource::Ia,
-                IcxChaCounterKind::All,
-            )),
-            _ => self.tor_spec(IcxChaCounterKind::All),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IcxChaTransactionResultMode {
-    Aggregate,
-    DirectHitMiss,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IcxChaTransactionSpec {
     kind: IcxChaTransaction,
-    result_mode: IcxChaTransactionResultMode,
 }
 
 impl IcxChaTransactionSpec {
-    const fn aggregate(kind: IcxChaTransaction) -> Self {
-        Self {
-            kind,
-            result_mode: IcxChaTransactionResultMode::Aggregate,
-        }
-    }
-
     const fn direct_hit_miss(kind: IcxChaTransaction) -> Self {
-        Self {
-            kind,
-            result_mode: IcxChaTransactionResultMode::DirectHitMiss,
-        }
+        Self { kind }
     }
 }
 
@@ -696,7 +638,6 @@ impl IcxChaTorSource {
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 enum IcxChaCounterKind {
-    All,
     Hit,
     Miss,
 }
@@ -704,7 +645,6 @@ enum IcxChaCounterKind {
 impl IcxChaCounterKind {
     const fn hit(self) -> bool {
         match self {
-            Self::All => true,
             Self::Hit => true,
             Self::Miss => false,
         }
@@ -712,7 +652,6 @@ impl IcxChaCounterKind {
 
     const fn miss(self) -> bool {
         match self {
-            Self::All => true,
             Self::Hit => false,
             Self::Miss => true,
         }
@@ -748,13 +687,13 @@ const ICX_CHA_TRANSACTIONS: [IcxChaTransactionSpec; 11] = [
     IcxChaTransactionSpec::direct_hit_miss(IcxChaTransaction::IaDrd),
     IcxChaTransactionSpec::direct_hit_miss(IcxChaTransaction::IaRfo),
     IcxChaTransactionSpec::direct_hit_miss(IcxChaTransaction::IaItoM),
-    IcxChaTransactionSpec::aggregate(IcxChaTransaction::IaSpecItoM),
+    IcxChaTransactionSpec::direct_hit_miss(IcxChaTransaction::IaSpecItoM),
     IcxChaTransactionSpec::direct_hit_miss(IcxChaTransaction::IaClFlush),
     IcxChaTransactionSpec::direct_hit_miss(IcxChaTransaction::IaWbMtoI),
     IcxChaTransactionSpec::direct_hit_miss(IcxChaTransaction::IoClFlush),
 ];
 
-const ICX_CHA_EVENT_GROUPS: [IcxChaEventGroup; 35] = [
+const ICX_CHA_EVENT_GROUPS: [IcxChaEventGroup; 36] = [
     IcxChaEventGroup::frequency(IcxChaArchitecture::Icx),
     IcxChaEventGroup::ha_requests(),
     IcxChaEventGroup::llc_lookup(ChaCacheState::SfS),
@@ -839,7 +778,16 @@ const ICX_CHA_EVENT_GROUPS: [IcxChaEventGroup; 35] = [
         IcxChaTransaction::IaItoM,
         IcxChaCounterKind::Miss,
     ),
-    IcxChaEventGroup::aggregate_transaction(IcxChaArchitecture::Icx, IcxChaTransaction::IaSpecItoM),
+    IcxChaEventGroup::transaction(
+        IcxChaArchitecture::Icx,
+        IcxChaTransaction::IaSpecItoM,
+        IcxChaCounterKind::Hit,
+    ),
+    IcxChaEventGroup::transaction(
+        IcxChaArchitecture::Icx,
+        IcxChaTransaction::IaSpecItoM,
+        IcxChaCounterKind::Miss,
+    ),
     IcxChaEventGroup::transaction(
         IcxChaArchitecture::Icx,
         IcxChaTransaction::IaClFlush,
@@ -1266,18 +1214,7 @@ impl IcxChaMeasurementAccumulator {
         architecture: IcxChaArchitecture,
     ) -> BTreeMap<UncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>> {
         for transaction in architecture.supported_transactions() {
-            match transaction.result_mode {
-                IcxChaTransactionResultMode::Aggregate => {
-                    self.export_counter_kind(
-                        transaction.kind,
-                        IcxChaCounterKind::All,
-                        ChaTransactionResult::All,
-                    );
-                }
-                IcxChaTransactionResultMode::DirectHitMiss => {
-                    self.export_direct_hit_miss(transaction.kind)
-                }
-            }
+            self.export_direct_hit_miss(transaction.kind);
         }
 
         self.exported
@@ -2033,70 +1970,46 @@ fn transaction_metrics(
 
     for transaction_spec in architecture.supported_transactions() {
         let transaction = transaction_spec.kind;
-        match transaction_spec.result_mode {
-            IcxChaTransactionResultMode::Aggregate => {
-                let aggregate = transaction_result_metrics(
-                    scope,
-                    measurements,
-                    transaction,
-                    ChaTransactionResult::All,
-                )?;
+        let hit = transaction_result_metrics(
+            scope,
+            measurements,
+            transaction,
+            ChaTransactionResult::Hit,
+        )?;
+        let miss = transaction_result_metrics(
+            scope,
+            measurements,
+            transaction,
+            ChaTransactionResult::Miss,
+        )?;
+        let hit_inserts = required_measurement(
+            measurements,
+            ChaEventKind::TransactionInsert(transaction.label(), ChaTransactionResult::Hit),
+        )?;
+        let miss_inserts = required_measurement(
+            measurements,
+            ChaEventKind::TransactionInsert(transaction.label(), ChaTransactionResult::Miss),
+        )?;
+        let hit_insert_count = scale_measurement_value(hit_inserts) as f64;
+        let miss_insert_count = scale_measurement_value(miss_inserts) as f64;
+        let total_insert_count = hit_insert_count + miss_insert_count;
 
-                totals.push(ChaTransactionMetrics {
-                    bandwidth_bytes_per_second: aggregate.bandwidth_bytes_per_second,
-                    hit_rate: 0.0,
-                    latency_seconds: aggregate.latency_seconds,
-                    scope,
-                    transaction: transaction.label(),
-                });
-                results.push(aggregate);
-            }
-            IcxChaTransactionResultMode::DirectHitMiss => {
-                let hit = transaction_result_metrics(
-                    scope,
-                    measurements,
-                    transaction,
-                    ChaTransactionResult::Hit,
-                )?;
-                let miss = transaction_result_metrics(
-                    scope,
-                    measurements,
-                    transaction,
-                    ChaTransactionResult::Miss,
-                )?;
-                let hit_inserts = required_measurement(
-                    measurements,
-                    ChaEventKind::TransactionInsert(transaction.label(), ChaTransactionResult::Hit),
-                )?;
-                let miss_inserts = required_measurement(
-                    measurements,
-                    ChaEventKind::TransactionInsert(
-                        transaction.label(),
-                        ChaTransactionResult::Miss,
-                    ),
-                )?;
-                let hit_insert_count = scale_measurement_value(hit_inserts) as f64;
-                let miss_insert_count = scale_measurement_value(miss_inserts) as f64;
-                let total_insert_count = hit_insert_count + miss_insert_count;
-
-                totals.push(ChaTransactionMetrics {
-                    bandwidth_bytes_per_second: hit.bandwidth_bytes_per_second
-                        + miss.bandwidth_bytes_per_second,
-                    hit_rate: ratio(hit_insert_count as u64, total_insert_count as u64),
-                    latency_seconds: if total_insert_count == 0.0 {
-                        0.0
-                    } else {
-                        ((hit.latency_seconds * hit_insert_count)
-                            + (miss.latency_seconds * miss_insert_count))
-                            / total_insert_count
-                    },
-                    scope,
-                    transaction: transaction.label(),
-                });
-                results.push(hit);
-                results.push(miss);
-            }
-        }
+        totals.push(ChaTransactionMetrics {
+            bandwidth_bytes_per_second: hit.bandwidth_bytes_per_second
+                + miss.bandwidth_bytes_per_second,
+            hit_rate: ratio(hit_insert_count as u64, total_insert_count as u64),
+            latency_seconds: if total_insert_count == 0.0 {
+                0.0
+            } else {
+                ((hit.latency_seconds * hit_insert_count)
+                    + (miss.latency_seconds * miss_insert_count))
+                    / total_insert_count
+            },
+            scope,
+            transaction: transaction.label(),
+        });
+        results.push(hit);
+        results.push(miss);
     }
 
     Ok(IcxChaTransactionScopeMetrics { results, totals })
@@ -2338,7 +2251,7 @@ mod tests {
     }
 
     #[test]
-    fn uses_documented_icx_transaction_umask_ext_values() {
+    fn uses_icx_transaction_umask_ext_values() {
         let cases = [
             (
                 IcxChaTransaction::IaClFlush,
@@ -2358,8 +2271,13 @@ mod tests {
             (IcxChaTransaction::IaRfo, IcxChaCounterKind::Miss, 0xc807fe),
             (
                 IcxChaTransaction::IaSpecItoM,
-                IcxChaCounterKind::All,
-                0xcc57ff,
+                IcxChaCounterKind::Hit,
+                0xcc57fd,
+            ),
+            (
+                IcxChaTransaction::IaSpecItoM,
+                IcxChaCounterKind::Miss,
+                0xcc57fe,
             ),
             (
                 IcxChaTransaction::IaWbMtoI,
@@ -2564,20 +2482,26 @@ mod tests {
 
         accumulator.add(
             scope,
-            IcxChaEventKind::TransactionInsert(IcxChaTransaction::IaDrd, IcxChaCounterKind::Hit),
+            IcxChaEventKind::TransactionInsert(
+                IcxChaTransaction::IaSpecItoM,
+                IcxChaCounterKind::Hit,
+            ),
             30,
             measurement,
         );
         accumulator.add(
             scope,
-            IcxChaEventKind::TransactionOccupancy(IcxChaTransaction::IaDrd, IcxChaCounterKind::Hit),
+            IcxChaEventKind::TransactionOccupancy(
+                IcxChaTransaction::IaSpecItoM,
+                IcxChaCounterKind::Hit,
+            ),
             70,
             measurement,
         );
         accumulator.add(
             scope,
             IcxChaEventKind::TransactionClockticks(
-                IcxChaTransaction::IaDrd,
+                IcxChaTransaction::IaSpecItoM,
                 IcxChaCounterKind::Hit,
             ),
             100,
@@ -2585,14 +2509,17 @@ mod tests {
         );
         accumulator.add(
             scope,
-            IcxChaEventKind::TransactionInsert(IcxChaTransaction::IaDrd, IcxChaCounterKind::Miss),
+            IcxChaEventKind::TransactionInsert(
+                IcxChaTransaction::IaSpecItoM,
+                IcxChaCounterKind::Miss,
+            ),
             10,
             measurement,
         );
         accumulator.add(
             scope,
             IcxChaEventKind::TransactionOccupancy(
-                IcxChaTransaction::IaDrd,
+                IcxChaTransaction::IaSpecItoM,
                 IcxChaCounterKind::Miss,
             ),
             20,
@@ -2601,7 +2528,7 @@ mod tests {
         accumulator.add(
             scope,
             IcxChaEventKind::TransactionClockticks(
-                IcxChaTransaction::IaDrd,
+                IcxChaTransaction::IaSpecItoM,
                 IcxChaCounterKind::Miss,
             ),
             100,
@@ -2613,7 +2540,7 @@ mod tests {
         assert_eq!(
             scope_measurements
                 .get(&ChaEventKind::TransactionInsert(
-                    IcxChaTransaction::IaDrd.label(),
+                    IcxChaTransaction::IaSpecItoM.label(),
                     ChaTransactionResult::Hit,
                 ))
                 .unwrap()
@@ -2623,7 +2550,7 @@ mod tests {
         assert_eq!(
             scope_measurements
                 .get(&ChaEventKind::TransactionOccupancy(
-                    IcxChaTransaction::IaDrd.label(),
+                    IcxChaTransaction::IaSpecItoM.label(),
                     ChaTransactionResult::Hit,
                 ))
                 .unwrap()
@@ -2633,7 +2560,7 @@ mod tests {
         assert_eq!(
             scope_measurements
                 .get(&ChaEventKind::TransactionInsert(
-                    IcxChaTransaction::IaDrd.label(),
+                    IcxChaTransaction::IaSpecItoM.label(),
                     ChaTransactionResult::Miss,
                 ))
                 .unwrap()
@@ -2643,7 +2570,7 @@ mod tests {
         assert_eq!(
             scope_measurements
                 .get(&ChaEventKind::TransactionClockticks(
-                    IcxChaTransaction::IaDrd.label(),
+                    IcxChaTransaction::IaSpecItoM.label(),
                     ChaTransactionResult::Hit,
                 ))
                 .unwrap()

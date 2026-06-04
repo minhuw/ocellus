@@ -9374,7 +9374,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_llc_victims_per_second{state=\"e\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"}",
+                        "expr": "(ocellus_cha_llc_victims_per_second{state=\"e\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
                         "legendFormat": "die {{die_group}}/{{die}}",
                         "range": true,
                         "interval": "1s",
@@ -9382,6 +9382,52 @@
                       }
                     },
                     "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_victims_per_second{state=\"e\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_victims_per_second{state=\"e\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
                     "hidden": false
                   }
                 }
@@ -9462,7 +9508,32 @@
                   },
                   "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -12888,7 +12959,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_llc_victims_per_second{state=\"m\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"}",
+                        "expr": "(ocellus_cha_llc_victims_per_second{state=\"m\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
                         "legendFormat": "die {{die_group}}/{{die}}",
                         "range": true,
                         "interval": "1s",
@@ -12896,6 +12967,52 @@
                       }
                     },
                     "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_victims_per_second{state=\"m\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_victims_per_second{state=\"m\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
                     "hidden": false
                   }
                 }
@@ -12976,7 +13093,32 @@
                   },
                   "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -13006,7 +13148,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_llc_victims_per_second{state=\"s\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"}",
+                        "expr": "(ocellus_cha_llc_victims_per_second{state=\"s\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
                         "legendFormat": "die {{die_group}}/{{die}}",
                         "range": true,
                         "interval": "1s",
@@ -13014,6 +13156,52 @@
                       }
                     },
                     "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_victims_per_second{state=\"s\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_victims_per_second{state=\"s\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
                     "hidden": false
                   }
                 }
@@ -13094,7 +13282,32 @@
                   },
                   "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -13124,7 +13337,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "ocellus_cha_llc_victims_per_second{state=\"all\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"}",
+                        "expr": "(ocellus_cha_llc_victims_per_second{state=\"all\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"}) and on() (vector(${traffic_mode}) == 0)",
                         "legendFormat": "die {{die_group}}/{{die}}",
                         "range": true,
                         "interval": "1s",
@@ -13132,6 +13345,52 @@
                       }
                     },
                     "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_victims_per_second{state=\"all\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"} * 64) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_victims_per_second{state=\"all\",package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",instance=\"$instance\"} * 64) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
                     "hidden": false
                   }
                 }
@@ -13212,7 +13471,32 @@
                   },
                   "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -13520,6 +13804,1518 @@
                   "unit": "percentunit"
                 },
                 "overrides": []
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-sf-s": {
+        "kind": "Panel",
+        "spec": {
+          "id": 103,
+          "title": "CHA LLC Lookup SF_S",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_s\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_s\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_s\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-sf-e": {
+        "kind": "Panel",
+        "spec": {
+          "id": 104,
+          "title": "CHA LLC Lookup SF_E",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_e\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_e\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_e\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-sf-m": {
+        "kind": "Panel",
+        "spec": {
+          "id": 105,
+          "title": "CHA LLC Lookup SF_M",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_m\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_m\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_m\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-i": {
+        "kind": "Panel",
+        "spec": {
+          "id": 106,
+          "title": "CHA LLC Lookup I",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"i\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"i\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"i\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-s": {
+        "kind": "Panel",
+        "spec": {
+          "id": 107,
+          "title": "CHA LLC Lookup S",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"s\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"s\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"s\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-e": {
+        "kind": "Panel",
+        "spec": {
+          "id": 108,
+          "title": "CHA LLC Lookup E",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"e\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"e\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"e\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-m": {
+        "kind": "Panel",
+        "spec": {
+          "id": 109,
+          "title": "CHA LLC Lookup M",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"m\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"m\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"m\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transparent": false
+        }
+      },
+      "panel-cha-llc-lookup-f": {
+        "kind": "Panel",
+        "spec": {
+          "id": 110,
+          "title": "CHA LLC Lookup F",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"f\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"f\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "Prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"f\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "legendFormat": "{{operation}} die {{die_group}}/{{die}}",
+                        "range": true,
+                        "interval": "1s",
+                        "intervalFactor": 1
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "",
+            "spec": {
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  "unit": "ops"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -14315,11 +16111,115 @@
                                 "spec": {
                                   "x": 0,
                                   "y": 0,
-                                  "width": 12,
+                                  "width": 24,
                                   "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
                                     "name": "panel-cha-llc-lookups"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-sf-s"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-sf-e"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-sf-m"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 8,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-i"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 16,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-s"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 6,
+                                  "y": 16,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-e"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 12,
+                                  "y": 16,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-m"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 18,
+                                  "y": 16,
+                                  "width": 6,
+                                  "height": 8,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-cha-llc-lookup-f"
                                   }
                                 }
                               }

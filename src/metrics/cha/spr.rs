@@ -10,11 +10,11 @@ use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metrics::cha::{
     CHA_COUNTER_COUNT, ChaCacheState, ChaEventKind, ChaEventMeasurement, ChaHaRequestLocality,
-    ChaHaRequestMetrics, ChaMultiplexMode, ChaRequestOperation, ChaRequestQueueMetrics,
-    ChaRequestSource, ChaScopeMetrics, ChaSfEvictionMetrics, ChaTransactionLabel,
-    ChaTransactionMetrics, ChaTransactionResult, ChaTransactionResultMetrics, bytes_per_second,
-    event_rate, linux_uncore_unit_ids, llc_victim_metrics, pci_location_for_cpu,
-    required_measurement, scale_measurement_value,
+    ChaHaRequestMetrics, ChaLlcLookupMetrics, ChaLookupOperation, ChaMultiplexMode,
+    ChaRequestOperation, ChaRequestQueueMetrics, ChaRequestSource, ChaScopeMetrics,
+    ChaSfEvictionMetrics, ChaTransactionLabel, ChaTransactionMetrics, ChaTransactionResult,
+    ChaTransactionResultMetrics, bytes_per_second, event_rate, linux_uncore_unit_ids,
+    llc_victim_metrics, pci_location_for_cpu, required_measurement, scale_measurement_value,
 };
 use crate::metrics::common::topology_label;
 use crate::metrics::uncore::skx::{
@@ -160,6 +160,49 @@ impl SprChaEventGroup {
         }
     }
 
+    const fn llc_lookup(state: ChaCacheState) -> Self {
+        Self {
+            events: [
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::LlcLookup(
+                        state,
+                        ChaLookupOperation::Read,
+                    )),
+                    0x34,
+                    spr_cha_llc_lookup_state_umask(state),
+                    0x1bc1,
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::LlcLookup(
+                        state,
+                        ChaLookupOperation::Rfo,
+                    )),
+                    0x34,
+                    spr_cha_llc_lookup_state_umask(state),
+                    0x1bc8,
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::LlcLookup(
+                        state,
+                        ChaLookupOperation::RemoteSnoop,
+                    )),
+                    0x34,
+                    spr_cha_llc_lookup_state_umask(state),
+                    0x1c19,
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::LlcLookup(
+                        state,
+                        ChaLookupOperation::Any,
+                    )),
+                    0x34,
+                    spr_cha_llc_lookup_state_umask(state),
+                    0x20,
+                ),
+            ],
+        }
+    }
+
     const fn request_queue(source: ChaRequestSource) -> Self {
         Self {
             events: [
@@ -173,6 +216,22 @@ impl SprChaEventGroup {
                     ChaEventKind::RequestQueueClockticks(source),
                     SPR_CHA_CLOCK_EVENT,
                 ),
+                SprChaEventSpec::unused(),
+                SprChaEventSpec::unused(),
+            ],
+        }
+    }
+
+    const fn sf_evictions() -> Self {
+        Self {
+            events: [
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::All)),
+                    0x35,
+                    0x02,
+                    0,
+                ),
+                SprChaEventSpec::unused(),
                 SprChaEventSpec::unused(),
                 SprChaEventSpec::unused(),
             ],
@@ -262,6 +321,20 @@ impl SprChaEventGroup {
                 SprChaEventSpec::unused(),
             ],
         }
+    }
+}
+
+const fn spr_cha_llc_lookup_state_umask(state: ChaCacheState) -> u8 {
+    match state {
+        ChaCacheState::I => 0x01,
+        ChaCacheState::SfS => 0x02,
+        ChaCacheState::SfE => 0x04,
+        ChaCacheState::SfH => 0x08,
+        ChaCacheState::S => 0x10,
+        ChaCacheState::E => 0x20,
+        ChaCacheState::M => 0x40,
+        ChaCacheState::F => 0x80,
+        ChaCacheState::All | ChaCacheState::SfM => 0x00,
     }
 }
 
@@ -606,11 +679,20 @@ const SPR_EMR_CHA_TRANSACTIONS: [SprChaTransactionSpec; 11] = [
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IoClFlush),
 ];
 
-const SPR_EMR_CHA_EVENT_GROUPS: [SprChaEventGroup; 26] = [
+const SPR_EMR_CHA_EVENT_GROUPS: [SprChaEventGroup; 35] = [
     SprChaEventGroup::frequency(),
     SprChaEventGroup::ha_requests(),
+    SprChaEventGroup::llc_lookup(ChaCacheState::SfS),
+    SprChaEventGroup::llc_lookup(ChaCacheState::SfE),
+    SprChaEventGroup::llc_lookup(ChaCacheState::SfH),
+    SprChaEventGroup::llc_lookup(ChaCacheState::I),
+    SprChaEventGroup::llc_lookup(ChaCacheState::S),
+    SprChaEventGroup::llc_lookup(ChaCacheState::E),
+    SprChaEventGroup::llc_lookup(ChaCacheState::M),
+    SprChaEventGroup::llc_lookup(ChaCacheState::F),
     SprChaEventGroup::request_queue(ChaRequestSource::Ia),
     SprChaEventGroup::request_queue(ChaRequestSource::Io),
+    SprChaEventGroup::sf_evictions(),
     SprChaEventGroup::llc_victims(),
     SprChaEventGroup::transaction(SprChaTransaction::IoPciRdCur, SprChaCounterKind::Hit),
     SprChaEventGroup::transaction(SprChaTransaction::IoPciRdCur, SprChaCounterKind::Miss),
@@ -638,6 +720,7 @@ const SPR_EMR_CHA_EVENT_GROUPS: [SprChaEventGroup; 26] = [
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct SprChaMetrics {
     pub(crate) ha_requests: Vec<ChaHaRequestMetrics>,
+    pub(crate) llc_lookups: Vec<ChaLlcLookupMetrics>,
     pub(crate) llc_victims: Vec<crate::metrics::cha::ChaLlcVictimMetrics>,
     pub(crate) request_queues: Vec<ChaRequestQueueMetrics>,
     pub(crate) scopes: Vec<ChaScopeMetrics>,
@@ -651,10 +734,11 @@ impl SprChaMetrics {
         measurements: BTreeMap<UncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>>,
     ) -> Result<Self, String> {
         let mut ha_requests = Vec::new();
+        let mut llc_lookups = Vec::new();
         let mut llc_victims = Vec::new();
         let mut request_queues = Vec::new();
         let mut scopes = Vec::with_capacity(measurements.len());
-        let sf_evictions = Vec::new();
+        let mut sf_evictions = Vec::new();
         let mut transaction_results = Vec::new();
         let mut transactions = Vec::new();
 
@@ -667,9 +751,10 @@ impl SprChaMetrics {
             });
 
             ha_requests.push(ha_request_metrics(scope, &scope_measurements)?);
+            llc_lookups.extend(spr_llc_lookup_metrics(scope, &scope_measurements)?);
             llc_victims.extend(spr_llc_victim_metrics(scope, &scope_measurements)?);
             request_queues.extend(request_queue_metrics(scope, &scope_measurements)?);
-            let _ = &scope_measurements;
+            sf_evictions.extend(spr_sf_eviction_metrics(scope, &scope_measurements)?);
             let transaction_scope_metrics = transaction_metrics(scope, &scope_measurements)?;
             transaction_results.extend(transaction_scope_metrics.results);
             transactions.extend(transaction_scope_metrics.totals);
@@ -677,6 +762,7 @@ impl SprChaMetrics {
 
         Ok(Self {
             ha_requests,
+            llc_lookups,
             llc_victims,
             request_queues,
             scopes,
@@ -1091,6 +1177,7 @@ pub struct SprChaPrometheusMetrics {
     ha_request_bandwidth_bytes_per_second:
         Family<ChaHaRequestBandwidthLabels, Gauge<f64, AtomicU64>>,
     ha_request_local_ratio: Family<ChaHaRequestRatioLabels, Gauge<f64, AtomicU64>>,
+    llc_lookup_bytes_per_second: Family<ChaLlcLookupLabels, Gauge<f64, AtomicU64>>,
     llc_victims_per_second: Family<ChaStateLabels, Gauge<f64, AtomicU64>>,
     request_queue_occupancy_entries: Family<ChaRequestQueueLabels, Gauge<f64, AtomicU64>>,
     sf_eviction_bytes_per_second: Family<ChaSfEvictionLabels, Gauge<f64, AtomicU64>>,
@@ -1121,6 +1208,8 @@ impl SprChaPrometheusMetrics {
             >::default(),
             ha_request_local_ratio:
                 Family::<ChaHaRequestRatioLabels, Gauge<f64, AtomicU64>>::default(),
+            llc_lookup_bytes_per_second:
+                Family::<ChaLlcLookupLabels, Gauge<f64, AtomicU64>>::default(),
             llc_victims_per_second: Family::<ChaStateLabels, Gauge<f64, AtomicU64>>::default(),
             request_queue_occupancy_entries:
                 Family::<ChaRequestQueueLabels, Gauge<f64, AtomicU64>>::default(),
@@ -1165,6 +1254,11 @@ impl SprChaPrometheusMetrics {
             "ocellus_cha_ha_request_local_ratio",
             "Interval-derived CHA HA request local ratio",
             metrics.ha_request_local_ratio.clone(),
+        );
+        registry.register(
+            "ocellus_cha_llc_lookup_bytes_per_second",
+            "Interval-derived CHA LLC lookup bandwidth in bytes per second",
+            metrics.llc_lookup_bytes_per_second.clone(),
         );
         registry.register(
             "ocellus_cha_llc_victims_per_second",
@@ -1272,6 +1366,12 @@ impl SprChaPrometheusMetrics {
                 .set(metric.local_write_ratio);
         }
 
+        for metric in metrics.llc_lookups {
+            self.llc_lookup_bytes_per_second
+                .get_or_create(&ChaLlcLookupLabels::from_metric(metric))
+                .set(metric.bytes_per_second);
+        }
+
         for metric in metrics.request_queues {
             self.request_queue_occupancy_entries
                 .get_or_create(&ChaRequestQueueLabels::from_metric(metric))
@@ -1363,6 +1463,27 @@ impl ChaHaRequestRatioLabels {
             die_group: topology_label(scope.die_group_id),
             operation: operation.label().to_string(),
             package: scope.package_id.to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
+struct ChaLlcLookupLabels {
+    die: String,
+    die_group: String,
+    operation: String,
+    package: String,
+    state: String,
+}
+
+impl ChaLlcLookupLabels {
+    fn from_metric(metric: ChaLlcLookupMetrics) -> Self {
+        Self {
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
+            operation: metric.operation.label().to_string(),
+            package: metric.scope.package_id.to_string(),
+            state: metric.state.label().to_string(),
         }
     }
 }
@@ -1840,6 +1961,43 @@ fn request_queue_metrics(
     Ok(metrics)
 }
 
+fn spr_llc_lookup_metrics(
+    scope: UncoreScope,
+    measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+) -> Result<Vec<ChaLlcLookupMetrics>, String> {
+    let mut metrics = Vec::new();
+
+    for state in [
+        ChaCacheState::SfS,
+        ChaCacheState::SfE,
+        ChaCacheState::SfH,
+        ChaCacheState::I,
+        ChaCacheState::S,
+        ChaCacheState::E,
+        ChaCacheState::M,
+        ChaCacheState::F,
+    ] {
+        for operation in [
+            ChaLookupOperation::Read,
+            ChaLookupOperation::Rfo,
+            ChaLookupOperation::RemoteSnoop,
+            ChaLookupOperation::Any,
+        ] {
+            metrics.push(ChaLlcLookupMetrics {
+                bytes_per_second: bytes_per_second(required_measurement(
+                    measurements,
+                    ChaEventKind::LlcLookup(state, operation),
+                )?),
+                operation,
+                scope,
+                state,
+            });
+        }
+    }
+
+    Ok(metrics)
+}
+
 fn spr_llc_victim_metrics(
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
@@ -1854,6 +2012,20 @@ fn spr_llc_victim_metrics(
             ChaCacheState::S,
         ],
     )
+}
+
+fn spr_sf_eviction_metrics(
+    scope: UncoreScope,
+    measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+) -> Result<Vec<ChaSfEvictionMetrics>, String> {
+    Ok(vec![ChaSfEvictionMetrics {
+        bytes_per_second: bytes_per_second(required_measurement(
+            measurements,
+            ChaEventKind::SfEviction(ChaCacheState::All),
+        )?),
+        scope,
+        state: ChaCacheState::All,
+    }])
 }
 
 fn transaction_result_metrics(
@@ -2107,6 +2279,73 @@ mod tests {
                     0x04,
                     0
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn uses_documented_spr_llc_lookup_events() {
+        let group = SprChaEventGroup::llc_lookup(ChaCacheState::F);
+
+        assert_eq!(
+            group.events,
+            [
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::LlcLookup(
+                        ChaCacheState::F,
+                        ChaLookupOperation::Read
+                    )),
+                    0x34,
+                    0x80,
+                    0x1bc1
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::LlcLookup(
+                        ChaCacheState::F,
+                        ChaLookupOperation::Rfo
+                    )),
+                    0x34,
+                    0x80,
+                    0x1bc8
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::LlcLookup(
+                        ChaCacheState::F,
+                        ChaLookupOperation::RemoteSnoop
+                    )),
+                    0x34,
+                    0x80,
+                    0x1c19
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::LlcLookup(
+                        ChaCacheState::F,
+                        ChaLookupOperation::Any
+                    )),
+                    0x34,
+                    0x80,
+                    0x20
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn uses_documented_spr_sf_llc_eviction_event() {
+        let group = SprChaEventGroup::sf_evictions();
+
+        assert_eq!(
+            group.events,
+            [
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::All)),
+                    0x35,
+                    0x02,
+                    0
+                ),
+                SprChaEventSpec::unused(),
+                SprChaEventSpec::unused(),
+                SprChaEventSpec::unused(),
             ]
         );
     }

@@ -1929,7 +1929,11 @@ const fn snb_llc_lookup_state_bits(state: ChaCacheState) -> u16 {
         ChaCacheState::E => 0x04,
         ChaCacheState::M => 0x08,
         ChaCacheState::F => 0x10,
-        ChaCacheState::All | ChaCacheState::SfE | ChaCacheState::SfM | ChaCacheState::SfS => 0x00,
+        ChaCacheState::All
+        | ChaCacheState::SfE
+        | ChaCacheState::SfH
+        | ChaCacheState::SfM
+        | ChaCacheState::SfS => 0x00,
     }
 }
 

@@ -115,6 +115,7 @@ pub enum ChaCacheState {
     M,
     S,
     SfE,
+    SfH,
     SfM,
     SfS,
 }
@@ -129,6 +130,7 @@ impl ChaCacheState {
             Self::M => "m",
             Self::S => "s",
             Self::SfE => "sf_e",
+            Self::SfH => "sf_h",
             Self::SfM => "sf_m",
             Self::SfS => "sf_s",
         }
@@ -140,6 +142,7 @@ impl ChaCacheState {
             Self::I => 0x01,
             Self::SfS => 0x02,
             Self::SfE => 0x04,
+            Self::SfH => 0x08,
             Self::SfM => 0x08,
             Self::S => 0x10,
             Self::E => 0x20,
@@ -160,6 +163,7 @@ pub enum ChaLookupOperation {
     Any,
     Read,
     RemoteSnoop,
+    Rfo,
     Write,
 }
 
@@ -169,6 +173,7 @@ impl ChaLookupOperation {
             Self::Any => "any",
             Self::Read => "read",
             Self::RemoteSnoop => "remote_snoop",
+            Self::Rfo => "rfo",
             Self::Write => "write",
         }
     }

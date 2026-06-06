@@ -1784,6 +1784,7 @@ mod tests {
         assert_renders_server_cha_metrics(
             ice_lake_info_metadata(),
             crate::metrics::cha::ChaMetrics::Icx(ice_lake_cha_metrics()),
+            &["read"],
             "io_pcirdcur",
         );
     }
@@ -1793,6 +1794,7 @@ mod tests {
         assert_renders_server_cha_metrics(
             sapphire_rapids_info_metadata(),
             crate::metrics::cha::ChaMetrics::Spr(sapphire_rapids_cha_metrics()),
+            &["read", "rfo"],
             "io_pcirdcur",
         );
     }
@@ -1802,6 +1804,7 @@ mod tests {
         assert_renders_server_cha_metrics(
             emerald_rapids_info_metadata(),
             crate::metrics::cha::ChaMetrics::Emr(sapphire_rapids_cha_metrics()),
+            &["read", "rfo"],
             "io_pcirdcur",
         );
     }
@@ -1809,6 +1812,7 @@ mod tests {
     fn assert_renders_server_cha_metrics(
         metadata: crate::metrics::InfoMetadata,
         cha: crate::metrics::cha::ChaMetrics,
+        expected_lookup_operations: &[&str],
         transaction: &str,
     ) {
         let state = crate::metrics::MetricsState {
@@ -1842,7 +1846,9 @@ mod tests {
         assert!(metrics.contains("ocellus_cha_transaction_result_occupancy_entries"));
         assert!(metrics.contains("ocellus_cha_transaction_hit_rate"));
         assert!(metrics.contains("locality=\"local\""));
-        assert!(metrics.contains("operation=\"read\""));
+        for operation in expected_lookup_operations {
+            assert!(metrics.contains(&format!("operation=\"{operation}\"")));
+        }
         assert!(metrics.contains(&format!("transaction=\"{transaction}\"")));
     }
 
@@ -1901,10 +1907,19 @@ mod tests {
     }
 
     fn sapphire_rapids_cha_metrics() -> crate::metrics::cha::spr::SprChaMetrics {
-        let metrics = server_cha_metric_fields();
+        let mut metrics = server_cha_metric_fields();
+        let scope = metrics.1[0].scope;
+
+        metrics.1.push(crate::metrics::cha::ChaLlcLookupMetrics {
+            bytes_per_second: 15.0,
+            operation: crate::metrics::cha::ChaLookupOperation::Rfo,
+            scope,
+            state: crate::metrics::cha::ChaCacheState::M,
+        });
 
         crate::metrics::cha::spr::SprChaMetrics {
             ha_requests: metrics.0,
+            llc_lookups: metrics.1,
             llc_victims: Vec::new(),
             request_queues: metrics.2,
             scopes: metrics.3,

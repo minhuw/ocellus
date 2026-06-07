@@ -8783,7 +8783,32 @@
                   },
                   "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -12313,7 +12338,32 @@
                   },
                   "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -12477,7 +12527,32 @@
                   },
                   "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -12641,7 +12716,32 @@
                   },
                   "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "B"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: GiB/s"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "suffix: Gbps"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },

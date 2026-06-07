@@ -251,8 +251,6 @@ impl ChaRequestSource {
 
     pub(crate) const fn result_umask(self, result: ChaTransactionResult) -> u8 {
         match (self, result) {
-            (Self::Ia, ChaTransactionResult::All) => 0x31,
-            (Self::Io, ChaTransactionResult::All) => 0x34,
             (Self::Ia, ChaTransactionResult::Hit) => 0x11,
             (Self::Io, ChaTransactionResult::Hit) => 0x14,
             (Self::Ia, ChaTransactionResult::Miss) => 0x21,
@@ -287,7 +285,6 @@ impl ChaRxcQueue {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChaTransactionResult {
-    All,
     Hit,
     Miss,
 }
@@ -295,7 +292,6 @@ pub enum ChaTransactionResult {
 impl ChaTransactionResult {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::All => "all",
             Self::Hit => "hit",
             Self::Miss => "miss",
         }

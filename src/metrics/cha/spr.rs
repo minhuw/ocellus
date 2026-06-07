@@ -231,9 +231,24 @@ impl SprChaEventGroup {
                     0x02,
                     0,
                 ),
-                SprChaEventSpec::unused(),
-                SprChaEventSpec::unused(),
-                SprChaEventSpec::unused(),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::M)),
+                    0x3d,
+                    0x01,
+                    0,
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::E)),
+                    0x3d,
+                    0x02,
+                    0,
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::S)),
+                    0x3d,
+                    0x04,
+                    0,
+                ),
             ],
         }
     }
@@ -289,33 +304,6 @@ impl SprChaEventGroup {
                 SprChaEventSpec::transaction_clockticks(
                     transaction,
                     counter_kind,
-                    SPR_CHA_CLOCK_EVENT,
-                ),
-                SprChaEventSpec::unused(),
-            ],
-        }
-    }
-
-    const fn aggregate_transaction(transaction: SprChaTransaction) -> Self {
-        let tor = transaction.aggregate_tor_spec();
-
-        Self {
-            events: [
-                SprChaEventSpec::new(
-                    SprChaEventKind::TransactionOccupancy(transaction, SprChaCounterKind::All),
-                    0x36,
-                    tor.umask,
-                    tor.umask_ext,
-                ),
-                SprChaEventSpec::new(
-                    SprChaEventKind::TransactionInsert(transaction, SprChaCounterKind::All),
-                    0x35,
-                    tor.umask,
-                    tor.umask_ext,
-                ),
-                SprChaEventSpec::transaction_clockticks(
-                    transaction,
-                    SprChaCounterKind::All,
                     SPR_CHA_CLOCK_EVENT,
                 ),
                 SprChaEventSpec::unused(),
@@ -436,44 +424,16 @@ impl SprChaTransaction {
             )),
         }
     }
-
-    const fn aggregate_tor_spec(self) -> SprChaTorSpec {
-        match self {
-            Self::IaSpecItoM => SprChaTorSpec::ia(SprChaTorUmaskExt::new(
-                SprChaTorRequest::SpecItoM,
-                SprChaTorSource::Ia,
-                SprChaCounterKind::All,
-            )),
-            _ => self.tor_spec(SprChaCounterKind::All),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SprChaTransactionResultMode {
-    Aggregate,
-    DirectHitMiss,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SprChaTransactionSpec {
     kind: SprChaTransaction,
-    result_mode: SprChaTransactionResultMode,
 }
 
 impl SprChaTransactionSpec {
-    const fn aggregate(kind: SprChaTransaction) -> Self {
-        Self {
-            kind,
-            result_mode: SprChaTransactionResultMode::Aggregate,
-        }
-    }
-
     const fn direct_hit_miss(kind: SprChaTransaction) -> Self {
-        Self {
-            kind,
-            result_mode: SprChaTransactionResultMode::DirectHitMiss,
-        }
+        Self { kind }
     }
 }
 
@@ -621,7 +581,6 @@ impl SprChaTorSource {
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 enum SprChaCounterKind {
-    All,
     Hit,
     Miss,
 }
@@ -629,7 +588,6 @@ enum SprChaCounterKind {
 impl SprChaCounterKind {
     const fn hit(self) -> bool {
         match self {
-            Self::All => true,
             Self::Hit => true,
             Self::Miss => false,
         }
@@ -637,7 +595,6 @@ impl SprChaCounterKind {
 
     const fn miss(self) -> bool {
         match self {
-            Self::All => true,
             Self::Hit => false,
             Self::Miss => true,
         }
@@ -673,13 +630,13 @@ const SPR_EMR_CHA_TRANSACTIONS: [SprChaTransactionSpec; 11] = [
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IaDrd),
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IaRfo),
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IaItoM),
-    SprChaTransactionSpec::aggregate(SprChaTransaction::IaSpecItoM),
+    SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IaSpecItoM),
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IaClFlush),
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IaWbMtoI),
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IoClFlush),
 ];
 
-const SPR_EMR_CHA_EVENT_GROUPS: [SprChaEventGroup; 35] = [
+const SPR_EMR_CHA_EVENT_GROUPS: [SprChaEventGroup; 36] = [
     SprChaEventGroup::frequency(),
     SprChaEventGroup::ha_requests(),
     SprChaEventGroup::llc_lookup(ChaCacheState::SfS),
@@ -708,7 +665,8 @@ const SPR_EMR_CHA_EVENT_GROUPS: [SprChaEventGroup; 35] = [
     SprChaEventGroup::transaction(SprChaTransaction::IaRfo, SprChaCounterKind::Miss),
     SprChaEventGroup::transaction(SprChaTransaction::IaItoM, SprChaCounterKind::Hit),
     SprChaEventGroup::transaction(SprChaTransaction::IaItoM, SprChaCounterKind::Miss),
-    SprChaEventGroup::aggregate_transaction(SprChaTransaction::IaSpecItoM),
+    SprChaEventGroup::transaction(SprChaTransaction::IaSpecItoM, SprChaCounterKind::Hit),
+    SprChaEventGroup::transaction(SprChaTransaction::IaSpecItoM, SprChaCounterKind::Miss),
     SprChaEventGroup::transaction(SprChaTransaction::IaClFlush, SprChaCounterKind::Hit),
     SprChaEventGroup::transaction(SprChaTransaction::IaClFlush, SprChaCounterKind::Miss),
     SprChaEventGroup::transaction(SprChaTransaction::IaWbMtoI, SprChaCounterKind::Hit),
@@ -1089,18 +1047,7 @@ impl SprChaMeasurementAccumulator {
         mut self,
     ) -> BTreeMap<UncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>> {
         for transaction in SPR_EMR_CHA_TRANSACTIONS {
-            match transaction.result_mode {
-                SprChaTransactionResultMode::Aggregate => {
-                    self.export_counter_kind(
-                        transaction.kind,
-                        SprChaCounterKind::All,
-                        ChaTransactionResult::All,
-                    );
-                }
-                SprChaTransactionResultMode::DirectHitMiss => {
-                    self.export_direct_hit_miss(transaction.kind)
-                }
-            }
+            self.export_direct_hit_miss(transaction.kind);
         }
 
         self.exported
@@ -1868,70 +1815,46 @@ fn transaction_metrics(
 
     for transaction_spec in SPR_EMR_CHA_TRANSACTIONS {
         let transaction = transaction_spec.kind;
-        match transaction_spec.result_mode {
-            SprChaTransactionResultMode::Aggregate => {
-                let aggregate = transaction_result_metrics(
-                    scope,
-                    measurements,
-                    transaction,
-                    ChaTransactionResult::All,
-                )?;
+        let hit = transaction_result_metrics(
+            scope,
+            measurements,
+            transaction,
+            ChaTransactionResult::Hit,
+        )?;
+        let miss = transaction_result_metrics(
+            scope,
+            measurements,
+            transaction,
+            ChaTransactionResult::Miss,
+        )?;
+        let hit_inserts = required_measurement(
+            measurements,
+            ChaEventKind::TransactionInsert(transaction.label(), ChaTransactionResult::Hit),
+        )?;
+        let miss_inserts = required_measurement(
+            measurements,
+            ChaEventKind::TransactionInsert(transaction.label(), ChaTransactionResult::Miss),
+        )?;
+        let hit_insert_count = scale_measurement_value(hit_inserts) as f64;
+        let miss_insert_count = scale_measurement_value(miss_inserts) as f64;
+        let total_insert_count = hit_insert_count + miss_insert_count;
 
-                totals.push(ChaTransactionMetrics {
-                    bandwidth_bytes_per_second: aggregate.bandwidth_bytes_per_second,
-                    hit_rate: 0.0,
-                    latency_seconds: aggregate.latency_seconds,
-                    scope,
-                    transaction: transaction.label(),
-                });
-                results.push(aggregate);
-            }
-            SprChaTransactionResultMode::DirectHitMiss => {
-                let hit = transaction_result_metrics(
-                    scope,
-                    measurements,
-                    transaction,
-                    ChaTransactionResult::Hit,
-                )?;
-                let miss = transaction_result_metrics(
-                    scope,
-                    measurements,
-                    transaction,
-                    ChaTransactionResult::Miss,
-                )?;
-                let hit_inserts = required_measurement(
-                    measurements,
-                    ChaEventKind::TransactionInsert(transaction.label(), ChaTransactionResult::Hit),
-                )?;
-                let miss_inserts = required_measurement(
-                    measurements,
-                    ChaEventKind::TransactionInsert(
-                        transaction.label(),
-                        ChaTransactionResult::Miss,
-                    ),
-                )?;
-                let hit_insert_count = scale_measurement_value(hit_inserts) as f64;
-                let miss_insert_count = scale_measurement_value(miss_inserts) as f64;
-                let total_insert_count = hit_insert_count + miss_insert_count;
-
-                totals.push(ChaTransactionMetrics {
-                    bandwidth_bytes_per_second: hit.bandwidth_bytes_per_second
-                        + miss.bandwidth_bytes_per_second,
-                    hit_rate: ratio(hit_insert_count as u64, total_insert_count as u64),
-                    latency_seconds: if total_insert_count == 0.0 {
-                        0.0
-                    } else {
-                        ((hit.latency_seconds * hit_insert_count)
-                            + (miss.latency_seconds * miss_insert_count))
-                            / total_insert_count
-                    },
-                    scope,
-                    transaction: transaction.label(),
-                });
-                results.push(hit);
-                results.push(miss);
-            }
-        }
+        totals.push(ChaTransactionMetrics {
+            bandwidth_bytes_per_second: hit.bandwidth_bytes_per_second
+                + miss.bandwidth_bytes_per_second,
+            hit_rate: ratio(hit_insert_count as u64, total_insert_count as u64),
+            latency_seconds: if total_insert_count == 0.0 {
+                0.0
+            } else {
+                ((hit.latency_seconds * hit_insert_count)
+                    + (miss.latency_seconds * miss_insert_count))
+                    / total_insert_count
+            },
+            scope,
+            transaction: transaction.label(),
+        });
+        results.push(hit);
+        results.push(miss);
     }
 
     Ok(SprChaTransactionScopeMetrics { results, totals })
@@ -2018,14 +1941,25 @@ fn spr_sf_eviction_metrics(
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
 ) -> Result<Vec<ChaSfEvictionMetrics>, String> {
-    Ok(vec![ChaSfEvictionMetrics {
-        bytes_per_second: bytes_per_second(required_measurement(
-            measurements,
-            ChaEventKind::SfEviction(ChaCacheState::All),
-        )?),
-        scope,
-        state: ChaCacheState::All,
-    }])
+    let mut metrics = Vec::new();
+
+    for state in [
+        ChaCacheState::All,
+        ChaCacheState::M,
+        ChaCacheState::E,
+        ChaCacheState::S,
+    ] {
+        metrics.push(ChaSfEvictionMetrics {
+            bytes_per_second: bytes_per_second(required_measurement(
+                measurements,
+                ChaEventKind::SfEviction(state),
+            )?),
+            scope,
+            state,
+        });
+    }
+
+    Ok(metrics)
 }
 
 fn transaction_result_metrics(
@@ -2166,7 +2100,7 @@ mod tests {
     }
 
     #[test]
-    fn uses_documented_spr_transaction_umask_ext_values() {
+    fn builds_spr_transaction_umask_ext_values() {
         let cases = [
             (
                 SprChaTransaction::IaClFlush,
@@ -2186,8 +2120,13 @@ mod tests {
             (SprChaTransaction::IaRfo, SprChaCounterKind::Miss, 0xc807fe),
             (
                 SprChaTransaction::IaSpecItoM,
-                SprChaCounterKind::All,
-                0xcc57ff,
+                SprChaCounterKind::Hit,
+                0xcc57fd,
+            ),
+            (
+                SprChaTransaction::IaSpecItoM,
+                SprChaCounterKind::Miss,
+                0xcc57fe,
             ),
             (
                 SprChaTransaction::IaWbMtoI,
@@ -2331,7 +2270,7 @@ mod tests {
     }
 
     #[test]
-    fn uses_documented_spr_sf_llc_eviction_event() {
+    fn uses_spr_sf_llc_and_state_eviction_events() {
         let group = SprChaEventGroup::sf_evictions();
 
         assert_eq!(
@@ -2343,9 +2282,24 @@ mod tests {
                     0x02,
                     0
                 ),
-                SprChaEventSpec::unused(),
-                SprChaEventSpec::unused(),
-                SprChaEventSpec::unused(),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::M)),
+                    0x3d,
+                    0x01,
+                    0
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::E)),
+                    0x3d,
+                    0x02,
+                    0
+                ),
+                SprChaEventSpec::new(
+                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::S)),
+                    0x3d,
+                    0x04,
+                    0
+                ),
             ]
         );
     }
@@ -2357,6 +2311,120 @@ mod tests {
 
         assert_eq!(group.events[0].event, 0x36);
         assert_eq!(group.events[1].event, 0x35);
+    }
+
+    #[test]
+    fn exports_direct_hit_and_miss_for_spr_specitom() {
+        let mut accumulator = SprChaMeasurementAccumulator::new();
+        let scope = UncoreScope {
+            die_group_id: None,
+            die_id: None,
+            package_id: 0,
+        };
+        let measurement = SprChaMeasurement {
+            enabled: Duration::from_millis(100),
+            represented_unit_count: 4,
+            running: Duration::from_millis(100),
+            unit_scale: 1.0,
+        };
+
+        accumulator.add(
+            scope,
+            SprChaEventKind::TransactionInsert(
+                SprChaTransaction::IaSpecItoM,
+                SprChaCounterKind::Hit,
+            ),
+            30,
+            measurement,
+        );
+        accumulator.add(
+            scope,
+            SprChaEventKind::TransactionOccupancy(
+                SprChaTransaction::IaSpecItoM,
+                SprChaCounterKind::Hit,
+            ),
+            70,
+            measurement,
+        );
+        accumulator.add(
+            scope,
+            SprChaEventKind::TransactionClockticks(
+                SprChaTransaction::IaSpecItoM,
+                SprChaCounterKind::Hit,
+            ),
+            100,
+            measurement,
+        );
+        accumulator.add(
+            scope,
+            SprChaEventKind::TransactionInsert(
+                SprChaTransaction::IaSpecItoM,
+                SprChaCounterKind::Miss,
+            ),
+            10,
+            measurement,
+        );
+        accumulator.add(
+            scope,
+            SprChaEventKind::TransactionOccupancy(
+                SprChaTransaction::IaSpecItoM,
+                SprChaCounterKind::Miss,
+            ),
+            20,
+            measurement,
+        );
+        accumulator.add(
+            scope,
+            SprChaEventKind::TransactionClockticks(
+                SprChaTransaction::IaSpecItoM,
+                SprChaCounterKind::Miss,
+            ),
+            100,
+            measurement,
+        );
+
+        let measurements = accumulator.into_measurements();
+        let scope_measurements = measurements.get(&scope).unwrap();
+        assert_eq!(
+            scope_measurements
+                .get(&ChaEventKind::TransactionInsert(
+                    SprChaTransaction::IaSpecItoM.label(),
+                    ChaTransactionResult::Hit,
+                ))
+                .unwrap()
+                .value,
+            30
+        );
+        assert_eq!(
+            scope_measurements
+                .get(&ChaEventKind::TransactionOccupancy(
+                    SprChaTransaction::IaSpecItoM.label(),
+                    ChaTransactionResult::Hit,
+                ))
+                .unwrap()
+                .value,
+            70
+        );
+        assert_eq!(
+            scope_measurements
+                .get(&ChaEventKind::TransactionInsert(
+                    SprChaTransaction::IaSpecItoM.label(),
+                    ChaTransactionResult::Miss,
+                ))
+                .unwrap()
+                .value,
+            10
+        );
+        assert_eq!(
+            scope_measurements
+                .get(&ChaEventKind::TransactionClockticks(
+                    SprChaTransaction::IaSpecItoM.label(),
+                    ChaTransactionResult::Hit,
+                ))
+                .unwrap()
+                .value,
+            100
+        );
     }
 
     #[test]

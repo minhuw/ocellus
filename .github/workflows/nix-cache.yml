@@ -1,0 +1,29 @@
+name: Nix cache
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    name: Build the package and push it to the Nix cache
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          # Fetch what an earlier run already pushed instead of building it again.
+          extra_nix_config: |
+            extra-substituters = https://nix.rhea.minhuw.dev/ops
+            extra-trusted-public-keys = ops:ls8dtVi8ul674I7oY8yMlEFdt7BWX6fufpWchv+WdmI=
+      - name: Build
+        run: nix build .#default --no-link
+      # Rhea's worker nodes install this package from the public ops cache instead of building it.
+      - name: Push to the Nix cache
+        env:
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+        run: |
+          attic="nix shell github:nixos/nixpkgs/nixos-25.05#attic-client -c attic"
+          $attic login rhea https://nix.rhea.minhuw.dev/ "$ATTIC_TOKEN"
+          $attic push rhea:ops $(nix path-info .#default)

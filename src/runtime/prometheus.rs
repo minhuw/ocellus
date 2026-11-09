@@ -146,6 +146,7 @@ mod tests {
     fn info_metadata() -> crate::metrics::InfoMetadata {
         crate::metrics::InfoMetadata {
             collectors: crate::metrics::CollectorMetadata {
+                cha_request_locality: crate::metrics::cha::ChaRequestLocality::All,
                 cha_supported: true,
                 iio_supported: true,
                 imc_supported: true,
@@ -217,6 +218,7 @@ mod tests {
     fn unsupported_info_metadata() -> crate::metrics::InfoMetadata {
         crate::metrics::InfoMetadata {
             collectors: crate::metrics::CollectorMetadata {
+                cha_request_locality: crate::metrics::cha::ChaRequestLocality::All,
                 cha_supported: false,
                 iio_supported: false,
                 imc_supported: false,
@@ -260,6 +262,7 @@ mod tests {
         assert!(!metrics.contains("ocellus_up"));
         assert!(!metrics.contains("ocellus_tsc_supported"));
         assert!(metrics.contains("imc_supported=\"true\""));
+        assert!(metrics.contains("cha_request_locality=\"all\""));
         assert!(metrics.contains("interconnect_supported=\"false\""));
         assert!(metrics.contains("pcu_supported=\"true\""));
         assert!(

@@ -28,6 +28,21 @@ impl ChaMultiplexModeConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ChaRequestLocalityConfig {
+    All,
+    Local,
+}
+
+impl ChaRequestLocalityConfig {
+    fn to_metric_locality(self) -> metrics::cha::ChaRequestLocality {
+        match self {
+            Self::All => metrics::cha::ChaRequestLocality::All,
+            Self::Local => metrics::cha::ChaRequestLocality::Local,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Config {
@@ -70,6 +85,14 @@ struct Config {
         help = "CHA spatial multiplex partitions"
     )]
     cha_spatial_partitions: u8,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ChaRequestLocalityConfig::All,
+        help = "CHA requester locality to count (Skylake-SP only)"
+    )]
+    cha_request_locality: ChaRequestLocalityConfig,
 }
 
 impl Config {
@@ -93,6 +116,10 @@ impl Config {
         self.cha_multiplex_mode
             .to_metric_mode(usize::from(self.cha_spatial_partitions))
     }
+
+    fn cha_request_locality(&self) -> metrics::cha::ChaRequestLocality {
+        self.cha_request_locality.to_metric_locality()
+    }
 }
 
 #[tokio::main]
@@ -105,8 +132,12 @@ async fn run(config: Config) -> Result<(), String> {
     metrics::tsc::preflight_permissions(&architecture)?;
 
     let measure_interval = config.measure_interval();
-    let sampler =
-        runtime::sampler::spawn(measure_interval, architecture, config.cha_multiplex_mode());
+    let sampler = runtime::sampler::spawn(
+        measure_interval,
+        architecture,
+        config.cha_multiplex_mode(),
+        config.cha_request_locality(),
+    );
 
     runtime::run(config.runtime_mode(), sampler).await
 }
@@ -122,6 +153,26 @@ mod tests {
         assert_eq!(
             config.cha_multiplex_mode(),
             metrics::cha::ChaMultiplexMode::spatial(4)
+        );
+    }
+
+    #[test]
+    fn defaults_to_all_cha_request_locality() {
+        let config = Config::parse_from(["ocellus"]);
+
+        assert_eq!(
+            config.cha_request_locality(),
+            metrics::cha::ChaRequestLocality::All
+        );
+    }
+
+    #[test]
+    fn parses_local_cha_request_locality() {
+        let config = Config::parse_from(["ocellus", "--cha-request-locality", "local"]);
+
+        assert_eq!(
+            config.cha_request_locality(),
+            metrics::cha::ChaRequestLocality::Local
         );
     }
 }

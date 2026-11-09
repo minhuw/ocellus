@@ -72,6 +72,7 @@ impl Default for MetricsState {
 
 #[derive(Clone, Debug)]
 pub struct CollectorMetadata {
+    pub cha_request_locality: cha::ChaRequestLocality,
     pub cha_supported: bool,
     pub iio_supported: bool,
     pub imc_supported: bool,

@@ -11,8 +11,8 @@ use crate::metal::arch::skx::pmon;
 use crate::metal::msr::Msr;
 use crate::metal::pci;
 use crate::metrics::cha::{
-    CHA_COUNTER_COUNT, ChaEventKind, ChaEventMeasurement, ChaTransactionLabel, bytes_per_second,
-    event_rate, linux_uncore_unit_ids, llc_lookup_metrics, llc_victim_metrics,
+    CHA_COUNTER_COUNT, ChaEventKind, ChaEventMeasurement, ChaRequestLocality, ChaTransactionLabel,
+    bytes_per_second, event_rate, linux_uncore_unit_ids, llc_lookup_metrics, llc_victim_metrics,
     pci_location_for_cpu, required_measurement, scale_measurement_value,
 };
 pub use crate::metrics::cha::{
@@ -133,6 +133,17 @@ impl ChaFilter1 {
             opcode0,
             opcode1: 0,
             remote: true,
+        }
+    }
+
+    const fn with_locality(self, locality: ChaRequestLocality) -> Self {
+        match locality {
+            ChaRequestLocality::All => self,
+            ChaRequestLocality::Local => Self {
+                local: true,
+                remote: false,
+                ..self
+            },
         }
     }
 
@@ -554,7 +565,7 @@ impl ChaUnit {
         self.write_unit_control(u64::from(pmon::UNIT_FREEZE_AND_RESET))
     }
 
-    fn program(self, group: ChaEventGroup) -> Result<(), String> {
+    fn program(self, group: ChaEventGroup, locality: ChaRequestLocality) -> Result<(), String> {
         let msr = Msr::open(self.cpu)?;
 
         msr.write(
@@ -563,7 +574,7 @@ impl ChaUnit {
         )?;
         msr.write(
             cha_filter1_offset(self.id),
-            u64::from(group.filter1.value()),
+            u64::from(programmed_filter1(group, locality)),
         )?;
 
         for (counter_index, event) in group.events.into_iter().enumerate() {
@@ -775,6 +786,7 @@ pub struct SkxChaCollector {
     next_group: usize,
     next_partition_offset: usize,
     packages: Vec<ChaPackage>,
+    request_locality: ChaRequestLocality,
 }
 
 impl SkxChaCollector {
@@ -787,6 +799,7 @@ impl SkxChaCollector {
             next_group: 0,
             next_partition_offset: 0,
             packages,
+            request_locality: ChaRequestLocality::default(),
         })
     }
 
@@ -796,6 +809,10 @@ impl SkxChaCollector {
             architecture.intel_server_model(),
             IntelServerCpuModel::SkylakeXeon
         )
+    }
+
+    pub fn set_request_locality(&mut self, locality: ChaRequestLocality) {
+        self.request_locality = locality;
     }
 
     pub fn set_multiplex_mode(&mut self, mode: ChaMultiplexMode) {
@@ -820,7 +837,7 @@ impl SkxChaCollector {
         let measured_slice_count = slices.len();
 
         for slice in slices {
-            program_packages(packages, slice)?;
+            program_packages(packages, slice, self.request_locality)?;
 
             let started_at = Instant::now();
             unfreeze_packages(packages)?;
@@ -1847,7 +1864,17 @@ fn freeze_packages(packages: &[ChaPackage]) -> Result<(), String> {
     Ok(())
 }
 
-fn program_packages(packages: &[ChaPackage], slice: ChaMeasurementSlice) -> Result<(), String> {
+/// The filter1 value programmed for `group`. Locality applies to every group,
+/// so one setting covers the TOR and LLC lookup events alike.
+fn programmed_filter1(group: ChaEventGroup, locality: ChaRequestLocality) -> u32 {
+    group.filter1.with_locality(locality).value()
+}
+
+fn program_packages(
+    packages: &[ChaPackage],
+    slice: ChaMeasurementSlice,
+    locality: ChaRequestLocality,
+) -> Result<(), String> {
     for package in packages {
         for unit in &package.units {
             unit.freeze_and_reset()?;
@@ -1858,7 +1885,7 @@ fn program_packages(packages: &[ChaPackage], slice: ChaMeasurementSlice) -> Resu
         for (unit_index, unit) in package.units.iter().enumerate() {
             let partition = cha_partition(unit_index, slice, package.units.len());
             if let Some(group) = slice.groups[partition] {
-                unit.program(group)?;
+                unit.program(group, locality)?;
             }
         }
     }
@@ -2255,6 +2282,57 @@ mod tests {
     }
 
     #[test]
+    fn filters_local_and_remote_requests_by_default() {
+        let itom = ChaEventGroup::transaction(
+            ChaTransactionKind::IoItoM,
+            ChaTransactionResult::Miss,
+            ChaRequestSource::Io,
+            0x248,
+        );
+        let lookup = ChaEventGroup::llc_lookup(ChaCacheState::M);
+
+        // 0x49033 is the Filter1 value perfmon lists for UNC_CHA_TOR_INSERTS.IO_MISS_ITOM.
+        assert_eq!(programmed_filter1(itom, ChaRequestLocality::All), 0x49033);
+        assert_eq!(programmed_filter1(lookup, ChaRequestLocality::All), 0x3b);
+        assert_eq!(test_collector().request_locality, ChaRequestLocality::All);
+    }
+
+    #[test]
+    fn filters_only_local_requests_when_requested() {
+        let itom = ChaEventGroup::transaction(
+            ChaTransactionKind::IoItoM,
+            ChaTransactionResult::Miss,
+            ChaRequestSource::Io,
+            0x248,
+        );
+        let lookup = ChaEventGroup::llc_lookup(ChaCacheState::M);
+
+        assert_eq!(programmed_filter1(itom, ChaRequestLocality::Local), 0x49032);
+        assert_eq!(programmed_filter1(lookup, ChaRequestLocality::Local), 0x3a);
+    }
+
+    #[test]
+    fn local_request_locality_clears_only_the_remote_bit_of_every_group() {
+        for group in SKX_CHA_EVENT_GROUPS {
+            let all = programmed_filter1(group, ChaRequestLocality::All);
+            let local = programmed_filter1(group, ChaRequestLocality::Local);
+
+            assert_ne!(all & CHA_FILTER1_REMOTE_BIT, 0);
+            assert_eq!(local, all & !CHA_FILTER1_REMOTE_BIT);
+            assert_ne!(local & CHA_FILTER1_LOCAL_BIT, 0);
+        }
+    }
+
+    #[test]
+    fn stores_requested_locality() {
+        let mut collector = test_collector();
+
+        collector.set_request_locality(ChaRequestLocality::Local);
+
+        assert_eq!(collector.request_locality, ChaRequestLocality::Local);
+    }
+
+    #[test]
     fn uses_full_skx_cha_address_map() {
         assert_eq!(cha_unit_control_offset(0), 0x0e00);
         assert_eq!(cha_control_offset(0, 0), 0x0e01);
@@ -2483,6 +2561,7 @@ mod tests {
                 test_scope(),
                 (0..unit_count).map(|id| ChaUnit { cpu: 0, id }).collect(),
             )],
+            request_locality: ChaRequestLocality::default(),
         }
     }
 

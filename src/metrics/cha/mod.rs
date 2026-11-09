@@ -495,6 +495,26 @@ impl ChaMultiplexMode {
     }
 }
 
+/// Which requester locality the CHA filter matches.
+///
+/// `All` counts local and remote requests; `Local` counts only requests from
+/// the local socket. Only Skylake-SP CHA filters expose this field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChaRequestLocality {
+    #[default]
+    All,
+    Local,
+}
+
+impl ChaRequestLocality {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Local => "local",
+        }
+    }
+}
+
 pub(crate) fn bytes_per_second(measurement: &ChaEventMeasurement) -> f64 {
     event_rate(measurement) * BYTES_PER_CACHE_LINE
 }
@@ -633,6 +653,38 @@ impl ChaCollector {
                     | IntelServerCpuModel::EmeraldRapids
             )
         )
+    }
+
+    /// The locality the CHA collector will actually program for `requested`.
+    pub fn effective_request_locality(
+        architecture: &Architecture,
+        requested: ChaRequestLocality,
+    ) -> ChaRequestLocality {
+        if Self::supports_request_locality(architecture) {
+            requested
+        } else {
+            ChaRequestLocality::All
+        }
+    }
+
+    fn supports_request_locality(architecture: &Architecture) -> bool {
+        matches!(
+            IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
+            Some(IntelServerCpuModel::SkylakeXeon)
+        )
+    }
+
+    pub fn set_request_locality(&mut self, locality: ChaRequestLocality) {
+        match self {
+            Self::Skx(collector) => collector.set_request_locality(locality),
+            _ if locality != ChaRequestLocality::All => {
+                eprintln!(
+                    "ocellus: CHA request locality {} is only supported on Skylake-SP; counting all requests",
+                    locality.label()
+                );
+            }
+            _ => {}
+        }
     }
 
     pub fn set_multiplex_mode(&mut self, mode: ChaMultiplexMode) {
@@ -780,6 +832,22 @@ mod tests {
         assert!(!ChaCollector::is_supported(&test_architecture(0x6c)));
         assert!(ChaCollector::is_supported(&test_architecture(0x8f)));
         assert!(ChaCollector::is_supported(&test_architecture(0xcf)));
+    }
+
+    #[test]
+    fn applies_local_request_locality_only_on_skylake_sp() {
+        let local = ChaRequestLocality::Local;
+
+        assert_eq!(
+            ChaCollector::effective_request_locality(&test_architecture(0x55), local),
+            ChaRequestLocality::Local
+        );
+        for model in [0x2d, 0x3e, 0x3f, 0x4f, 0x6a, 0x8f, 0xcf] {
+            assert_eq!(
+                ChaCollector::effective_request_locality(&test_architecture(model), local),
+                ChaRequestLocality::All
+            );
+        }
     }
 
     #[test]

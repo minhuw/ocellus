@@ -6,6 +6,7 @@ use crate::metrics::InfoMetadata;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct CollectorInfoLabels {
+    cha_request_locality: String,
     cha_supported: String,
     iio_supported: String,
     imc_supported: String,
@@ -58,6 +59,7 @@ pub fn register(registry: &mut Registry, metadata: InfoMetadata) {
         .set(1);
     collector_info
         .get_or_create(&CollectorInfoLabels {
+            cha_request_locality: metadata.collectors.cha_request_locality.label().to_string(),
             cha_supported: metadata.collectors.cha_supported.to_string(),
             iio_supported: metadata.collectors.iio_supported.to_string(),
             imc_supported: metadata.collectors.imc_supported.to_string(),

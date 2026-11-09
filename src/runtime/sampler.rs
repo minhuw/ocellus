@@ -6,7 +6,7 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::arch::Architecture;
-use crate::metrics::cha::{ChaCollector, ChaMultiplexMode, ChaTask};
+use crate::metrics::cha::{ChaCollector, ChaMultiplexMode, ChaRequestLocality, ChaTask};
 use crate::metrics::iio::{IioCollector, IioTask};
 use crate::metrics::imc::{ImcCollector, ImcTask};
 use crate::metrics::interconnect::{InterconnectCollector, InterconnectTask};
@@ -89,8 +89,9 @@ pub fn spawn(
     measure_interval: Duration,
     architecture: Architecture,
     cha_multiplex_mode: ChaMultiplexMode,
+    cha_request_locality: ChaRequestLocality,
 ) -> Sampler {
-    let metadata = sampler_metadata(measure_interval, &architecture);
+    let metadata = sampler_metadata(measure_interval, &architecture, cha_request_locality);
     let latest = Arc::new(RwLock::new(MetricsState::default()));
     let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
     let (update_tx, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
@@ -99,6 +100,7 @@ pub fn spawn(
         &architecture,
         measure_interval,
         cha_multiplex_mode,
+        cha_request_locality,
         &event_tx,
     );
     spawn_rapl_collector(&architecture, measure_interval, &event_tx);
@@ -126,11 +128,19 @@ pub fn spawn(
     }
 }
 
-fn sampler_metadata(measure_interval: Duration, architecture: &Architecture) -> SamplerMetadata {
+fn sampler_metadata(
+    measure_interval: Duration,
+    architecture: &Architecture,
+    cha_request_locality: ChaRequestLocality,
+) -> SamplerMetadata {
     SamplerMetadata {
         measure_interval,
         info: InfoMetadata {
             collectors: CollectorMetadata {
+                cha_request_locality: ChaCollector::effective_request_locality(
+                    architecture,
+                    cha_request_locality,
+                ),
                 cha_supported: ChaCollector::is_supported(architecture),
                 iio_supported: IioCollector::is_supported(architecture),
                 imc_supported: ImcCollector::is_supported(architecture),
@@ -155,10 +165,12 @@ fn spawn_cha_collector(
     architecture: &Architecture,
     measure_interval: Duration,
     multiplex_mode: ChaMultiplexMode,
+    request_locality: ChaRequestLocality,
     events: &mpsc::Sender<MetricEvent>,
 ) {
     match ChaCollector::new(architecture).map(|mut cha| {
         cha.set_multiplex_mode(multiplex_mode);
+        cha.set_request_locality(request_locality);
         cha
     }) {
         Ok(cha) => {

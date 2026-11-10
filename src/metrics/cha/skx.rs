@@ -201,6 +201,7 @@ enum ChaGroupId {
     HaRequests,
     LlcLookup(ChaCacheState),
     LlcVictims,
+    LlcVictimsLocal,
     NoCredits,
     RequestQueue(ChaRequestSource),
     Rxc(ChaRxcQueue),
@@ -216,6 +217,7 @@ impl ChaGroupId {
             Self::HaRequests => "ha_requests".to_string(),
             Self::LlcLookup(state) => format!("llc_lookup_{}", state.label()),
             Self::LlcVictims => "llc_victims".to_string(),
+            Self::LlcVictimsLocal => "llc_victims_local".to_string(),
             Self::NoCredits => "no_credits".to_string(),
             Self::RequestQueue(source) => format!("request_queue_{}", source.label()),
             Self::Rxc(queue) => format!("rxc_{}", queue.label()),
@@ -330,6 +332,21 @@ impl ChaEventGroup {
                 ChaEventSpec::sum(ChaEventKind::LlcVictim(ChaCacheState::E), 0x37, 0x02),
                 ChaEventSpec::sum(ChaEventKind::LlcVictim(ChaCacheState::S), 0x37, 0x04),
                 ChaEventSpec::sum(ChaEventKind::LlcVictim(ChaCacheState::F), 0x37, 0x08),
+            ],
+        }
+    }
+
+    /// LLC victims of local lines (LOCAL_M/E/S/F), as peacock counted them.
+    const fn llc_victims_local() -> Self {
+        Self {
+            id: ChaGroupId::LlcVictimsLocal,
+            filter0: ChaFilter0::none(),
+            filter1: ChaFilter1::total_all_opcodes(),
+            events: [
+                ChaEventSpec::sum(ChaEventKind::LlcVictim(ChaCacheState::M), 0x37, 0x21),
+                ChaEventSpec::sum(ChaEventKind::LlcVictim(ChaCacheState::E), 0x37, 0x22),
+                ChaEventSpec::sum(ChaEventKind::LlcVictim(ChaCacheState::S), 0x37, 0x24),
+                ChaEventSpec::sum(ChaEventKind::LlcVictim(ChaCacheState::F), 0x37, 0x28),
             ],
         }
     }
@@ -714,7 +731,7 @@ const SKX_MEM_IO_BASIC_CHA_EVENT_GROUPS: [ChaEventGroup; 12] = [
         ChaRequestSource::Ia,
         0x202,
     ),
-    ChaEventGroup::llc_victims(),
+    ChaEventGroup::llc_victims_local(),
     ChaEventGroup::ha_requests(),
 ];
 
@@ -2771,10 +2788,25 @@ mod tests {
                 "trx_io_itomcachenear_miss",
                 "trx_ia_drd_hit",
                 "trx_ia_drd_miss",
-                "llc_victims",
+                "llc_victims_local",
                 "ha_requests",
             ]
         );
+    }
+
+    #[test]
+    fn counts_local_llc_victims_in_mem_io_basic() {
+        let victims = skx_cha_event_groups(EventProfile::MemIoBasic)
+            .iter()
+            .find(|group| group.id == ChaGroupId::LlcVictimsLocal)
+            .unwrap();
+
+        // peacock 3565bd2 "LLC Victims": UNC_CHA_LLC_VICTIMS.LOCAL_{M,E,S,F}.
+        assert_eq!(
+            victims.events.map(|event| (event.event, event.umask)),
+            [(0x37, 0x21), (0x37, 0x22), (0x37, 0x24), (0x37, 0x28)]
+        );
+        assert_eq!(victims.filter1, ChaFilter1::total_all_opcodes());
     }
 
     #[test]

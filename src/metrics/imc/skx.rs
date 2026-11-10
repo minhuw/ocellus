@@ -11,6 +11,7 @@ use crate::metal;
 use crate::metal::arch::skx::pmon;
 use crate::metal::pci::PciDevice;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metrics::EventProfile;
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE, topology_label};
 
 const IMC_COUNTER_WIDTH: u32 = 48;
@@ -20,24 +21,38 @@ const IMC_DCLK_CTL_OFFSET: u64 = 0xf0;
 const IMC_DCLK_CTR_OFFSET: u64 = 0xd0;
 const IMC_UNIT_CTL_OFFSET: u64 = 0xf4;
 
-const SKX_IMC_EVENT_GROUPS: [ImcEventGroup; 2] = [
-    ImcEventGroup {
-        events: [
-            ImcEventSpec::sum(ImcEventKind::ReadInsert, 0x10),
-            ImcEventSpec::sum(ImcEventKind::WriteInsert, 0x20),
-            ImcEventSpec::sum(ImcEventKind::ReadOccupancy, 0x80),
-            ImcEventSpec::sum(ImcEventKind::WriteOccupancy, 0x81),
-        ],
-    },
-    ImcEventGroup {
-        events: [
-            ImcEventSpec::sum_with_umask(ImcEventKind::ReadCas, 0x04, 0x03),
-            ImcEventSpec::sum_with_umask(ImcEventKind::WriteCas, 0x04, 0x0c),
-            ImcEventSpec::sum_with_umask(ImcEventKind::Activate, 0x01, 0x0b),
-            ImcEventSpec::sum_with_umask(ImcEventKind::PageMissPrecharge, 0x02, 0x01),
-        ],
-    },
-];
+const SKX_IMC_QUEUE_GROUP: ImcEventGroup = ImcEventGroup {
+    events: [
+        ImcEventSpec::sum(ImcEventKind::ReadInsert, 0x10),
+        ImcEventSpec::sum(ImcEventKind::WriteInsert, 0x20),
+        ImcEventSpec::sum(ImcEventKind::ReadOccupancy, 0x80),
+        ImcEventSpec::sum(ImcEventKind::WriteOccupancy, 0x81),
+    ],
+};
+
+const SKX_IMC_COMMAND_GROUP: ImcEventGroup = ImcEventGroup {
+    events: [
+        ImcEventSpec::sum_with_umask(ImcEventKind::ReadCas, 0x04, 0x03),
+        ImcEventSpec::sum_with_umask(ImcEventKind::WriteCas, 0x04, 0x0c),
+        ImcEventSpec::sum_with_umask(ImcEventKind::Activate, 0x01, 0x0b),
+        ImcEventSpec::sum_with_umask(ImcEventKind::PageMissPrecharge, 0x02, 0x01),
+    ],
+};
+
+const SKX_IMC_EVENT_GROUPS: [ImcEventGroup; 2] = [SKX_IMC_QUEUE_GROUP, SKX_IMC_COMMAND_GROUP];
+
+/// The mem-io profiles need only memory bandwidth, so the CAS group counts
+/// for the whole interval, as peacock measured it.
+const SKX_IMC_COMMAND_EVENT_GROUPS: [ImcEventGroup; 1] = [SKX_IMC_COMMAND_GROUP];
+
+fn skx_imc_event_groups(profile: EventProfile) -> &'static [ImcEventGroup] {
+    match profile {
+        EventProfile::Default => &SKX_IMC_EVENT_GROUPS,
+        EventProfile::MemIo2Hit | EventProfile::MemIoBasic | EventProfile::MemIoItom => {
+            &SKX_IMC_COMMAND_EVENT_GROUPS
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct ImcScope {
@@ -69,23 +84,35 @@ pub struct ImcScopeMetrics {
     pub page_miss_precharge_commands_per_second: f64,
     pub read_cas_commands_per_second: f64,
     pub read_bytes_per_second: f64,
-    pub rpq_residency_seconds: f64,
-    pub rpq_occupancy_entries: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpq_residency_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpq_occupancy_entries: Option<f64>,
     pub write_cas_commands_per_second: f64,
     pub write_bytes_per_second: f64,
-    pub wpq_residency_seconds: f64,
-    pub wpq_occupancy_entries: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wpq_residency_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wpq_occupancy_entries: Option<f64>,
 }
 
 impl ImcScopeMetrics {
+    /// Queue metrics come only from profiles that measure the queue group.
     fn from_measurements(
         scope: ImcScope,
         measurements: &BTreeMap<ImcEventKind, ImcEventMeasurement>,
+        measures_queues: bool,
     ) -> Result<Self, String> {
-        let read_insert = required_measurement(measurements, ImcEventKind::ReadInsert)?;
-        let write_insert = required_measurement(measurements, ImcEventKind::WriteInsert)?;
-        let read_occupancy = required_measurement(measurements, ImcEventKind::ReadOccupancy)?;
-        let write_occupancy = required_measurement(measurements, ImcEventKind::WriteOccupancy)?;
+        let queues = if measures_queues {
+            Some(ImcQueueMeasurements {
+                read_insert: required_measurement(measurements, ImcEventKind::ReadInsert)?,
+                read_occupancy: required_measurement(measurements, ImcEventKind::ReadOccupancy)?,
+                write_insert: required_measurement(measurements, ImcEventKind::WriteInsert)?,
+                write_occupancy: required_measurement(measurements, ImcEventKind::WriteOccupancy)?,
+            })
+        } else {
+            None
+        };
         let activate = required_measurement(measurements, ImcEventKind::Activate)?;
         let page_miss_precharge =
             required_measurement(measurements, ImcEventKind::PageMissPrecharge)?;
@@ -95,24 +122,43 @@ impl ImcScopeMetrics {
         Ok(Self {
             scope,
             activate_commands_per_second: command_rate(activate),
-            frequency_hz: frequency_hz(read_insert),
+            frequency_hz: frequency_hz(
+                queues
+                    .as_ref()
+                    .map_or(read_cas, |queues| queues.read_insert),
+            ),
             page_miss_precharge_commands_per_second: command_rate(page_miss_precharge),
             read_cas_commands_per_second: command_rate(read_cas),
             read_bytes_per_second: bytes_per_second(
                 scale_to_enabled(read_cas.value, read_cas.enabled, read_cas.running),
                 read_cas.enabled,
             ),
-            rpq_residency_seconds: queue_residency_seconds(read_occupancy, read_insert),
-            rpq_occupancy_entries: ratio(read_occupancy.value, read_occupancy.ticks),
+            rpq_residency_seconds: queues
+                .as_ref()
+                .map(|queues| queue_residency_seconds(queues.read_occupancy, queues.read_insert)),
+            rpq_occupancy_entries: queues
+                .as_ref()
+                .map(|queues| ratio(queues.read_occupancy.value, queues.read_occupancy.ticks)),
             write_cas_commands_per_second: command_rate(write_cas),
             write_bytes_per_second: bytes_per_second(
                 scale_to_enabled(write_cas.value, write_cas.enabled, write_cas.running),
                 write_cas.enabled,
             ),
-            wpq_residency_seconds: queue_residency_seconds(write_occupancy, write_insert),
-            wpq_occupancy_entries: ratio(write_occupancy.value, write_occupancy.ticks),
+            wpq_residency_seconds: queues
+                .as_ref()
+                .map(|queues| queue_residency_seconds(queues.write_occupancy, queues.write_insert)),
+            wpq_occupancy_entries: queues
+                .as_ref()
+                .map(|queues| ratio(queues.write_occupancy.value, queues.write_occupancy.ticks)),
         })
     }
+}
+
+struct ImcQueueMeasurements<'a> {
+    read_insert: &'a ImcEventMeasurement,
+    read_occupancy: &'a ImcEventMeasurement,
+    write_insert: &'a ImcEventMeasurement,
+    write_occupancy: &'a ImcEventMeasurement,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -122,14 +168,17 @@ pub struct ImcMetrics {
 
 impl ImcMetrics {
     fn from_measurements(
+        groups: &[ImcEventGroup],
         measurements: BTreeMap<ImcScope, BTreeMap<ImcEventKind, ImcEventMeasurement>>,
     ) -> Result<Self, String> {
+        let measures_queues = groups.contains(&SKX_IMC_QUEUE_GROUP);
         let mut scopes = Vec::with_capacity(measurements.len());
 
         for (scope, scope_measurements) in measurements {
             scopes.push(ImcScopeMetrics::from_measurements(
                 scope,
                 &scope_measurements,
+                measures_queues,
             )?);
         }
 
@@ -140,6 +189,7 @@ impl ImcMetrics {
 #[derive(Debug)]
 pub struct SkxImcCollector {
     channels: Vec<ImcChannel>,
+    groups: &'static [ImcEventGroup],
     next_group: usize,
 }
 
@@ -147,8 +197,14 @@ impl SkxImcCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         Ok(Self {
             channels: discover_channels(architecture.intel_server_model())?,
+            groups: &SKX_IMC_EVENT_GROUPS,
             next_group: 0,
         })
+    }
+
+    pub fn set_event_profile(&mut self, profile: EventProfile) {
+        self.groups = skx_imc_event_groups(profile);
+        self.next_group = 0;
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<ImcMetrics, String> {
@@ -180,15 +236,15 @@ impl SkxImcCollector {
 
         self.rotate_group();
 
-        ImcMetrics::from_measurements(measurements.into_measurements())
+        ImcMetrics::from_measurements(self.groups, measurements.into_measurements())
     }
 
     fn rotate_group(&mut self) {
-        self.next_group = (self.next_group + 1) % SKX_IMC_EVENT_GROUPS.len();
+        self.next_group = (self.next_group + 1) % self.groups.len();
     }
 
     fn schedule(&self, interval: Duration) -> Vec<ImcMeasurementSlice> {
-        let group_count = SKX_IMC_EVENT_GROUPS.len();
+        let group_count = self.groups.len();
         let round_count = measurement_round_count(interval, group_count);
         let slice_count = group_count * round_count;
         let slice_duration = interval.div_f64(slice_count as f64);
@@ -199,7 +255,7 @@ impl SkxImcCollector {
                 let rotated_index = (self.next_group + group_index) % group_count;
                 slices.push(ImcMeasurementSlice {
                     duration: slice_duration,
-                    group: SKX_IMC_EVENT_GROUPS[rotated_index],
+                    group: self.groups[rotated_index],
                 });
             }
         }
@@ -327,24 +383,24 @@ impl ImcPrometheusMetrics {
             self.read_bytes_per_second
                 .get_or_create(&labels)
                 .set(scope.read_bytes_per_second);
-            self.rpq_residency_seconds
-                .get_or_create(&labels)
-                .set(scope.rpq_residency_seconds);
-            self.rpq_occupancy_entries
-                .get_or_create(&labels)
-                .set(scope.rpq_occupancy_entries);
+            if let Some(value) = scope.rpq_residency_seconds {
+                self.rpq_residency_seconds.get_or_create(&labels).set(value);
+            }
+            if let Some(value) = scope.rpq_occupancy_entries {
+                self.rpq_occupancy_entries.get_or_create(&labels).set(value);
+            }
             self.write_cas_commands_per_second
                 .get_or_create(&labels)
                 .set(scope.write_cas_commands_per_second);
             self.write_bytes_per_second
                 .get_or_create(&labels)
                 .set(scope.write_bytes_per_second);
-            self.wpq_residency_seconds
-                .get_or_create(&labels)
-                .set(scope.wpq_residency_seconds);
-            self.wpq_occupancy_entries
-                .get_or_create(&labels)
-                .set(scope.wpq_occupancy_entries);
+            if let Some(value) = scope.wpq_residency_seconds {
+                self.wpq_residency_seconds.get_or_create(&labels).set(value);
+            }
+            if let Some(value) = scope.wpq_occupancy_entries {
+                self.wpq_occupancy_entries.get_or_create(&labels).set(value);
+            }
         }
     }
 }
@@ -792,19 +848,22 @@ mod tests {
     #[test]
     fn computes_multiplexed_metrics() {
         let scope = test_scope();
-        let metrics = ImcMetrics::from_measurements(BTreeMap::from([(
-            scope,
-            BTreeMap::from([
-                measurement(ImcEventKind::ReadInsert, 200, 1_000, 100),
-                measurement(ImcEventKind::WriteInsert, 300, 1_000, 100),
-                measurement(ImcEventKind::ReadOccupancy, 400, 1_000, 100),
-                measurement(ImcEventKind::WriteOccupancy, 600, 1_000, 100),
-                measurement(ImcEventKind::ReadCas, 2_000, 1_000, 100),
-                measurement(ImcEventKind::WriteCas, 3_000, 1_000, 100),
-                measurement(ImcEventKind::Activate, 1_000, 1_000, 100),
-                measurement(ImcEventKind::PageMissPrecharge, 700, 1_000, 100),
-            ]),
-        )]))
+        let metrics = ImcMetrics::from_measurements(
+            &SKX_IMC_EVENT_GROUPS,
+            BTreeMap::from([(
+                scope,
+                BTreeMap::from([
+                    measurement(ImcEventKind::ReadInsert, 200, 1_000, 100),
+                    measurement(ImcEventKind::WriteInsert, 300, 1_000, 100),
+                    measurement(ImcEventKind::ReadOccupancy, 400, 1_000, 100),
+                    measurement(ImcEventKind::WriteOccupancy, 600, 1_000, 100),
+                    measurement(ImcEventKind::ReadCas, 2_000, 1_000, 100),
+                    measurement(ImcEventKind::WriteCas, 3_000, 1_000, 100),
+                    measurement(ImcEventKind::Activate, 1_000, 1_000, 100),
+                    measurement(ImcEventKind::PageMissPrecharge, 700, 1_000, 100),
+                ]),
+            )]),
+        )
         .unwrap();
 
         let scope_metrics = metrics.scopes[0];
@@ -819,10 +878,10 @@ mod tests {
         assert_eq!(scope_metrics.read_bytes_per_second, 1_280_000.0);
         assert_eq!(scope_metrics.write_cas_commands_per_second, 30_000.0);
         assert_eq!(scope_metrics.write_bytes_per_second, 1_920_000.0);
-        assert_eq!(scope_metrics.rpq_occupancy_entries, 0.4);
-        assert_eq!(scope_metrics.wpq_occupancy_entries, 0.6);
-        assert_close(scope_metrics.rpq_residency_seconds, 0.0002);
-        assert_close(scope_metrics.wpq_residency_seconds, 0.0002);
+        assert_eq!(scope_metrics.rpq_occupancy_entries, Some(0.4));
+        assert_eq!(scope_metrics.wpq_occupancy_entries, Some(0.6));
+        assert_close(scope_metrics.rpq_residency_seconds.unwrap(), 0.0002);
+        assert_close(scope_metrics.wpq_residency_seconds.unwrap(), 0.0002);
     }
 
     #[test]
@@ -841,6 +900,79 @@ mod tests {
         };
 
         assert_close(queue_residency_seconds(&occupancy, &insert), 0.0000002);
+    }
+
+    #[test]
+    fn measures_only_cas_group_for_mem_io_profiles() {
+        for profile in [
+            EventProfile::MemIo2Hit,
+            EventProfile::MemIoBasic,
+            EventProfile::MemIoItom,
+        ] {
+            let mut collector = test_collector();
+            collector.set_event_profile(profile);
+            let slices = collector.schedule(Duration::from_secs(1));
+
+            assert_eq!(slices.len(), 10);
+            assert!(
+                slices
+                    .iter()
+                    .all(|slice| slice.group == SKX_IMC_COMMAND_GROUP
+                        && slice.duration == Duration::from_millis(100))
+            );
+        }
+    }
+
+    #[test]
+    fn computes_bandwidth_without_queue_group() {
+        let metrics = ImcMetrics::from_measurements(
+            &SKX_IMC_COMMAND_EVENT_GROUPS,
+            BTreeMap::from([(
+                test_scope(),
+                BTreeMap::from([
+                    measurement(ImcEventKind::ReadCas, 100, 1_000, 100),
+                    measurement(ImcEventKind::WriteCas, 50, 1_000, 100),
+                    measurement(ImcEventKind::Activate, 10, 1_000, 100),
+                    measurement(ImcEventKind::PageMissPrecharge, 5, 1_000, 100),
+                ]),
+            )]),
+        )
+        .unwrap();
+        let scope_metrics = metrics.scopes[0];
+
+        assert_eq!(scope_metrics.read_bytes_per_second, 64_000.0);
+        assert_eq!(scope_metrics.write_bytes_per_second, 32_000.0);
+        assert_eq!(scope_metrics.frequency_hz, 10_000.0);
+        assert_eq!(scope_metrics.rpq_occupancy_entries, None);
+        assert_eq!(scope_metrics.rpq_residency_seconds, None);
+        assert_eq!(scope_metrics.wpq_occupancy_entries, None);
+        assert_eq!(scope_metrics.wpq_residency_seconds, None);
+    }
+
+    #[test]
+    fn omits_unmeasured_queue_metrics_from_exposition() {
+        let mut registry = Registry::default();
+        let prometheus = ImcPrometheusMetrics::register(&mut registry);
+        let metrics = ImcMetrics::from_measurements(
+            &SKX_IMC_COMMAND_EVENT_GROUPS,
+            BTreeMap::from([(
+                test_scope(),
+                BTreeMap::from([
+                    measurement(ImcEventKind::ReadCas, 100, 1_000, 100),
+                    measurement(ImcEventKind::WriteCas, 50, 1_000, 100),
+                    measurement(ImcEventKind::Activate, 10, 1_000, 100),
+                    measurement(ImcEventKind::PageMissPrecharge, 5, 1_000, 100),
+                ]),
+            )]),
+        )
+        .unwrap();
+        prometheus.update(metrics);
+        let mut text = String::new();
+        prometheus_client::encoding::text::encode(&mut text, &registry).unwrap();
+
+        assert!(text.contains("ocellus_imc_read_bytes_per_second{"));
+        assert!(!text.contains("ocellus_imc_rpq_occupancy_entries{"));
+        assert!(!text.contains("ocellus_imc_wpq_residency_seconds{"));
     }
 
     #[test]
@@ -972,6 +1104,7 @@ mod tests {
     fn test_collector() -> SkxImcCollector {
         SkxImcCollector {
             channels: Vec::new(),
+            groups: &SKX_IMC_EVENT_GROUPS,
             next_group: 0,
         }
     }

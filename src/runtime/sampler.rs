@@ -15,7 +15,9 @@ use crate::metrics::pcu::{PcuCollector, PcuTask};
 use crate::metrics::rapl::{RaplCollector, RaplTask};
 use crate::metrics::rdt::{RdtCollector, RdtTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
-use crate::metrics::{CollectorMetadata, InfoMetadata, MetricEvent, MetricUpdate, MetricsState};
+use crate::metrics::{
+    CollectorMetadata, EventProfile, InfoMetadata, MetricEvent, MetricUpdate, MetricsState,
+};
 
 const EVENT_CHANNEL_CAPACITY: usize = 64;
 const UPDATE_CHANNEL_CAPACITY: usize = 64;
@@ -85,26 +87,24 @@ impl Sampler {
     }
 }
 
-pub fn spawn(
-    measure_interval: Duration,
-    architecture: Architecture,
-    cha_multiplex_mode: ChaMultiplexMode,
-    cha_request_locality: ChaRequestLocality,
-) -> Sampler {
-    let metadata = sampler_metadata(measure_interval, &architecture, cha_request_locality);
+#[derive(Clone, Copy, Debug)]
+pub struct SamplerConfig {
+    pub measure_interval: Duration,
+    pub event_profile: EventProfile,
+    pub cha_multiplex_mode: ChaMultiplexMode,
+    pub cha_request_locality: ChaRequestLocality,
+}
+
+pub fn spawn(config: SamplerConfig, architecture: Architecture) -> Sampler {
+    let measure_interval = config.measure_interval;
+    let metadata = sampler_metadata(config, &architecture);
     let latest = Arc::new(RwLock::new(MetricsState::default()));
     let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
     let (update_tx, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
 
-    spawn_cha_collector(
-        &architecture,
-        measure_interval,
-        cha_multiplex_mode,
-        cha_request_locality,
-        &event_tx,
-    );
+    spawn_cha_collector(&architecture, config, &event_tx);
     spawn_rapl_collector(&architecture, measure_interval, &event_tx);
-    spawn_imc_collector(&architecture, measure_interval, &event_tx);
+    spawn_imc_collector(&architecture, config, &event_tx);
     spawn_iio_collector(&architecture, measure_interval, &event_tx);
     spawn_irp_collector(&architecture, measure_interval, &event_tx);
     spawn_pcu_collector(&architecture, measure_interval, &event_tx);
@@ -128,18 +128,20 @@ pub fn spawn(
     }
 }
 
-fn sampler_metadata(
-    measure_interval: Duration,
-    architecture: &Architecture,
-    cha_request_locality: ChaRequestLocality,
-) -> SamplerMetadata {
+fn sampler_metadata(config: SamplerConfig, architecture: &Architecture) -> SamplerMetadata {
     SamplerMetadata {
-        measure_interval,
+        measure_interval: config.measure_interval,
         info: InfoMetadata {
             collectors: CollectorMetadata {
+                event_profile: config.event_profile,
+                cha_group_count: ChaCollector::event_group_count(
+                    architecture,
+                    config.event_profile,
+                ),
+                cha_multiplex_mode: config.cha_multiplex_mode,
                 cha_request_locality: ChaCollector::effective_request_locality(
                     architecture,
-                    cha_request_locality,
+                    config.cha_request_locality,
                 ),
                 cha_supported: ChaCollector::is_supported(architecture),
                 iio_supported: IioCollector::is_supported(architecture),
@@ -163,15 +165,16 @@ fn sampler_metadata(
 
 fn spawn_cha_collector(
     architecture: &Architecture,
-    measure_interval: Duration,
-    multiplex_mode: ChaMultiplexMode,
-    request_locality: ChaRequestLocality,
+    config: SamplerConfig,
     events: &mpsc::Sender<MetricEvent>,
 ) {
-    match ChaCollector::new(architecture).map(|mut cha| {
-        cha.set_multiplex_mode(multiplex_mode);
-        cha.set_request_locality(request_locality);
-        cha
+    let measure_interval = config.measure_interval;
+
+    match ChaCollector::new(architecture).and_then(|mut cha| {
+        cha.set_event_profile(config.event_profile)?;
+        cha.set_multiplex_mode(config.cha_multiplex_mode);
+        cha.set_request_locality(config.cha_request_locality);
+        Ok(cha)
     }) {
         Ok(cha) => {
             eprintln!("ocellus: starting CHA collector");
@@ -209,10 +212,15 @@ fn spawn_iio_collector(
 
 fn spawn_imc_collector(
     architecture: &Architecture,
-    measure_interval: Duration,
+    config: SamplerConfig,
     events: &mpsc::Sender<MetricEvent>,
 ) {
-    match ImcCollector::new(architecture) {
+    let measure_interval = config.measure_interval;
+
+    match ImcCollector::new(architecture).and_then(|mut imc| {
+        imc.set_event_profile(config.event_profile)?;
+        Ok(imc)
+    }) {
         Ok(imc) => {
             eprintln!("ocellus: starting IMC collector");
             spawn_collector(

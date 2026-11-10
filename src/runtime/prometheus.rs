@@ -146,6 +146,9 @@ mod tests {
     fn info_metadata() -> crate::metrics::InfoMetadata {
         crate::metrics::InfoMetadata {
             collectors: crate::metrics::CollectorMetadata {
+                event_profile: crate::metrics::EventProfile::Default,
+                cha_group_count: None,
+                cha_multiplex_mode: crate::metrics::cha::ChaMultiplexMode::Temporal,
                 cha_request_locality: crate::metrics::cha::ChaRequestLocality::All,
                 cha_supported: true,
                 iio_supported: true,
@@ -218,6 +221,9 @@ mod tests {
     fn unsupported_info_metadata() -> crate::metrics::InfoMetadata {
         crate::metrics::InfoMetadata {
             collectors: crate::metrics::CollectorMetadata {
+                event_profile: crate::metrics::EventProfile::Default,
+                cha_group_count: None,
+                cha_multiplex_mode: crate::metrics::cha::ChaMultiplexMode::Temporal,
                 cha_request_locality: crate::metrics::cha::ChaRequestLocality::All,
                 cha_supported: false,
                 iio_supported: false,
@@ -263,6 +269,9 @@ mod tests {
         assert!(!metrics.contains("ocellus_tsc_supported"));
         assert!(metrics.contains("imc_supported=\"true\""));
         assert!(metrics.contains("cha_request_locality=\"all\""));
+        assert!(metrics.contains("event_profile=\"default\""));
+        assert!(metrics.contains("cha_multiplex_mode=\"temporal\""));
+        assert!(metrics.contains("cha_group_count=\"unknown\""));
         assert!(metrics.contains("interconnect_supported=\"false\""));
         assert!(metrics.contains("pcu_supported=\"true\""));
         assert!(
@@ -601,8 +610,8 @@ mod tests {
                     page_miss_precharge_commands_per_second: 512.0,
                     read_cas_commands_per_second: 1024.0,
                     read_bytes_per_second: 1024.0,
-                    rpq_residency_seconds: 0.000001,
-                    rpq_occupancy_entries: 0.5,
+                    rpq_residency_seconds: Some(0.000001),
+                    rpq_occupancy_entries: Some(0.5),
                     scope: crate::metrics::imc::skx::ImcScope {
                         die_group_id: None,
                         die_id: None,
@@ -610,8 +619,8 @@ mod tests {
                     },
                     write_cas_commands_per_second: 2048.0,
                     write_bytes_per_second: 2048.0,
-                    wpq_residency_seconds: 0.000002,
-                    wpq_occupancy_entries: 0.75,
+                    wpq_residency_seconds: Some(0.000002),
+                    wpq_occupancy_entries: Some(0.75),
                 }],
             }),
         );
@@ -1559,6 +1568,18 @@ mod tests {
         let state = crate::metrics::MetricsState {
             cha: Some(crate::metrics::cha::ChaMetrics::Skx(
                 crate::metrics::cha::skx::SkxChaMetrics {
+                    event_groups: vec![crate::metrics::cha::skx::ChaEventGroupTiming {
+                        group: "tor_itom".to_string(),
+                        running_seconds: 0.5,
+                    }],
+                    sample_window_seconds: 1.002,
+                    tor_inserts: vec![crate::metrics::cha::ChaTorInsertMetrics {
+                        inserts_per_second: 3.0,
+                        opcode: crate::metrics::cha::ChaTorOpcode::ItoM,
+                        result: crate::metrics::cha::ChaTorResult::Miss,
+                        scope,
+                        source: crate::metrics::cha::ChaRequestSource::Io,
+                    }],
                     evictions: vec![crate::metrics::cha::ChaEvictionMetrics {
                         bandwidth_bytes_per_second: 10.0,
                         latency_seconds: 0.000003,
@@ -1684,6 +1705,11 @@ mod tests {
         assert!(metrics.contains("source=\"ia\""));
         assert!(metrics.contains("state=\"m\""));
         assert!(metrics.contains("transaction=\"ia_drd\""));
+        assert!(metrics.contains("ocellus_cha_group_running_seconds{group=\"tor_itom\"} 0.5"));
+        assert!(metrics.contains("ocellus_cha_sample_window_seconds 1.002"));
+        assert!(metrics.contains(
+            "ocellus_cha_tor_inserts_per_second{die=\"unknown\",die_group=\"unknown\",opcode=\"itom\",package=\"0\",result=\"miss\",source=\"io\"} 3.0"
+        ));
     }
 
     #[test]

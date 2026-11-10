@@ -22,6 +22,7 @@ use crate::metrics::uncore::hsx::{self, HsxUncoreScope};
 use crate::metrics::uncore::skx::{UncoreScope, queue_residency_seconds, ratio};
 
 const HSX_CBO_EVENT_GROUP_COUNT: usize = 21;
+pub(crate) const EVENT_GROUP_COUNT: usize = HSX_CBO_EVENT_GROUP_COUNT;
 const HSX_CBO_EXPORTED_TRANSACTION_COUNT: usize = 7;
 const HSX_MAX_CBO_COUNT: usize = 32;
 

@@ -14,7 +14,7 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::pci;
 use crate::metrics::common::BYTES_PER_CACHE_LINE;
 use crate::metrics::uncore::skx::{UncoreScope, events_per_second, scale_to_enabled};
-use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
+use crate::metrics::{EventProfile, InfoMetadata, MetricEvent, MetricUpdate};
 
 pub const CHA_COUNTER_COUNT: usize = 4;
 const LINUX_UNCORE_EVENT_SOURCE_ROOT: &str = "/sys/bus/event_source/devices";
@@ -298,6 +298,44 @@ impl ChaTransactionResult {
     }
 }
 
+/// The request opcode a TOR insert group matches, for both IA and IO.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChaTorOpcode {
+    ItoM,
+    RdCur,
+    Rfo,
+    WbMtoI,
+}
+
+impl ChaTorOpcode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::ItoM => "itom",
+            Self::RdCur => "rdcur",
+            Self::Rfo => "rfo",
+            Self::WbMtoI => "wbmtoi",
+        }
+    }
+}
+
+/// Whether a TOR insert count covers all lookups of an opcode or only misses.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChaTorResult {
+    All,
+    Miss,
+}
+
+impl ChaTorResult {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Miss => "miss",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ChaTransactionLabel(&'static str);
 
@@ -337,6 +375,7 @@ pub(crate) enum ChaEventKind {
     RxcInsert(ChaRxcQueue),
     RxcOccupancy(ChaRxcQueue),
     SfEviction(ChaCacheState),
+    TorInsert(ChaTorOpcode, ChaRequestSource, ChaTorResult),
     TransactionClockticks(ChaTransactionLabel, ChaTransactionResult),
     TransactionInsert(ChaTransactionLabel, ChaTransactionResult),
     TransactionOccupancy(ChaTransactionLabel, ChaTransactionResult),
@@ -462,6 +501,16 @@ pub struct ChaTransactionMetrics {
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct ChaTorInsertMetrics {
+    pub inserts_per_second: f64,
+    pub opcode: ChaTorOpcode,
+    pub result: ChaTorResult,
+    #[serde(flatten)]
+    pub scope: UncoreScope,
+    pub source: ChaRequestSource,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 pub struct ChaTransactionResultMetrics {
     pub bandwidth_bytes_per_second: f64,
     pub inserts_per_second: f64,
@@ -485,6 +534,13 @@ pub enum ChaMultiplexMode {
 impl ChaMultiplexMode {
     pub const fn spatial(partitions: usize) -> Self {
         Self::Spatial { partitions }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Temporal => "temporal",
+            Self::Spatial { .. } => "spatial",
+        }
     }
 
     pub(crate) const fn partitions(self) -> usize {
@@ -548,22 +604,32 @@ pub(crate) fn llc_victim_metrics(
     Ok(metrics)
 }
 
+pub(crate) const LLC_LOOKUP_STATES: [ChaCacheState; 8] = [
+    ChaCacheState::SfS,
+    ChaCacheState::SfE,
+    ChaCacheState::SfM,
+    ChaCacheState::I,
+    ChaCacheState::S,
+    ChaCacheState::E,
+    ChaCacheState::M,
+    ChaCacheState::F,
+];
+
 pub(crate) fn llc_lookup_metrics(
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
 ) -> Result<Vec<ChaLlcLookupMetrics>, String> {
+    llc_lookup_metrics_for_states(scope, measurements, &LLC_LOOKUP_STATES)
+}
+
+pub(crate) fn llc_lookup_metrics_for_states(
+    scope: UncoreScope,
+    measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+    states: &[ChaCacheState],
+) -> Result<Vec<ChaLlcLookupMetrics>, String> {
     let mut metrics = Vec::new();
 
-    for state in [
-        ChaCacheState::SfS,
-        ChaCacheState::SfE,
-        ChaCacheState::SfM,
-        ChaCacheState::I,
-        ChaCacheState::S,
-        ChaCacheState::E,
-        ChaCacheState::M,
-        ChaCacheState::F,
-    ] {
+    for &state in states {
         for operation in [
             ChaLookupOperation::Read,
             ChaLookupOperation::Write,
@@ -672,6 +738,41 @@ impl ChaCollector {
             IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
             Some(IntelServerCpuModel::SkylakeXeon)
         )
+    }
+
+    /// How many CHA event groups the collector cycles through for `profile`.
+    pub fn event_group_count(architecture: &Architecture, profile: EventProfile) -> Option<usize> {
+        match IntelServerCpuModel::from_family_model(architecture.family, architecture.model)? {
+            IntelServerCpuModel::SkylakeXeon => Some(skx::event_group_count(profile)),
+            _ if profile != EventProfile::Default => None,
+            IntelServerCpuModel::SandyBridgeEp | IntelServerCpuModel::IvyTown => {
+                Some(snb::EVENT_GROUP_COUNT)
+            }
+            IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => {
+                Some(hsx::EVENT_GROUP_COUNT)
+            }
+            IntelServerCpuModel::IceLakeXeon => Some(icx::EVENT_GROUP_COUNT),
+            IntelServerCpuModel::SapphireRapids | IntelServerCpuModel::EmeraldRapids => {
+                Some(spr::EVENT_GROUP_COUNT)
+            }
+            _ => None,
+        }
+    }
+
+    /// Selects the CHA event groups to measure. Only Skylake-SP has more than
+    /// the default profile; `EventProfile::validate` rejects the rest at startup.
+    pub fn set_event_profile(&mut self, profile: EventProfile) -> Result<(), String> {
+        match self {
+            Self::Skx(collector) => {
+                collector.set_event_profile(profile);
+                Ok(())
+            }
+            _ if profile == EventProfile::Default => Ok(()),
+            _ => Err(format!(
+                "CHA event profile {} is only supported on Skylake-SP",
+                profile.label()
+            )),
+        }
     }
 
     pub fn set_request_locality(&mut self, locality: ChaRequestLocality) {
@@ -832,6 +933,28 @@ mod tests {
         assert!(!ChaCollector::is_supported(&test_architecture(0x6c)));
         assert!(ChaCollector::is_supported(&test_architecture(0x8f)));
         assert!(ChaCollector::is_supported(&test_architecture(0xcf)));
+    }
+
+    #[test]
+    fn counts_event_groups_per_profile() {
+        let skx = test_architecture(0x55);
+
+        assert_eq!(
+            ChaCollector::event_group_count(&skx, EventProfile::Default),
+            Some(37)
+        );
+        assert_eq!(
+            ChaCollector::event_group_count(&skx, EventProfile::MemIoBasic),
+            Some(12)
+        );
+        assert_eq!(
+            ChaCollector::event_group_count(&test_architecture(0x4f), EventProfile::Default),
+            Some(21)
+        );
+        assert_eq!(
+            ChaCollector::event_group_count(&test_architecture(0x4f), EventProfile::MemIoItom),
+            None
+        );
     }
 
     #[test]

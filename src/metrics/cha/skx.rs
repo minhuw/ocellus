@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -10,17 +10,20 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::arch::skx::pmon;
 use crate::metal::msr::Msr;
 use crate::metal::pci;
+use crate::metrics::EventProfile;
 use crate::metrics::cha::{
     CHA_COUNTER_COUNT, ChaEventKind, ChaEventMeasurement, ChaRequestLocality, ChaTransactionLabel,
-    bytes_per_second, event_rate, linux_uncore_unit_ids, llc_lookup_metrics, llc_victim_metrics,
-    pci_location_for_cpu, required_measurement, scale_measurement_value,
+    LLC_LOOKUP_STATES, bytes_per_second, event_rate, linux_uncore_unit_ids,
+    llc_lookup_metrics_for_states, llc_victim_metrics, pci_location_for_cpu, required_measurement,
+    scale_measurement_value,
 };
 pub use crate::metrics::cha::{
     ChaCacheState, ChaEvictionMetrics, ChaHaRequestLocality, ChaHaRequestMetrics,
     ChaLlcLookupMetrics, ChaLlcVictimMetrics, ChaLookupOperation, ChaMultiplexMode,
     ChaNoCreditDirection, ChaNoCreditMetrics, ChaRequestOperation, ChaRequestQueueMetrics,
     ChaRequestSource, ChaRxcMetrics, ChaRxcQueue, ChaScopeMetrics, ChaSfEvictionMetrics,
-    ChaTransactionMetrics, ChaTransactionResult, ChaTransactionResultMetrics,
+    ChaTorInsertMetrics, ChaTorOpcode, ChaTorResult, ChaTransactionMetrics, ChaTransactionResult,
+    ChaTransactionResultMetrics,
 };
 use crate::metrics::common::topology_label;
 use crate::metrics::uncore::skx::{
@@ -191,16 +194,52 @@ impl ChaEventSpec {
     }
 }
 
+/// Stable identity of a CHA event group, exported as the `group` label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ChaGroupId {
+    Eviction,
+    HaRequests,
+    LlcLookup(ChaCacheState),
+    LlcVictims,
+    NoCredits,
+    RequestQueue(ChaRequestSource),
+    Rxc(ChaRxcQueue),
+    SfEvictions,
+    Tor(ChaTorOpcode),
+    Transaction(ChaTransactionKind, ChaTransactionResult),
+}
+
+impl ChaGroupId {
+    fn label(self) -> String {
+        match self {
+            Self::Eviction => "eviction".to_string(),
+            Self::HaRequests => "ha_requests".to_string(),
+            Self::LlcLookup(state) => format!("llc_lookup_{}", state.label()),
+            Self::LlcVictims => "llc_victims".to_string(),
+            Self::NoCredits => "no_credits".to_string(),
+            Self::RequestQueue(source) => format!("request_queue_{}", source.label()),
+            Self::Rxc(queue) => format!("rxc_{}", queue.label()),
+            Self::SfEvictions => "sf_evictions".to_string(),
+            Self::Tor(opcode) => format!("tor_{}", opcode.label()),
+            Self::Transaction(transaction, result) => {
+                format!("trx_{}_{}", transaction.label().as_str(), result.label())
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ChaEventGroup {
     events: [ChaEventSpec; CHA_COUNTER_COUNT],
     filter0: ChaFilter0,
     filter1: ChaFilter1,
+    id: ChaGroupId,
 }
 
 impl ChaEventGroup {
     const fn eviction() -> Self {
         Self {
+            id: ChaGroupId::Eviction,
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
@@ -214,6 +253,7 @@ impl ChaEventGroup {
 
     const fn ha_requests() -> Self {
         Self {
+            id: ChaGroupId::HaRequests,
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
@@ -252,6 +292,7 @@ impl ChaEventGroup {
 
     const fn llc_lookup(state: ChaCacheState) -> Self {
         Self {
+            id: ChaGroupId::LlcLookup(state),
             filter0: ChaFilter0::llc_lookup_state(state),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
@@ -281,6 +322,7 @@ impl ChaEventGroup {
 
     const fn llc_victims() -> Self {
         Self {
+            id: ChaGroupId::LlcVictims,
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
@@ -294,6 +336,7 @@ impl ChaEventGroup {
 
     const fn no_credits() -> Self {
         Self {
+            id: ChaGroupId::NoCredits,
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
@@ -315,6 +358,7 @@ impl ChaEventGroup {
 
     const fn request_queue(source: ChaRequestSource) -> Self {
         Self {
+            id: ChaGroupId::RequestQueue(source),
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
@@ -338,6 +382,7 @@ impl ChaEventGroup {
         let umask = queue.umask();
 
         Self {
+            id: ChaGroupId::Rxc(queue),
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
@@ -351,6 +396,7 @@ impl ChaEventGroup {
 
     const fn sf_evictions() -> Self {
         Self {
+            id: ChaGroupId::SfEvictions,
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_all_opcodes(),
             events: [
@@ -368,10 +414,12 @@ impl ChaEventGroup {
         source: ChaRequestSource,
         opcode0: u16,
     ) -> Self {
+        let id = ChaGroupId::Transaction(transaction, result);
         let umask = source.result_umask(result);
         let transaction = transaction.label();
 
         Self {
+            id,
             filter0: ChaFilter0::none(),
             filter1: ChaFilter1::total_opcode(opcode0),
             events: [
@@ -390,7 +438,55 @@ impl ChaEventGroup {
             ],
         }
     }
+
+    /// TOR inserts of one opcode: IO and IA, all and misses, in one time slice.
+    const fn tor(opcode: ChaTorOpcode) -> Self {
+        Self {
+            id: ChaGroupId::Tor(opcode),
+            filter0: ChaFilter0::none(),
+            filter1: ChaFilter1::total_opcode(skx_tor_opcode(opcode)),
+            events: [
+                ChaEventSpec::sum(
+                    ChaEventKind::TorInsert(opcode, ChaRequestSource::Io, ChaTorResult::All),
+                    0x35,
+                    ChaRequestSource::Io.all_umask(),
+                ),
+                ChaEventSpec::sum(
+                    ChaEventKind::TorInsert(opcode, ChaRequestSource::Io, ChaTorResult::Miss),
+                    0x35,
+                    ChaRequestSource::Io.result_umask(ChaTransactionResult::Miss),
+                ),
+                ChaEventSpec::sum(
+                    ChaEventKind::TorInsert(opcode, ChaRequestSource::Ia, ChaTorResult::All),
+                    0x35,
+                    ChaRequestSource::Ia.all_umask(),
+                ),
+                ChaEventSpec::sum(
+                    ChaEventKind::TorInsert(opcode, ChaRequestSource::Ia, ChaTorResult::Miss),
+                    0x35,
+                    ChaRequestSource::Ia.result_umask(ChaTransactionResult::Miss),
+                ),
+            ],
+        }
+    }
 }
+
+/// Skylake-SP IDI opcodes (uncore guide table 3-1) for the TOR insert groups.
+const fn skx_tor_opcode(opcode: ChaTorOpcode) -> u16 {
+    match opcode {
+        ChaTorOpcode::ItoM => 0x248,
+        ChaTorOpcode::RdCur => 0x21e,
+        ChaTorOpcode::Rfo => 0x200,
+        ChaTorOpcode::WbMtoI => 0x244,
+    }
+}
+
+const CHA_TOR_OPCODES: [ChaTorOpcode; 4] = [
+    ChaTorOpcode::ItoM,
+    ChaTorOpcode::Rfo,
+    ChaTorOpcode::RdCur,
+    ChaTorOpcode::WbMtoI,
+];
 
 const CHA_TRANSACTIONS: [ChaTransactionKind; 10] = [
     ChaTransactionKind::IoPciRdCur,
@@ -544,6 +640,96 @@ const SKX_CHA_EVENT_GROUPS: [ChaEventGroup; SKX_CHA_EVENT_GROUP_COUNT] = [
     ChaEventGroup::ha_requests(),
     ChaEventGroup::sf_evictions(),
 ];
+
+/// mem-io two-type write hit (E1): one TOR insert group per opcode the
+/// `ItoM_M`/`ItoM_SF_E` subtractions use, plus the M and SF_E lookups.
+const SKX_MEM_IO_2HIT_CHA_EVENT_GROUPS: [ChaEventGroup; 6] = [
+    ChaEventGroup::tor(ChaTorOpcode::ItoM),
+    ChaEventGroup::tor(ChaTorOpcode::Rfo),
+    ChaEventGroup::tor(ChaTorOpcode::RdCur),
+    ChaEventGroup::tor(ChaTorOpcode::WbMtoI),
+    ChaEventGroup::llc_lookup(ChaCacheState::M),
+    ChaEventGroup::llc_lookup(ChaCacheState::SfE),
+];
+
+/// mem-io limited/special way experiments (E2, E3): ItoM hit rate only.
+const SKX_MEM_IO_ITOM_CHA_EVENT_GROUPS: [ChaEventGroup; 1] =
+    [ChaEventGroup::tor(ChaTorOpcode::ItoM)];
+
+/// mem-io BASIC metric list (E6-E10): the twelve groups of peacock 3565bd2,
+/// in its order, so each group gets the same time slice as the original.
+const SKX_MEM_IO_BASIC_CHA_EVENT_GROUPS: [ChaEventGroup; 12] = [
+    ChaEventGroup::eviction(),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IoPciRdCur,
+        ChaTransactionResult::Hit,
+        ChaRequestSource::Io,
+        0x21e,
+    ),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IoPciRdCur,
+        ChaTransactionResult::Miss,
+        ChaRequestSource::Io,
+        0x21e,
+    ),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IoItoM,
+        ChaTransactionResult::Hit,
+        ChaRequestSource::Io,
+        0x248,
+    ),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IoItoM,
+        ChaTransactionResult::Miss,
+        ChaRequestSource::Io,
+        0x248,
+    ),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IoWbMtoI,
+        ChaTransactionResult::Hit,
+        ChaRequestSource::Io,
+        0x244,
+    ),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IoItoMCacheNear,
+        ChaTransactionResult::Hit,
+        ChaRequestSource::Io,
+        0x200,
+    ),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IoItoMCacheNear,
+        ChaTransactionResult::Miss,
+        ChaRequestSource::Io,
+        0x200,
+    ),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IaDrd,
+        ChaTransactionResult::Hit,
+        ChaRequestSource::Ia,
+        0x202,
+    ),
+    ChaEventGroup::transaction(
+        ChaTransactionKind::IaDrd,
+        ChaTransactionResult::Miss,
+        ChaRequestSource::Ia,
+        0x202,
+    ),
+    ChaEventGroup::llc_victims(),
+    ChaEventGroup::ha_requests(),
+];
+
+fn skx_cha_event_groups(profile: EventProfile) -> &'static [ChaEventGroup] {
+    match profile {
+        EventProfile::Default => &SKX_CHA_EVENT_GROUPS,
+        EventProfile::MemIo2Hit => &SKX_MEM_IO_2HIT_CHA_EVENT_GROUPS,
+        EventProfile::MemIoBasic => &SKX_MEM_IO_BASIC_CHA_EVENT_GROUPS,
+        EventProfile::MemIoItom => &SKX_MEM_IO_ITOM_CHA_EVENT_GROUPS,
+    }
+}
+
+pub(crate) fn event_group_count(profile: EventProfile) -> usize {
+    skx_cha_event_groups(profile).len()
+}
 
 #[derive(Clone, Copy, Debug)]
 struct ChaUnitReading {
@@ -702,8 +888,16 @@ struct ChaTransactionScopeMetrics {
     totals: Vec<ChaTransactionMetrics>,
 }
 
+/// How long one CHA event group counted during a sample.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ChaEventGroupTiming {
+    pub group: String,
+    pub running_seconds: f64,
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct SkxChaMetrics {
+    pub event_groups: Vec<ChaEventGroupTiming>,
     pub evictions: Vec<ChaEvictionMetrics>,
     pub ha_requests: Vec<ChaHaRequestMetrics>,
     pub llc_lookups: Vec<ChaLlcLookupMetrics>,
@@ -711,16 +905,50 @@ pub struct SkxChaMetrics {
     pub no_credits: Vec<ChaNoCreditMetrics>,
     pub request_queues: Vec<ChaRequestQueueMetrics>,
     pub rxc: Vec<ChaRxcMetrics>,
+    pub sample_window_seconds: f64,
     pub scopes: Vec<ChaScopeMetrics>,
     pub sf_evictions: Vec<ChaSfEvictionMetrics>,
+    pub tor_inserts: Vec<ChaTorInsertMetrics>,
     pub transaction_results: Vec<ChaTransactionResultMetrics>,
     pub transactions: Vec<ChaTransactionMetrics>,
 }
 
 impl SkxChaMetrics {
+    /// Derives the metrics of the event groups in `groups`. Metrics whose
+    /// groups are not in the profile are omitted; a measurement missing from
+    /// a group that is in the profile is still an error.
     fn from_measurements(
+        groups: &[ChaEventGroup],
         measurements: BTreeMap<UncoreScope, BTreeMap<ChaEventKind, ChaEventMeasurement>>,
+        event_groups: Vec<ChaEventGroupTiming>,
+        sample_window: Duration,
     ) -> Result<Self, String> {
+        let measured = measured_event_kinds(groups);
+        let lookup_states = LLC_LOOKUP_STATES
+            .into_iter()
+            .filter(|&state| {
+                measured.contains(&ChaEventKind::LlcLookup(state, ChaLookupOperation::Any))
+            })
+            .collect::<Vec<_>>();
+        let request_queue_sources = [ChaRequestSource::Ia, ChaRequestSource::Io]
+            .into_iter()
+            .filter(|&source| measured.contains(&ChaEventKind::RequestQueueOccupancy(source)))
+            .collect::<Vec<_>>();
+        let rxc_queues = [ChaRxcQueue::Irq, ChaRxcQueue::Prq]
+            .into_iter()
+            .filter(|&queue| measured.contains(&ChaEventKind::RxcOccupancy(queue)))
+            .collect::<Vec<_>>();
+        let tor_opcodes = CHA_TOR_OPCODES
+            .into_iter()
+            .filter(|&opcode| {
+                measured.contains(&ChaEventKind::TorInsert(
+                    opcode,
+                    ChaRequestSource::Io,
+                    ChaTorResult::All,
+                ))
+            })
+            .collect::<Vec<_>>();
+
         let mut evictions = Vec::new();
         let mut ha_requests = Vec::new();
         let mut llc_lookups = Vec::new();
@@ -730,41 +958,72 @@ impl SkxChaMetrics {
         let mut rxc = Vec::new();
         let mut scopes = Vec::with_capacity(measurements.len());
         let mut sf_evictions = Vec::new();
+        let mut tor_inserts = Vec::new();
         let mut transaction_results = Vec::new();
         let mut transactions = Vec::new();
 
         for (scope, scope_measurements) in measurements {
-            let eviction_clockticks =
-                required_measurement(&scope_measurements, ChaEventKind::EvictionClockticks)?;
-            scopes.push(ChaScopeMetrics {
-                frequency_hz: frequency_hz(eviction_clockticks.value, eviction_clockticks.running),
-                scope,
-            });
-
-            evictions.push(eviction_metrics(scope, &scope_measurements)?);
-            ha_requests.push(ha_request_metrics(scope, &scope_measurements)?);
-            llc_lookups.extend(llc_lookup_metrics(scope, &scope_measurements)?);
-            llc_victims.extend(llc_victim_metrics(
+            if measured.contains(&ChaEventKind::EvictionClockticks) {
+                let eviction_clockticks =
+                    required_measurement(&scope_measurements, ChaEventKind::EvictionClockticks)?;
+                scopes.push(ChaScopeMetrics {
+                    frequency_hz: frequency_hz(
+                        eviction_clockticks.value,
+                        eviction_clockticks.running,
+                    ),
+                    scope,
+                });
+                evictions.push(eviction_metrics(scope, &scope_measurements)?);
+            }
+            if measured.contains(&ChaEventKind::HaRequest(
+                ChaHaRequestLocality::Local,
+                ChaRequestOperation::Read,
+            )) {
+                ha_requests.push(ha_request_metrics(scope, &scope_measurements)?);
+            }
+            llc_lookups.extend(llc_lookup_metrics_for_states(
                 scope,
                 &scope_measurements,
-                &[
-                    ChaCacheState::M,
-                    ChaCacheState::E,
-                    ChaCacheState::S,
-                    ChaCacheState::F,
-                ],
+                &lookup_states,
             )?);
-            no_credits.extend(no_credit_metrics(scope, &scope_measurements)?);
-            request_queues.extend(request_queue_metrics(scope, &scope_measurements)?);
-            rxc.extend(rxc_metrics(scope, &scope_measurements)?);
-            sf_evictions.extend(sf_eviction_metrics(scope, &scope_measurements)?);
+            if measured.contains(&ChaEventKind::LlcVictim(ChaCacheState::M)) {
+                llc_victims.extend(llc_victim_metrics(
+                    scope,
+                    &scope_measurements,
+                    &[
+                        ChaCacheState::M,
+                        ChaCacheState::E,
+                        ChaCacheState::S,
+                        ChaCacheState::F,
+                    ],
+                )?);
+            }
+            if measured.contains(&ChaEventKind::NoCreditsClockticks) {
+                no_credits.extend(no_credit_metrics(scope, &scope_measurements)?);
+            }
+            request_queues.extend(request_queue_metrics(
+                scope,
+                &scope_measurements,
+                &request_queue_sources,
+            )?);
+            rxc.extend(rxc_metrics(scope, &scope_measurements, &rxc_queues)?);
+            if measured.contains(&ChaEventKind::SfEviction(ChaCacheState::M)) {
+                sf_evictions.extend(sf_eviction_metrics(scope, &scope_measurements)?);
+            }
+            tor_inserts.extend(tor_insert_metrics(
+                scope,
+                &scope_measurements,
+                &tor_opcodes,
+            )?);
 
-            let transaction_scope_metrics = transaction_metrics(scope, &scope_measurements)?;
+            let transaction_scope_metrics =
+                transaction_metrics(scope, &scope_measurements, &measured)?;
             transaction_results.extend(transaction_scope_metrics.results);
             transactions.extend(transaction_scope_metrics.totals);
         }
 
         Ok(Self {
+            event_groups,
             evictions,
             ha_requests,
             llc_lookups,
@@ -772,16 +1031,45 @@ impl SkxChaMetrics {
             no_credits,
             request_queues,
             rxc,
+            sample_window_seconds: sample_window.as_secs_f64(),
             scopes,
             sf_evictions,
+            tor_inserts,
             transaction_results,
             transactions,
         })
     }
 }
 
+fn measured_event_kinds(groups: &[ChaEventGroup]) -> BTreeSet<ChaEventKind> {
+    groups
+        .iter()
+        .flat_map(|group| group.events)
+        .map(|event| event.kind)
+        .filter(|&kind| kind != ChaEventKind::Unused)
+        .collect()
+}
+
+fn event_group_timings(
+    groups: &[ChaEventGroup],
+    group_running: &BTreeMap<ChaGroupId, Duration>,
+) -> Vec<ChaEventGroupTiming> {
+    groups
+        .iter()
+        .map(|group| ChaEventGroupTiming {
+            group: group.id.label(),
+            running_seconds: group_running
+                .get(&group.id)
+                .copied()
+                .unwrap_or_default()
+                .as_secs_f64(),
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 pub struct SkxChaCollector {
+    groups: &'static [ChaEventGroup],
     multiplex_mode: ChaMultiplexMode,
     next_group: usize,
     next_partition_offset: usize,
@@ -795,6 +1083,7 @@ impl SkxChaCollector {
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
+            groups: &SKX_CHA_EVENT_GROUPS,
             multiplex_mode: ChaMultiplexMode::default(),
             next_group: 0,
             next_partition_offset: 0,
@@ -809,6 +1098,11 @@ impl SkxChaCollector {
             architecture.intel_server_model(),
             IntelServerCpuModel::SkylakeXeon
         )
+    }
+
+    pub fn set_event_profile(&mut self, profile: EventProfile) {
+        self.groups = skx_cha_event_groups(profile);
+        self.next_group = 0;
     }
 
     pub fn set_request_locality(&mut self, locality: ChaRequestLocality) {
@@ -835,6 +1129,8 @@ impl SkxChaCollector {
 
         let slices = self.schedule(interval);
         let measured_slice_count = slices.len();
+        let mut group_running = BTreeMap::<ChaGroupId, Duration>::new();
+        let window_started_at = Instant::now();
 
         for slice in slices {
             program_packages(packages, slice, self.request_locality)?;
@@ -843,24 +1139,27 @@ impl SkxChaCollector {
             unfreeze_packages(packages)?;
             tokio::time::sleep(slice.duration).await;
             freeze_packages(packages)?;
+            let running = started_at.elapsed();
 
-            read_packages(
-                packages,
-                interval,
-                started_at.elapsed(),
-                slice,
-                &mut measurements,
-            )?;
+            for group in slice.groups.into_iter().flatten() {
+                *group_running.entry(group.id).or_default() += running;
+            }
+            read_packages(packages, interval, running, slice, &mut measurements)?;
         }
 
+        let sample_window = window_started_at.elapsed();
         self.rotate_schedule(measured_slice_count);
 
-        SkxChaMetrics::from_measurements(measurements.into_measurements())
+        SkxChaMetrics::from_measurements(
+            self.groups,
+            measurements.into_measurements(),
+            event_group_timings(self.groups, &group_running),
+            sample_window,
+        )
     }
 
     fn rotate_schedule(&mut self, measured_slice_count: usize) {
-        self.next_group =
-            (self.next_group + self.multiplex_mode.partitions()) % SKX_CHA_EVENT_GROUPS.len();
+        self.next_group = (self.next_group + self.multiplex_mode.partitions()) % self.groups.len();
         self.next_partition_offset = self
             .next_partition_offset
             .wrapping_add(measured_slice_count);
@@ -872,7 +1171,7 @@ impl SkxChaCollector {
     }
 
     fn schedule(&self, interval: Duration) -> Vec<ChaMeasurementSlice> {
-        let group_count = SKX_CHA_EVENT_GROUPS.len();
+        let group_count = self.groups.len();
         let partitions = self.multiplex_mode.partitions();
         let slice_count_per_round = group_count.div_ceil(partitions);
         let round_count = measurement_round_count(interval, slice_count_per_round);
@@ -911,7 +1210,7 @@ impl SkxChaCollector {
             let group_offset = first_group_offset + partition;
             if group_offset < group_count {
                 let group_index = (self.next_group + group_offset) % group_count;
-                *group = Some(SKX_CHA_EVENT_GROUPS[group_index]);
+                *group = Some(self.groups[group_index]);
             }
         }
 
@@ -1109,6 +1408,34 @@ impl ChaStateLabels {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
+struct ChaEventGroupLabels {
+    group: String,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
+struct ChaTorInsertLabels {
+    die: String,
+    die_group: String,
+    opcode: String,
+    package: String,
+    result: String,
+    source: String,
+}
+
+impl ChaTorInsertLabels {
+    fn from_metric(metric: ChaTorInsertMetrics) -> Self {
+        Self {
+            die: topology_label(metric.scope.die_id),
+            die_group: topology_label(metric.scope.die_group_id),
+            opcode: metric.opcode.label().to_string(),
+            package: metric.scope.package_id.to_string(),
+            result: metric.result.label().to_string(),
+            source: metric.source.label().to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct ChaTransactionLabels {
     die: String,
     die_group: String,
@@ -1154,6 +1481,7 @@ pub struct SkxChaPrometheusMetrics {
     eviction_latency_seconds: Family<ChaScopeLabels, Gauge<f64, AtomicU64>>,
     eviction_occupancy_entries: Family<ChaScopeLabels, Gauge<f64, AtomicU64>>,
     frequency_hz: Family<ChaScopeLabels, Gauge<f64, AtomicU64>>,
+    group_running_seconds: Family<ChaEventGroupLabels, Gauge<f64, AtomicU64>>,
     ha_request_bandwidth_bytes_per_second:
         Family<ChaHaRequestBandwidthLabels, Gauge<f64, AtomicU64>>,
     ha_request_local_ratio: Family<ChaHaRequestRatioLabels, Gauge<f64, AtomicU64>>,
@@ -1164,7 +1492,9 @@ pub struct SkxChaPrometheusMetrics {
     rxc_inserts_per_second: Family<ChaRxcLabels, Gauge<f64, AtomicU64>>,
     rxc_latency_seconds: Family<ChaRxcLabels, Gauge<f64, AtomicU64>>,
     rxc_occupancy_entries: Family<ChaRxcLabels, Gauge<f64, AtomicU64>>,
+    sample_window_seconds: Gauge<f64, AtomicU64>,
     sf_eviction_bytes_per_second: Family<ChaStateLabels, Gauge<f64, AtomicU64>>,
+    tor_inserts_per_second: Family<ChaTorInsertLabels, Gauge<f64, AtomicU64>>,
     transaction_bandwidth_bytes_per_second: Family<ChaTransactionLabels, Gauge<f64, AtomicU64>>,
     transaction_hit_rate: Family<ChaTransactionLabels, Gauge<f64, AtomicU64>>,
     transaction_latency_seconds: Family<ChaTransactionLabels, Gauge<f64, AtomicU64>>,
@@ -1184,6 +1514,7 @@ impl SkxChaPrometheusMetrics {
             eviction_latency_seconds: Family::<ChaScopeLabels, Gauge<f64, AtomicU64>>::default(),
             eviction_occupancy_entries: Family::<ChaScopeLabels, Gauge<f64, AtomicU64>>::default(),
             frequency_hz: Family::<ChaScopeLabels, Gauge<f64, AtomicU64>>::default(),
+            group_running_seconds: Family::<ChaEventGroupLabels, Gauge<f64, AtomicU64>>::default(),
             ha_request_bandwidth_bytes_per_second: Family::<
                 ChaHaRequestBandwidthLabels,
                 Gauge<f64, AtomicU64>,
@@ -1199,8 +1530,10 @@ impl SkxChaPrometheusMetrics {
             rxc_inserts_per_second: Family::<ChaRxcLabels, Gauge<f64, AtomicU64>>::default(),
             rxc_latency_seconds: Family::<ChaRxcLabels, Gauge<f64, AtomicU64>>::default(),
             rxc_occupancy_entries: Family::<ChaRxcLabels, Gauge<f64, AtomicU64>>::default(),
+            sample_window_seconds: Gauge::<f64, AtomicU64>::default(),
             sf_eviction_bytes_per_second: Family::<ChaStateLabels, Gauge<f64, AtomicU64>>::default(
             ),
+            tor_inserts_per_second: Family::<ChaTorInsertLabels, Gauge<f64, AtomicU64>>::default(),
             transaction_bandwidth_bytes_per_second: Family::<
                 ChaTransactionLabels,
                 Gauge<f64, AtomicU64>,
@@ -1245,6 +1578,11 @@ impl SkxChaPrometheusMetrics {
             "ocellus_cha_frequency_hz",
             "Interval-derived CHA clock frequency in hertz",
             metrics.frequency_hz.clone(),
+        );
+        registry.register(
+            "ocellus_cha_group_running_seconds",
+            "Time each CHA event group counted during the last sample in seconds; divide by ocellus_cha_sample_window_seconds for its duty cycle",
+            metrics.group_running_seconds.clone(),
         );
         registry.register(
             "ocellus_cha_ha_request_bandwidth_bytes_per_second",
@@ -1292,9 +1630,19 @@ impl SkxChaPrometheusMetrics {
             metrics.rxc_occupancy_entries.clone(),
         );
         registry.register(
+            "ocellus_cha_sample_window_seconds",
+            "Wall time the last CHA sample took in seconds, including programming",
+            metrics.sample_window_seconds.clone(),
+        );
+        registry.register(
             "ocellus_cha_sf_eviction_bytes_per_second",
             "Interval-derived CHA snoop filter eviction bandwidth in bytes per second",
             metrics.sf_eviction_bytes_per_second.clone(),
+        );
+        registry.register(
+            "ocellus_cha_tor_inserts_per_second",
+            "Interval-derived CHA TOR inserts per second by opcode; the four counts of one opcode share a time slice",
+            metrics.tor_inserts_per_second.clone(),
         );
         registry.register(
             "ocellus_cha_transaction_bandwidth_bytes_per_second",
@@ -1338,6 +1686,22 @@ impl SkxChaPrometheusMetrics {
     }
 
     pub fn update(&self, metrics: SkxChaMetrics) {
+        for timing in metrics.event_groups {
+            self.group_running_seconds
+                .get_or_create(&ChaEventGroupLabels {
+                    group: timing.group,
+                })
+                .set(timing.running_seconds);
+        }
+        self.sample_window_seconds
+            .set(metrics.sample_window_seconds);
+
+        for metric in metrics.tor_inserts {
+            self.tor_inserts_per_second
+                .get_or_create(&ChaTorInsertLabels::from_metric(metric))
+                .set(metric.inserts_per_second);
+        }
+
         for scope in metrics.scopes {
             self.frequency_hz
                 .get_or_create(&ChaScopeLabels::from_scope(scope.scope))
@@ -1652,10 +2016,11 @@ fn no_credit_metrics(
 fn request_queue_metrics(
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+    sources: &[ChaRequestSource],
 ) -> Result<Vec<ChaRequestQueueMetrics>, String> {
     let mut metrics = Vec::new();
 
-    for source in [ChaRequestSource::Ia, ChaRequestSource::Io] {
+    for &source in sources {
         metrics.push(ChaRequestQueueMetrics {
             occupancy_entries: ratio(
                 scale_measurement_value(required_measurement(
@@ -1678,10 +2043,11 @@ fn request_queue_metrics(
 fn rxc_metrics(
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+    queues: &[ChaRxcQueue],
 ) -> Result<Vec<ChaRxcMetrics>, String> {
     let mut metrics = Vec::new();
 
-    for queue in [ChaRxcQueue::Irq, ChaRxcQueue::Prq] {
+    for &queue in queues {
         let clockticks = required_measurement(measurements, ChaEventKind::RxcClockticks(queue))?;
         let inserts = required_measurement(measurements, ChaEventKind::RxcInsert(queue))?;
         let occupancy = required_measurement(measurements, ChaEventKind::RxcOccupancy(queue))?;
@@ -1726,14 +2092,72 @@ fn sf_eviction_metrics(
     Ok(metrics)
 }
 
+fn tor_insert_metrics(
+    scope: UncoreScope,
+    measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+    opcodes: &[ChaTorOpcode],
+) -> Result<Vec<ChaTorInsertMetrics>, String> {
+    let mut metrics = Vec::new();
+
+    for &opcode in opcodes {
+        for source in [ChaRequestSource::Io, ChaRequestSource::Ia] {
+            for result in [ChaTorResult::All, ChaTorResult::Miss] {
+                metrics.push(ChaTorInsertMetrics {
+                    inserts_per_second: event_rate(required_measurement(
+                        measurements,
+                        ChaEventKind::TorInsert(opcode, source, result),
+                    )?),
+                    opcode,
+                    result,
+                    scope,
+                    source,
+                });
+            }
+        }
+    }
+
+    Ok(metrics)
+}
+
+/// Transaction results for every (transaction, result) group in `measured`,
+/// and the hit/miss totals for transactions that measure both.
 fn transaction_metrics(
     scope: UncoreScope,
     measurements: &BTreeMap<ChaEventKind, ChaEventMeasurement>,
+    measured: &BTreeSet<ChaEventKind>,
 ) -> Result<ChaTransactionScopeMetrics, String> {
     let mut results = Vec::new();
     let mut totals = Vec::new();
 
     for transaction in CHA_TRANSACTIONS {
+        let measures = |result| {
+            measured.contains(&ChaEventKind::TransactionInsert(
+                transaction.label(),
+                result,
+            ))
+        };
+        match (
+            measures(ChaTransactionResult::Hit),
+            measures(ChaTransactionResult::Miss),
+        ) {
+            (true, true) => {}
+            (false, false) => continue,
+            (hit, _) => {
+                let result = if hit {
+                    ChaTransactionResult::Hit
+                } else {
+                    ChaTransactionResult::Miss
+                };
+                results.push(transaction_result_metrics(
+                    scope,
+                    measurements,
+                    transaction,
+                    result,
+                )?);
+                continue;
+            }
+        }
+
         let hit = transaction_result_metrics(
             scope,
             measurements,
@@ -1981,9 +2405,13 @@ mod tests {
     #[test]
     fn computes_cha_metrics() {
         let scope = test_scope();
-        let metrics =
-            SkxChaMetrics::from_measurements(BTreeMap::from([(scope, test_measurements())]))
-                .unwrap();
+        let metrics = SkxChaMetrics::from_measurements(
+            &SKX_CHA_EVENT_GROUPS,
+            BTreeMap::from([(scope, test_measurements())]),
+            Vec::new(),
+            Duration::from_secs(1),
+        )
+        .unwrap();
 
         assert_eq!(metrics.scopes[0].frequency_hz, 10_000.0);
         assert_eq!(metrics.evictions[0].bandwidth_bytes_per_second, 128_000.0);
@@ -2281,6 +2709,244 @@ mod tests {
         assert_eq!(SKX_CHA_EVENT_GROUPS.len(), SKX_CHA_EVENT_GROUP_COUNT);
     }
 
+    const PROFILES: [EventProfile; 4] = [
+        EventProfile::Default,
+        EventProfile::MemIo2Hit,
+        EventProfile::MemIoBasic,
+        EventProfile::MemIoItom,
+    ];
+
+    #[test]
+    fn sizes_event_profiles() {
+        assert_eq!(event_group_count(EventProfile::Default), 37);
+        assert_eq!(event_group_count(EventProfile::MemIo2Hit), 6);
+        assert_eq!(event_group_count(EventProfile::MemIoBasic), 12);
+        assert_eq!(event_group_count(EventProfile::MemIoItom), 1);
+    }
+
+    #[test]
+    fn gives_every_group_of_a_profile_a_unique_id() {
+        for profile in PROFILES {
+            let groups = skx_cha_event_groups(profile);
+            let ids = groups.iter().map(|group| group.id).collect::<BTreeSet<_>>();
+
+            assert_eq!(ids.len(), groups.len(), "{profile:?}");
+        }
+    }
+
+    #[test]
+    fn orders_mem_io_groups_like_the_spec() {
+        let ids = |profile| {
+            skx_cha_event_groups(profile)
+                .iter()
+                .map(|group| group.id.label())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            ids(EventProfile::MemIo2Hit),
+            [
+                "tor_itom",
+                "tor_rfo",
+                "tor_rdcur",
+                "tor_wbmtoi",
+                "llc_lookup_m",
+                "llc_lookup_sf_e",
+            ]
+        );
+        assert_eq!(ids(EventProfile::MemIoItom), ["tor_itom"]);
+        // peacock 3565bd2 order: Eviction, PCIe Read Hit/Miss, Full Write
+        // Hit/Miss, Writeback, Partial Write Hit/Miss, DRD Hit/Miss, LLC
+        // Victims, HA Request.
+        assert_eq!(
+            ids(EventProfile::MemIoBasic),
+            [
+                "eviction",
+                "trx_io_pcirdcur_hit",
+                "trx_io_pcirdcur_miss",
+                "trx_io_itom_hit",
+                "trx_io_itom_miss",
+                "trx_io_wbmtoi_hit",
+                "trx_io_itomcachenear_hit",
+                "trx_io_itomcachenear_miss",
+                "trx_ia_drd_hit",
+                "trx_ia_drd_miss",
+                "llc_victims",
+                "ha_requests",
+            ]
+        );
+    }
+
+    #[test]
+    fn encodes_tor_insert_groups() {
+        for (opcode, value) in [
+            (ChaTorOpcode::ItoM, 0x248),
+            (ChaTorOpcode::Rfo, 0x200),
+            (ChaTorOpcode::RdCur, 0x21e),
+            (ChaTorOpcode::WbMtoI, 0x244),
+        ] {
+            let group = ChaEventGroup::tor(opcode);
+
+            assert_eq!(group.filter0, ChaFilter0::none());
+            assert_eq!(group.filter1, ChaFilter1::total_opcode(value));
+            assert_eq!(
+                group.events.map(|event| (event.event, event.umask)),
+                [(0x35, 0x34), (0x35, 0x24), (0x35, 0x31), (0x35, 0x21)]
+            );
+        }
+
+        // peacock programs TOR groups with filter1 (opc << 9) | 0x32.
+        assert_eq!(
+            programmed_filter1(
+                ChaEventGroup::tor(ChaTorOpcode::ItoM),
+                ChaRequestLocality::Local
+            ),
+            (0x248 << 9) | 0x32
+        );
+    }
+
+    #[test]
+    fn schedules_every_mem_io_group_equally_within_one_second() {
+        for (profile, rounds) in [
+            (EventProfile::MemIo2Hit, 2),
+            (EventProfile::MemIoBasic, 1),
+            (EventProfile::MemIoItom, 10),
+        ] {
+            let mut collector = test_collector();
+            collector.set_event_profile(profile);
+            let groups = skx_cha_event_groups(profile);
+            let slices = collector.schedule(Duration::from_secs(1));
+            let slice_duration = Duration::from_secs(1).div_f64(slices.len() as f64);
+
+            assert_eq!(slices.len(), groups.len() * rounds, "{profile:?}");
+            assert!(slices.iter().all(|slice| slice.duration == slice_duration));
+            let scheduled = slice_groups(slices);
+            for group in groups {
+                assert_eq!(
+                    scheduled
+                        .iter()
+                        .filter(|slice| slice.id == group.id)
+                        .count(),
+                    rounds,
+                    "{profile:?} {:?}",
+                    group.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn computes_only_mem_io_2hit_metrics() {
+        let groups = skx_cha_event_groups(EventProfile::MemIo2Hit);
+        let metrics = SkxChaMetrics::from_measurements(
+            groups,
+            BTreeMap::from([(test_scope(), measurements_for(groups))]),
+            event_group_timings(groups, &BTreeMap::new()),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        assert_eq!(metrics.tor_inserts.len(), 4 * 2 * 2);
+        assert!(
+            metrics
+                .tor_inserts
+                .iter()
+                .all(|metric| metric.inserts_per_second == 1_000.0)
+        );
+        assert_eq!(metrics.llc_lookups.len(), 2 * 4);
+        assert!(
+            metrics
+                .llc_lookups
+                .iter()
+                .all(|metric| matches!(metric.state, ChaCacheState::M | ChaCacheState::SfE))
+        );
+        assert_eq!(metrics.event_groups.len(), 6);
+        assert!(metrics.scopes.is_empty());
+        assert!(metrics.evictions.is_empty());
+        assert!(metrics.ha_requests.is_empty());
+        assert!(metrics.llc_victims.is_empty());
+        assert!(metrics.no_credits.is_empty());
+        assert!(metrics.request_queues.is_empty());
+        assert!(metrics.rxc.is_empty());
+        assert!(metrics.sf_evictions.is_empty());
+        assert!(metrics.transaction_results.is_empty());
+        assert!(metrics.transactions.is_empty());
+    }
+
+    #[test]
+    fn computes_mem_io_basic_metrics() {
+        let groups = skx_cha_event_groups(EventProfile::MemIoBasic);
+        let metrics = SkxChaMetrics::from_measurements(
+            groups,
+            BTreeMap::from([(test_scope(), measurements_for(groups))]),
+            Vec::new(),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        assert_eq!(metrics.scopes.len(), 1);
+        assert_eq!(metrics.evictions.len(), 1);
+        assert_eq!(metrics.ha_requests.len(), 1);
+        assert_eq!(metrics.llc_victims.len(), 4);
+        // Writeback measures only its hit group, so it has no total.
+        assert_eq!(metrics.transaction_results.len(), 9);
+        assert_eq!(
+            metrics
+                .transactions
+                .iter()
+                .map(|metric| metric.transaction.as_str())
+                .collect::<Vec<_>>(),
+            ["io_pcirdcur", "io_itom", "io_itomcachenear", "ia_drd"]
+        );
+        assert!(metrics.tor_inserts.is_empty());
+        assert!(metrics.llc_lookups.is_empty());
+        assert!(metrics.no_credits.is_empty());
+        assert!(metrics.request_queues.is_empty());
+        assert!(metrics.rxc.is_empty());
+        assert!(metrics.sf_evictions.is_empty());
+    }
+
+    #[test]
+    fn rejects_missing_measurement_of_a_profile_group() {
+        let groups = skx_cha_event_groups(EventProfile::MemIoItom);
+        let mut measurements = measurements_for(groups);
+        measurements.remove(&ChaEventKind::TorInsert(
+            ChaTorOpcode::ItoM,
+            ChaRequestSource::Io,
+            ChaTorResult::Miss,
+        ));
+
+        assert!(
+            SkxChaMetrics::from_measurements(
+                groups,
+                BTreeMap::from([(test_scope(), measurements)]),
+                Vec::new(),
+                Duration::from_secs(1),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn reports_running_time_of_every_profile_group() {
+        let timings = event_group_timings(
+            skx_cha_event_groups(EventProfile::MemIo2Hit),
+            &BTreeMap::from([(
+                ChaGroupId::Tor(ChaTorOpcode::ItoM),
+                Duration::from_millis(160),
+            )]),
+        );
+
+        assert_eq!(timings.len(), 6);
+        assert_eq!(timings[0].group, "tor_itom");
+        assert_eq!(timings[0].running_seconds, 0.16);
+        assert!(
+            timings[1..]
+                .iter()
+                .all(|timing| timing.running_seconds == 0.0)
+        );
+    }
+
     #[test]
     fn filters_local_and_remote_requests_by_default() {
         let itom = ChaEventGroup::transaction(
@@ -2477,6 +3143,13 @@ mod tests {
         )
     }
 
+    fn measurements_for(groups: &[ChaEventGroup]) -> BTreeMap<ChaEventKind, ChaEventMeasurement> {
+        measured_event_kinds(groups)
+            .into_iter()
+            .map(|kind| measurement(kind, 100, 100))
+            .collect()
+    }
+
     fn slice_groups(slices: Vec<ChaMeasurementSlice>) -> Vec<ChaEventGroup> {
         slices
             .into_iter()
@@ -2554,6 +3227,7 @@ mod tests {
 
     fn test_collector_with_units(unit_count: usize) -> SkxChaCollector {
         SkxChaCollector {
+            groups: &SKX_CHA_EVENT_GROUPS,
             multiplex_mode: ChaMultiplexMode::default(),
             next_group: 0,
             next_partition_offset: 0,

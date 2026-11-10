@@ -636,6 +636,8 @@ const SPR_EMR_CHA_TRANSACTIONS: [SprChaTransactionSpec; 11] = [
     SprChaTransactionSpec::direct_hit_miss(SprChaTransaction::IoClFlush),
 ];
 
+pub(crate) const EVENT_GROUP_COUNT: usize = SPR_EMR_CHA_EVENT_GROUPS.len();
+
 const SPR_EMR_CHA_EVENT_GROUPS: [SprChaEventGroup; 36] = [
     SprChaEventGroup::frequency(),
     SprChaEventGroup::ha_requests(),

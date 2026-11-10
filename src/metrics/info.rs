@@ -6,6 +6,9 @@ use crate::metrics::InfoMetadata;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct CollectorInfoLabels {
+    event_profile: String,
+    cha_group_count: String,
+    cha_multiplex_mode: String,
     cha_request_locality: String,
     cha_supported: String,
     iio_supported: String,
@@ -59,6 +62,12 @@ pub fn register(registry: &mut Registry, metadata: InfoMetadata) {
         .set(1);
     collector_info
         .get_or_create(&CollectorInfoLabels {
+            event_profile: metadata.collectors.event_profile.label().to_string(),
+            cha_group_count: metadata
+                .collectors
+                .cha_group_count
+                .map_or_else(|| "unknown".to_string(), |count| count.to_string()),
+            cha_multiplex_mode: metadata.collectors.cha_multiplex_mode.label().to_string(),
             cha_request_locality: metadata.collectors.cha_request_locality.label().to_string(),
             cha_supported: metadata.collectors.cha_supported.to_string(),
             iio_supported: metadata.collectors.iio_supported.to_string(),

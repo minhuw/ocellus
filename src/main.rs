@@ -43,6 +43,28 @@ impl ChaRequestLocalityConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum EventProfileConfig {
+    Default,
+    #[value(name = "mem-io-2hit")]
+    MemIo2Hit,
+    #[value(name = "mem-io-basic")]
+    MemIoBasic,
+    #[value(name = "mem-io-itom")]
+    MemIoItom,
+}
+
+impl EventProfileConfig {
+    fn to_metric_profile(self) -> metrics::EventProfile {
+        match self {
+            Self::Default => metrics::EventProfile::Default,
+            Self::MemIo2Hit => metrics::EventProfile::MemIo2Hit,
+            Self::MemIoBasic => metrics::EventProfile::MemIoBasic,
+            Self::MemIoItom => metrics::EventProfile::MemIoItom,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Config {
@@ -93,6 +115,14 @@ struct Config {
         help = "CHA requester locality to count (Skylake-SP only)"
     )]
     cha_request_locality: ChaRequestLocalityConfig,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = EventProfileConfig::Default,
+        help = "CHA and IMC event groups to measure; mem-io profiles need Skylake-SP and temporal CHA multiplexing"
+    )]
+    event_profile: EventProfileConfig,
 }
 
 impl Config {
@@ -120,6 +150,19 @@ impl Config {
     fn cha_request_locality(&self) -> metrics::cha::ChaRequestLocality {
         self.cha_request_locality.to_metric_locality()
     }
+
+    fn event_profile(&self) -> metrics::EventProfile {
+        self.event_profile.to_metric_profile()
+    }
+
+    fn sampler_config(&self) -> runtime::sampler::SamplerConfig {
+        runtime::sampler::SamplerConfig {
+            measure_interval: self.measure_interval(),
+            event_profile: self.event_profile(),
+            cha_multiplex_mode: self.cha_multiplex_mode(),
+            cha_request_locality: self.cha_request_locality(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -131,13 +174,11 @@ async fn run(config: Config) -> Result<(), String> {
     let architecture = arch::Architecture::detect()?;
     metrics::tsc::preflight_permissions(&architecture)?;
 
-    let measure_interval = config.measure_interval();
-    let sampler = runtime::sampler::spawn(
-        measure_interval,
-        architecture,
-        config.cha_multiplex_mode(),
-        config.cha_request_locality(),
-    );
+    config
+        .event_profile()
+        .validate(&architecture, config.cha_multiplex_mode())?;
+
+    let sampler = runtime::sampler::spawn(config.sampler_config(), architecture);
 
     runtime::run(config.runtime_mode(), sampler).await
 }
@@ -174,5 +215,26 @@ mod tests {
             config.cha_request_locality(),
             metrics::cha::ChaRequestLocality::Local
         );
+    }
+
+    #[test]
+    fn defaults_to_default_event_profile() {
+        let config = Config::parse_from(["ocellus"]);
+
+        assert_eq!(config.event_profile(), metrics::EventProfile::Default);
+    }
+
+    #[test]
+    fn parses_mem_io_event_profiles() {
+        for (name, profile) in [
+            ("mem-io-2hit", metrics::EventProfile::MemIo2Hit),
+            ("mem-io-basic", metrics::EventProfile::MemIoBasic),
+            ("mem-io-itom", metrics::EventProfile::MemIoItom),
+        ] {
+            let config = Config::parse_from(["ocellus", "--event-profile", name]);
+
+            assert_eq!(config.event_profile(), profile);
+            assert_eq!(profile.label(), name);
+        }
     }
 }

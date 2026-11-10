@@ -14,6 +14,67 @@ pub mod uncore;
 use prometheus_client::registry::Registry;
 use serde::Serialize;
 
+use crate::arch::{Architecture, IntelServerCpuModel};
+
+/// Which fixed set of CHA and IMC event groups the collectors measure.
+///
+/// `Default` measures every group Ocellus knows. The `MemIo*` profiles
+/// measure only the groups one mem-io experiment needs, so each group gets a
+/// larger share of the sample interval.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EventProfile {
+    #[default]
+    Default,
+    MemIo2Hit,
+    MemIoBasic,
+    MemIoItom,
+}
+
+impl EventProfile {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::MemIo2Hit => "mem-io-2hit",
+            Self::MemIoBasic => "mem-io-basic",
+            Self::MemIoItom => "mem-io-itom",
+        }
+    }
+
+    /// Rejects profiles the architecture or multiplexing mode cannot honor.
+    ///
+    /// The mem-io profiles reproduce measurements whose event groups were
+    /// time-multiplexed across all CHAs, so they require temporal mode rather
+    /// than silently measuring different CHA subsets.
+    pub fn validate(
+        self,
+        architecture: &Architecture,
+        cha_multiplex_mode: cha::ChaMultiplexMode,
+    ) -> Result<(), String> {
+        if self == Self::Default {
+            return Ok(());
+        }
+
+        if IntelServerCpuModel::from_family_model(architecture.family, architecture.model)
+            != Some(IntelServerCpuModel::SkylakeXeon)
+        {
+            return Err(format!(
+                "--event-profile {} is only supported on Skylake-SP and Cascade Lake (CPU model 0x55), not model {:#x}",
+                self.label(),
+                architecture.model
+            ));
+        }
+
+        if cha_multiplex_mode != cha::ChaMultiplexMode::Temporal {
+            return Err(format!(
+                "--event-profile {} requires --cha-multiplex-mode temporal",
+                self.label()
+            ));
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct MetricsState {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +133,9 @@ impl Default for MetricsState {
 
 #[derive(Clone, Debug)]
 pub struct CollectorMetadata {
+    pub event_profile: EventProfile,
+    pub cha_group_count: Option<usize>,
+    pub cha_multiplex_mode: cha::ChaMultiplexMode,
     pub cha_request_locality: cha::ChaRequestLocality,
     pub cha_supported: bool,
     pub iio_supported: bool,
@@ -201,4 +265,71 @@ fn expect_registered<'a, T>(prometheus: &'a Option<T>, name: &str) -> &'a T {
     prometheus
         .as_ref()
         .unwrap_or_else(|| panic!("received {name} update without registered {name} metrics"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MEM_IO_PROFILES: [EventProfile; 3] = [
+        EventProfile::MemIo2Hit,
+        EventProfile::MemIoBasic,
+        EventProfile::MemIoItom,
+    ];
+
+    fn architecture(model: u8) -> Architecture {
+        Architecture {
+            brand: "test".to_string(),
+            family: 6,
+            features: crate::arch::ArchitectureFeatures::default(),
+            model,
+            vendor: "GenuineIntel".to_string(),
+        }
+    }
+
+    #[test]
+    fn accepts_default_profile_everywhere() {
+        for model in [0x2d, 0x4f, 0x55, 0x6a, 0x8f] {
+            assert!(
+                EventProfile::Default
+                    .validate(&architecture(model), cha::ChaMultiplexMode::spatial(4))
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_mem_io_profiles_on_skylake_sp_with_temporal_multiplexing() {
+        for profile in MEM_IO_PROFILES {
+            assert!(
+                profile
+                    .validate(&architecture(0x55), cha::ChaMultiplexMode::Temporal)
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_mem_io_profiles_off_skylake_sp() {
+        for profile in MEM_IO_PROFILES {
+            for model in [0x4f, 0x6a, 0x8f] {
+                assert!(
+                    profile
+                        .validate(&architecture(model), cha::ChaMultiplexMode::Temporal)
+                        .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_mem_io_profiles_with_spatial_multiplexing() {
+        for profile in MEM_IO_PROFILES {
+            let error = profile
+                .validate(&architecture(0x55), cha::ChaMultiplexMode::spatial(4))
+                .unwrap_err();
+
+            assert!(error.contains("--cha-multiplex-mode temporal"), "{error}");
+        }
+    }
 }

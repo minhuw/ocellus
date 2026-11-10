@@ -10,7 +10,7 @@ use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
-use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
+use crate::metrics::{EventProfile, InfoMetadata, MetricEvent, MetricUpdate};
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "architecture")]
@@ -71,6 +71,22 @@ impl ImcCollector {
                     | IntelServerCpuModel::EmeraldRapids
             )
         )
+    }
+
+    /// Only Skylake-SP has more than the default profile;
+    /// `EventProfile::validate` rejects the rest at startup.
+    pub fn set_event_profile(&mut self, profile: EventProfile) -> Result<(), String> {
+        match self {
+            Self::Skx(collector) => {
+                collector.set_event_profile(profile);
+                Ok(())
+            }
+            _ if profile == EventProfile::Default => Ok(()),
+            _ => Err(format!(
+                "IMC event profile {} is only supported on Skylake-SP",
+                profile.label()
+            )),
+        }
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<ImcMetrics, String> {

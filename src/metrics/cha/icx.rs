@@ -693,6 +693,8 @@ const ICX_CHA_TRANSACTIONS: [IcxChaTransactionSpec; 11] = [
     IcxChaTransactionSpec::direct_hit_miss(IcxChaTransaction::IoClFlush),
 ];
 
+pub(crate) const EVENT_GROUP_COUNT: usize = ICX_CHA_EVENT_GROUPS.len();
+
 const ICX_CHA_EVENT_GROUPS: [IcxChaEventGroup; 36] = [
     IcxChaEventGroup::frequency(IcxChaArchitecture::Icx),
     IcxChaEventGroup::ha_requests(),

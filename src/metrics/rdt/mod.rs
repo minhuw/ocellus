@@ -489,32 +489,28 @@ impl RdtTask {
         }
     }
 
-    pub async fn run(mut self) {
+    /// Samples until an error, which it returns instead of reporting a
+    /// sampler failure: resctrl state is shared with other users of the
+    /// machine, so an RDT error stops only RDT. Returning drops the collector,
+    /// which removes the monitor groups it created.
+    pub async fn run(mut self) -> Result<(), String> {
         let mut interval = tokio::time::interval(self.interval);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
             interval.tick().await;
             let started_at = SystemTime::now();
-            match self.collector.sample() {
-                Ok(Some(rdt)) => {
-                    if self
-                        .events
-                        .send(MetricEvent::update(
-                            MetricUpdate::Rdt(Box::new(rdt)),
-                            started_at,
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    let _ = self.events.send(MetricEvent::Failure(error)).await;
-                    return;
-                }
+            if let Some(rdt) = self.collector.sample()?
+                && self
+                    .events
+                    .send(MetricEvent::update(
+                        MetricUpdate::Rdt(Box::new(rdt)),
+                        started_at,
+                    ))
+                    .await
+                    .is_err()
+            {
+                return Ok(());
             }
         }
     }
@@ -570,6 +566,11 @@ impl RdtPrometheusMetrics {
             l3_occupancy_bytes,
             memory_bandwidth_bytes_per_second,
         })
+    }
+
+    pub fn clear(&self) {
+        self.l3_occupancy_bytes.clear();
+        self.memory_bandwidth_bytes_per_second.clear();
     }
 
     pub fn update(&self, metrics: RdtMetrics) {
@@ -889,6 +890,7 @@ impl ResctrlMonitorFeatures {
 
 #[derive(Debug)]
 struct ResctrlMonitorGroup {
+    cpus: Vec<u32>,
     l3_domains: Vec<String>,
     path: PathBuf,
     scope: RdtScope,
@@ -1031,6 +1033,7 @@ fn create_resctrl_monitor_groups_with_l3_domain_mapper(
         }
 
         groups.push(ResctrlMonitorGroup {
+            cpus: domain.cpus.clone(),
             l3_domains: group_l3_domains,
             path: group_path,
             scope: domain.scope,
@@ -1085,6 +1088,20 @@ fn read_resctrl_monitor_group(
         return Err(format!(
             "Ocellus resctrl monitor group {} disappeared",
             group.path.display()
+        ));
+    }
+    // Assigning a CPU to another control group moves it out of this monitor
+    // group, which would leave the group counting nothing for that CPU.
+    let mut cpus = read_optional_cpu_list(&group.path.join("cpus_list"))?.unwrap_or_default();
+    cpus.sort_unstable();
+    let mut expected = group.cpus.clone();
+    expected.sort_unstable();
+    if cpus != expected {
+        return Err(format!(
+            "Ocellus resctrl monitor group {} lost CPU(s): it monitors CPU(s) {:?} but holds {:?}; another resctrl group took them",
+            group.path.display(),
+            expected,
+            cpus
         ));
     }
 
@@ -2589,6 +2606,7 @@ mod tests {
         std::fs::write(root.join("mon_data/mon_L3_00/llc_occupancy"), "100\n").unwrap();
         std::fs::write(root.join("mon_data/mon_L3_01/llc_occupancy"), "200\n").unwrap();
         let group = ResctrlMonitorGroup {
+            cpus: vec![0],
             l3_domains: vec!["mon_L3_00".to_string(), "mon_L3_01".to_string()],
             path: root.clone(),
             scope: test_scope(),
@@ -2753,12 +2771,43 @@ mod tests {
         )
         .unwrap();
         let group = ResctrlMonitorGroup {
+            cpus: vec![0],
             l3_domains: vec!["mon_L3_00".to_string(), "mon_L3_01".to_string()],
             path: root.clone(),
             scope: test_scope(),
         };
 
         assert_eq!(sum_resctrl_counters(&group, RESCTRL_MBM_TOTAL), Ok(None));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_monitor_group_that_lost_its_cpus() {
+        let root = unique_test_dir("resctrl-rdt-lost-cpus");
+        std::fs::create_dir_all(root.join("mon_data/mon_L3_00")).unwrap();
+        std::fs::write(root.join("mon_data/mon_L3_00/llc_occupancy"), "4096\n").unwrap();
+        std::fs::write(root.join("cpus_list"), "2\n").unwrap();
+        let group = ResctrlMonitorGroup {
+            cpus: vec![2],
+            l3_domains: vec!["mon_L3_00".to_string()],
+            path: root.clone(),
+            scope: test_scope(),
+        };
+        let features = ResctrlMonitorFeatures {
+            local_bandwidth: false,
+            num_rmids: 8,
+            occupancy: true,
+            total_bandwidth: false,
+        };
+
+        let reading = read_resctrl_monitor_group(&group, features).unwrap();
+        assert_eq!(reading.l3_occupancy_bytes, Some(4096.0));
+
+        // Assigning CPU 2 to another control group empties this group.
+        std::fs::write(root.join("cpus_list"), "\n").unwrap();
+        let error = read_resctrl_monitor_group(&group, features).unwrap_err();
+        assert!(error.contains("lost CPU(s)"), "{error}");
 
         let _ = std::fs::remove_dir_all(root);
     }

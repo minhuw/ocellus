@@ -18,6 +18,7 @@ use crate::metrics::rdt::{RdtCollector, RdtTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
 use crate::metrics::{
     CollectorMetadata, EventProfile, InfoMetadata, MetricEvent, MetricsState, SampledUpdate,
+    SamplerUpdate,
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 64;
@@ -33,7 +34,7 @@ pub struct SamplerMetadata {
 pub struct SamplerReader {
     metadata: SamplerMetadata,
     latest: Arc<RwLock<MetricsState>>,
-    updates: broadcast::Sender<SampledUpdate>,
+    updates: broadcast::Sender<SamplerUpdate>,
 }
 
 impl SamplerReader {
@@ -45,7 +46,7 @@ impl SamplerReader {
         self.metadata.clone()
     }
 
-    pub fn subscribe_updates(&self) -> broadcast::Receiver<SampledUpdate> {
+    pub fn subscribe_updates(&self) -> broadcast::Receiver<SamplerUpdate> {
         self.updates.subscribe()
     }
 
@@ -57,14 +58,14 @@ impl SamplerReader {
     }
 
     #[cfg(test)]
-    pub fn send_update_for_test(&self, update: SampledUpdate) {
+    pub fn send_update_for_test(&self, update: SamplerUpdate) {
         let _ = self.updates.send(update);
     }
 
     fn from_parts(
         metadata: SamplerMetadata,
         latest: Arc<RwLock<MetricsState>>,
-        updates: broadcast::Sender<SampledUpdate>,
+        updates: broadcast::Sender<SamplerUpdate>,
     ) -> Self {
         Self {
             metadata,
@@ -329,7 +330,7 @@ fn spawn_rdt_collector(
     match RdtCollector::new(architecture) {
         Ok(rdt) => {
             eprintln!("ocellus: starting RDT collector");
-            spawn_collector(
+            spawn_isolated_collector(
                 "rdt",
                 RdtTask::new(rdt, measure_interval, events.clone()).run(),
                 events.clone(),
@@ -356,10 +357,33 @@ fn spawn_collector(
     });
 }
 
+/// Spawns a collector whose errors stop only itself: they reach the sampler
+/// as `MetricEvent::Stopped` rather than `MetricEvent::Failure`.
+fn spawn_isolated_collector(
+    name: &'static str,
+    collector: impl Future<Output = Result<(), String>> + Send + 'static,
+    events: mpsc::Sender<MetricEvent>,
+) {
+    tokio::spawn(async move {
+        let error = match tokio::spawn(collector).await {
+            // The event channel closed, so the sampler is already gone.
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error,
+            Err(error) => format!("{name} collector task failed: {error}"),
+        };
+        let _ = events
+            .send(MetricEvent::Stopped {
+                collector: name,
+                error,
+            })
+            .await;
+    });
+}
+
 async fn aggregate_events(
     mut events: mpsc::Receiver<MetricEvent>,
     latest: Arc<RwLock<MetricsState>>,
-    updates: broadcast::Sender<SampledUpdate>,
+    updates: broadcast::Sender<SamplerUpdate>,
 ) -> Result<(), String> {
     let mut state = MetricsState::default();
     let mut sequences = BTreeMap::<&'static str, u64>::new();
@@ -367,6 +391,14 @@ async fn aggregate_events(
     while let Some(event) = events.recv().await {
         match event {
             MetricEvent::Failure(error) => return Err(error),
+            MetricEvent::Stopped { collector, error } => {
+                eprintln!(
+                    "ocellus: {collector} collector stopped: {error}; the other collectors continue"
+                );
+                state.clear(collector);
+                *latest.write().await = state.clone();
+                let _ = updates.send(SamplerUpdate::Stopped(collector));
+            }
             MetricEvent::Update(update, window) => {
                 let update = *update;
                 let sequence = sequences.entry(update.collector()).or_default();
@@ -374,11 +406,11 @@ async fn aggregate_events(
                 let sequence = *sequence;
                 state.apply(update.clone());
                 *latest.write().await = state.clone();
-                let _ = updates.send(SampledUpdate {
+                let _ = updates.send(SamplerUpdate::Sample(SampledUpdate {
                     update,
                     sequence,
                     window,
-                });
+                }));
             }
         }
     }
@@ -426,7 +458,9 @@ mod tests {
             }
             let mut received = Vec::new();
             for _ in 0..3 {
-                let update = update_rx.recv().await.unwrap();
+                let SamplerUpdate::Sample(update) = update_rx.recv().await.unwrap() else {
+                    panic!("expected a sample");
+                };
                 assert!(update.window.start <= update.window.end);
                 received.push((update.update.collector(), update.sequence));
             }
@@ -435,5 +469,67 @@ mod tests {
         });
 
         assert_eq!(received, [("tsc", 1), ("rdt", 1), ("tsc", 2)]);
+    }
+
+    #[test]
+    fn keeps_sampling_after_an_isolated_collector_stops() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            let (event_tx, event_rx) = mpsc::channel(8);
+            let (update_tx, mut update_rx) = broadcast::channel(8);
+            let latest = Arc::new(RwLock::new(MetricsState::default()));
+            let aggregate = tokio::spawn(aggregate_events(event_rx, latest.clone(), update_tx));
+
+            event_tx.send(rdt_event()).await.unwrap();
+            event_tx
+                .send(MetricEvent::Stopped {
+                    collector: "rdt",
+                    error: "monitor group disappeared".to_string(),
+                })
+                .await
+                .unwrap();
+            event_tx.send(tsc_event()).await.unwrap();
+
+            assert!(matches!(
+                update_rx.recv().await.unwrap(),
+                SamplerUpdate::Sample(SampledUpdate { sequence: 1, .. })
+            ));
+            assert!(matches!(
+                update_rx.recv().await.unwrap(),
+                SamplerUpdate::Stopped("rdt")
+            ));
+            let SamplerUpdate::Sample(update) = update_rx.recv().await.unwrap() else {
+                panic!("expected a sample");
+            };
+            assert_eq!(update.update.collector(), "tsc");
+            assert!(!aggregate.is_finished());
+            let state = latest.read().await;
+            assert!(state.rdt.is_none());
+            assert!(state.tsc.is_some());
+        });
+    }
+
+    #[test]
+    fn reports_isolated_collector_errors_as_stopped() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            let (event_tx, mut event_rx) = mpsc::channel(8);
+            spawn_isolated_collector("rdt", async { Err("boom".to_string()) }, event_tx.clone());
+
+            let event = event_rx.recv().await.unwrap();
+            assert!(matches!(
+                event,
+                MetricEvent::Stopped { collector: "rdt", ref error } if error == "boom"
+            ));
+
+            spawn_isolated_collector("rdt", async { Ok(()) }, event_tx);
+            // A clean exit means the sampler is gone: no event, then the
+            // channel closes.
+            let next =
+                tokio::time::timeout(std::time::Duration::from_millis(200), event_rx.recv()).await;
+            assert!(!matches!(next, Ok(Some(_))));
+        });
     }
 }

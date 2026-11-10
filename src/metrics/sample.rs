@@ -34,6 +34,7 @@ struct SampleLabels {
 #[derive(Debug)]
 pub struct SamplePrometheusMetrics {
     samples: Family<SampleLabels, Counter>,
+    stopped: Family<SampleLabels, Gauge>,
     window_end_timestamp_seconds: Family<SampleLabels, Gauge<f64, AtomicU64>>,
     window_start_timestamp_seconds: Family<SampleLabels, Gauge<f64, AtomicU64>>,
 }
@@ -42,6 +43,7 @@ impl SamplePrometheusMetrics {
     pub fn register(registry: &mut Registry) -> Self {
         let metrics = Self {
             samples: Family::<SampleLabels, Counter>::default(),
+            stopped: Family::<SampleLabels, Gauge>::default(),
             window_end_timestamp_seconds: Family::<SampleLabels, Gauge<f64, AtomicU64>>::default(),
             window_start_timestamp_seconds: Family::<SampleLabels, Gauge<f64, AtomicU64>>::default(
             ),
@@ -51,6 +53,11 @@ impl SamplePrometheusMetrics {
             "ocellus_samples",
             "Samples each collector has taken; a step of more than one between scrapes means a sample was not exported",
             metrics.samples.clone(),
+        );
+        registry.register(
+            "ocellus_collector_stopped",
+            "1 if the collector stopped after a runtime error and its metrics are no longer exported",
+            metrics.stopped.clone(),
         );
         registry.register(
             "ocellus_sample_window_end_timestamp_seconds",
@@ -81,6 +88,15 @@ impl SamplePrometheusMetrics {
         self.window_end_timestamp_seconds
             .get_or_create(&labels)
             .set(unix_seconds(window.end));
+    }
+
+    pub fn stop(&self, collector: &str) {
+        let labels = SampleLabels {
+            collector: collector.to_string(),
+        };
+        self.stopped.get_or_create(&labels).set(1);
+        self.window_start_timestamp_seconds.remove(&labels);
+        self.window_end_timestamp_seconds.remove(&labels);
     }
 
     #[cfg(test)]

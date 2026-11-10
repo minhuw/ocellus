@@ -12,7 +12,7 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, oneshot};
 
-use crate::metrics::MetricsRegistry;
+use crate::metrics::{MetricsRegistry, SamplerUpdate};
 use crate::runtime::sampler::SamplerReader;
 
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
@@ -53,9 +53,13 @@ impl PrometheusExporter {
         tokio::spawn(async move {
             loop {
                 match updates.recv().await {
-                    Ok(update) => {
+                    Ok(SamplerUpdate::Sample(update)) => {
                         let _registry = registry.lock().await;
                         metrics.update(update);
+                    }
+                    Ok(SamplerUpdate::Stopped(collector)) => {
+                        let _registry = registry.lock().await;
+                        metrics.stop(collector);
                     }
                     Err(RecvError::Lagged(skipped)) => {
                         eprintln!("ocellus: Prometheus metrics updater skipped {skipped} updates");
@@ -415,16 +419,18 @@ mod tests {
             let now = std::time::SystemTime::now();
             let scrape = exporter.registry.lock().await;
 
-            sampler.send_update_for_test(crate::metrics::SampledUpdate {
-                update: crate::metrics::MetricUpdate::Tsc(Box::new(
-                    crate::metrics::tsc::TscMetrics { frequency_hz: 1.0 },
-                )),
-                sequence: 1,
-                window: crate::metrics::SampleWindow {
-                    start: now,
-                    end: now,
+            sampler.send_update_for_test(crate::metrics::SamplerUpdate::Sample(
+                crate::metrics::SampledUpdate {
+                    update: crate::metrics::MetricUpdate::Tsc(Box::new(
+                        crate::metrics::tsc::TscMetrics { frequency_hz: 1.0 },
+                    )),
+                    sequence: 1,
+                    window: crate::metrics::SampleWindow {
+                        start: now,
+                        end: now,
+                    },
                 },
-            });
+            ));
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             assert_eq!(exporter.metrics.sample_sequence("tsc"), 0);
 
@@ -443,6 +449,51 @@ mod tests {
             metrics.contains("ocellus_sample_window_start_timestamp_seconds{collector=\"tsc\"}")
         );
         assert!(metrics.contains("ocellus_sample_window_end_timestamp_seconds{collector=\"tsc\"}"));
+    }
+
+    #[test]
+    fn stops_exporting_a_stopped_collector() {
+        let state = crate::metrics::MetricsState {
+            rdt: Some(crate::metrics::rdt::RdtMetrics {
+                scopes: vec![crate::metrics::rdt::RdtScopeMetrics {
+                    l3_occupancy_bytes: Some(4096.0),
+                    local_memory_bandwidth_bytes_per_second: Some(2048.0),
+                    remote_memory_bandwidth_bytes_per_second: Some(1024.0),
+                    scope: crate::metrics::rdt::RdtScope {
+                        core_id: 1,
+                        cpu: 2,
+                        die_group_id: None,
+                        die_id: None,
+                        package_id: 0,
+                    },
+                    total_memory_bandwidth_bytes_per_second: Some(3072.0),
+                }],
+            }),
+            ..crate::metrics::MetricsState::default()
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: info_metadata(),
+            },
+            state.clone(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        exporter.update_state(state);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        assert!(
+            runtime
+                .block_on(exporter.render_metrics())
+                .unwrap()
+                .contains("ocellus_rdt_l3_occupancy_bytes{")
+        );
+
+        exporter.metrics.stop("rdt");
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert!(!metrics.contains("ocellus_rdt_l3_occupancy_bytes{"));
+        assert!(!metrics.contains("ocellus_rdt_memory_bandwidth_bytes_per_second{"));
+        assert!(metrics.contains("ocellus_collector_stopped{collector=\"rdt\"} 1"));
     }
 
     #[test]

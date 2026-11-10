@@ -101,6 +101,22 @@ pub struct MetricsState {
 }
 
 impl MetricsState {
+    /// Forgets a stopped collector's last metrics.
+    pub fn clear(&mut self, collector: &str) {
+        match collector {
+            "cha" => self.cha = None,
+            "iio" => self.iio = None,
+            "imc" => self.imc = None,
+            "interconnect" => self.interconnect = None,
+            "irp" => self.irp = None,
+            "pcu" => self.pcu = None,
+            "rapl" => self.rapl = None,
+            "rdt" => self.rdt = None,
+            "tsc" => self.tsc = None,
+            _ => {}
+        }
+    }
+
     pub fn apply(&mut self, update: MetricUpdate) {
         match update {
             MetricUpdate::Cha(cha) => self.cha = Some(*cha),
@@ -167,6 +183,11 @@ pub struct ProcessorMetadata {
 #[derive(Clone, Debug)]
 pub enum MetricEvent {
     Failure(String),
+    /// A collector stopped on its own error; the other collectors continue.
+    Stopped {
+        collector: &'static str,
+        error: String,
+    },
     Update(Box<MetricUpdate>, SampleWindow),
 }
 
@@ -204,6 +225,13 @@ impl MetricUpdate {
             Self::Tsc(_) => "tsc",
         }
     }
+}
+
+/// What the sampler broadcasts to exporters.
+#[derive(Clone, Debug)]
+pub enum SamplerUpdate {
+    Sample(SampledUpdate),
+    Stopped(&'static str),
 }
 
 /// One collector update with the window it covers and its sequence number,
@@ -256,6 +284,18 @@ impl MetricsRegistry {
         self.samples
             .update(sampled.update.collector(), sampled.sequence, sampled.window);
         self.update_collector(sampled.update);
+    }
+
+    /// Removes a stopped collector's series so its last values do not look
+    /// current, and marks it stopped. Only collectors spawned isolated stop
+    /// without failing the sampler; RDT is the one that does.
+    pub fn stop(&self, collector: &str) {
+        if collector == "rdt"
+            && let Some(rdt) = &self.rdt
+        {
+            rdt.clear();
+        }
+        self.samples.stop(collector);
     }
 
     #[cfg(test)]

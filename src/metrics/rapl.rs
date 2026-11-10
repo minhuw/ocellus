@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
@@ -232,13 +232,15 @@ impl RaplTask {
 
         loop {
             interval.tick().await;
+            let started_at = SystemTime::now();
             match self.collector.sample() {
                 Ok(Some(rapl)) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Rapl(Box::new(
-                            rapl,
-                        )))))
+                        .send(MetricEvent::update(
+                            MetricUpdate::Rapl(Box::new(rapl)),
+                            started_at,
+                        ))
                         .await
                         .is_err()
                     {

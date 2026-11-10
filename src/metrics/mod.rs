@@ -8,6 +8,7 @@ pub mod irp;
 pub mod pcu;
 pub mod rapl;
 pub mod rdt;
+pub mod sample;
 pub mod tsc;
 pub mod uncore;
 
@@ -15,6 +16,7 @@ use prometheus_client::registry::Registry;
 use serde::Serialize;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
+pub use sample::SampleWindow;
 
 /// Which fixed set of CHA and IMC event groups the collectors measure.
 ///
@@ -165,7 +167,14 @@ pub struct ProcessorMetadata {
 #[derive(Clone, Debug)]
 pub enum MetricEvent {
     Failure(String),
-    Update(Box<MetricUpdate>),
+    Update(Box<MetricUpdate>, SampleWindow),
+}
+
+impl MetricEvent {
+    /// An update for the sample that started at `started_at` and ends now.
+    pub fn update(update: MetricUpdate, started_at: std::time::SystemTime) -> Self {
+        Self::Update(Box::new(update), SampleWindow::since(started_at))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -181,6 +190,31 @@ pub enum MetricUpdate {
     Tsc(Box<tsc::TscMetrics>),
 }
 
+impl MetricUpdate {
+    pub fn collector(&self) -> &'static str {
+        match self {
+            Self::Cha(_) => "cha",
+            Self::Iio(_) => "iio",
+            Self::Imc(_) => "imc",
+            Self::Interconnect(_) => "interconnect",
+            Self::Irp(_) => "irp",
+            Self::Pcu(_) => "pcu",
+            Self::Rapl(_) => "rapl",
+            Self::Rdt(_) => "rdt",
+            Self::Tsc(_) => "tsc",
+        }
+    }
+}
+
+/// One collector update with the window it covers and its sequence number,
+/// counted per collector from 1.
+#[derive(Clone, Debug)]
+pub struct SampledUpdate {
+    pub update: MetricUpdate,
+    pub sequence: u64,
+    pub window: SampleWindow,
+}
+
 #[derive(Debug)]
 pub struct MetricsRegistry {
     cha: Option<cha::ChaPrometheusMetrics>,
@@ -191,6 +225,7 @@ pub struct MetricsRegistry {
     pcu: Option<pcu::PcuPrometheusMetrics>,
     rapl: Option<rapl::RaplPrometheusMetrics>,
     rdt: Option<rdt::RdtPrometheusMetrics>,
+    samples: sample::SamplePrometheusMetrics,
     tsc: tsc::TscPrometheusMetrics,
 }
 
@@ -209,11 +244,26 @@ impl MetricsRegistry {
             pcu: pcu::PcuPrometheusMetrics::register(registry, &metadata),
             rapl: rapl::RaplPrometheusMetrics::register(registry, &metadata),
             rdt: rdt::RdtPrometheusMetrics::register(registry, &metadata),
+            samples: sample::SamplePrometheusMetrics::register(registry),
             tsc: tsc::TscPrometheusMetrics::register(registry),
         }
     }
 
-    pub fn update(&self, update: MetricUpdate) {
+    /// Sets the collector's metrics together with its sample sequence and
+    /// window. Callers hold the registry lock that scrapes take, so a scrape
+    /// sees all of one sample or none of it.
+    pub fn update(&self, sampled: SampledUpdate) {
+        self.samples
+            .update(sampled.update.collector(), sampled.sequence, sampled.window);
+        self.update_collector(sampled.update);
+    }
+
+    #[cfg(test)]
+    pub fn sample_sequence(&self, collector: &str) -> u64 {
+        self.samples.sequence(collector)
+    }
+
+    fn update_collector(&self, update: MetricUpdate) {
         match update {
             MetricUpdate::Cha(cha) => expect_registered(&self.cha, "CHA").update(*cha),
             MetricUpdate::Iio(iio) => expect_registered(&self.iio, "IIO").update(*iio),

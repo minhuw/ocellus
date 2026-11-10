@@ -1,5 +1,5 @@
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
@@ -64,13 +64,15 @@ impl TscTask {
 
         loop {
             interval.tick().await;
+            let started_at = SystemTime::now();
             match self.collector.sample() {
                 Ok(Some(tsc)) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Tsc(Box::new(
-                            tsc,
-                        )))))
+                        .send(MetricEvent::update(
+                            MetricUpdate::Tsc(Box::new(tsc)),
+                            started_at,
+                        ))
                         .await
                         .is_err()
                     {

@@ -5,7 +5,7 @@ pub mod snb;
 pub mod spr;
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
@@ -835,13 +835,15 @@ impl ChaTask {
 
     pub async fn run(mut self) {
         loop {
+            let started_at = SystemTime::now();
             match self.collector.sample(self.interval).await {
                 Ok(cha) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Cha(Box::new(
-                            cha,
-                        )))))
+                        .send(MetricEvent::update(
+                            MetricUpdate::Cha(Box::new(cha)),
+                            started_at,
+                        ))
                         .await
                         .is_err()
                     {

@@ -2,7 +2,7 @@ pub mod icx;
 pub mod skx;
 pub mod spr;
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
@@ -86,13 +86,15 @@ impl IioTask {
 
     pub async fn run(mut self) {
         loop {
+            let started_at = SystemTime::now();
             match self.collector.sample(self.interval).await {
                 Ok(iio) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Iio(Box::new(
-                            iio,
-                        )))))
+                        .send(MetricEvent::update(
+                            MetricUpdate::Iio(Box::new(iio)),
+                            started_at,
+                        ))
                         .await
                         .is_err()
                     {

@@ -4,7 +4,7 @@ pub mod skx;
 pub mod snb;
 pub mod spr;
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
@@ -114,13 +114,15 @@ impl IrpTask {
 
     pub async fn run(mut self) {
         loop {
+            let started_at = SystemTime::now();
             match self.collector.sample(self.interval).await {
                 Ok(irp) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Irp(Box::new(
-                            irp,
-                        )))))
+                        .send(MetricEvent::update(
+                            MetricUpdate::Irp(Box::new(irp)),
+                            started_at,
+                        ))
                         .await
                         .is_err()
                     {

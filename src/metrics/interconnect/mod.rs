@@ -4,7 +4,7 @@ pub mod skx;
 pub mod snb;
 pub mod spr;
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
@@ -255,13 +255,15 @@ impl InterconnectTask {
 
     pub async fn run(mut self) {
         loop {
+            let started_at = SystemTime::now();
             match self.collector.sample(self.interval).await {
                 Ok(interconnect) => {
                     if self
                         .events
-                        .send(MetricEvent::Update(Box::new(MetricUpdate::Interconnect(
-                            Box::new(interconnect),
-                        ))))
+                        .send(MetricEvent::update(
+                            MetricUpdate::Interconnect(Box::new(interconnect)),
+                            started_at,
+                        ))
                         .await
                         .is_err()
                     {

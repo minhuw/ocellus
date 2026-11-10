@@ -20,7 +20,7 @@ const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.
 #[derive(Debug)]
 struct PrometheusExporter {
     metrics: Arc<MetricsRegistry>,
-    registry: Mutex<Registry>,
+    registry: Arc<Mutex<Registry>>,
 }
 
 impl PrometheusExporter {
@@ -33,7 +33,7 @@ impl PrometheusExporter {
 
         Self {
             metrics,
-            registry: Mutex::new(registry),
+            registry: Arc::new(Mutex::new(registry)),
         }
     }
 
@@ -42,14 +42,21 @@ impl PrometheusExporter {
         self.metrics.update_state(state);
     }
 
+    /// Applies each update while holding the registry lock that
+    /// `render_metrics` takes, so a scrape never mixes two samples of a
+    /// collector.
     fn spawn_updater(&self, sampler: SamplerReader) {
         let metrics = self.metrics.clone();
+        let registry = self.registry.clone();
         let mut updates = sampler.subscribe_updates();
 
         tokio::spawn(async move {
             loop {
                 match updates.recv().await {
-                    Ok(update) => metrics.update(update),
+                    Ok(update) => {
+                        let _registry = registry.lock().await;
+                        metrics.update(update);
+                    }
                     Err(RecvError::Lagged(skipped)) => {
                         eprintln!("ocellus: Prometheus metrics updater skipped {skipped} updates");
                     }
@@ -389,6 +396,53 @@ mod tests {
         assert!(metrics.contains("package=\"0\""));
         assert!(metrics.contains("# TYPE ocellus_rapl_power_watts gauge"));
         assert!(metrics.contains("ocellus_rapl_power_watts"));
+    }
+
+    #[test]
+    fn applies_updates_only_between_scrapes() {
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: info_metadata(),
+            },
+            crate::metrics::MetricsState::default(),
+        );
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let metrics = runtime.block_on(async {
+            let exporter = PrometheusExporter::new(sampler.clone());
+            exporter.spawn_updater(sampler.clone());
+            let now = std::time::SystemTime::now();
+            let scrape = exporter.registry.lock().await;
+
+            sampler.send_update_for_test(crate::metrics::SampledUpdate {
+                update: crate::metrics::MetricUpdate::Tsc(Box::new(
+                    crate::metrics::tsc::TscMetrics { frequency_hz: 1.0 },
+                )),
+                sequence: 1,
+                window: crate::metrics::SampleWindow {
+                    start: now,
+                    end: now,
+                },
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            assert_eq!(exporter.metrics.sample_sequence("tsc"), 0);
+
+            drop(scrape);
+            for _ in 0..100 {
+                if exporter.metrics.sample_sequence("tsc") == 1 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            exporter.render_metrics().await.unwrap()
+        });
+
+        assert!(metrics.contains("ocellus_samples_total{collector=\"tsc\"} 1"));
+        assert!(
+            metrics.contains("ocellus_sample_window_start_timestamp_seconds{collector=\"tsc\"}")
+        );
+        assert!(metrics.contains("ocellus_sample_window_end_timestamp_seconds{collector=\"tsc\"}"));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +17,7 @@ use crate::metrics::rapl::{RaplCollector, RaplTask};
 use crate::metrics::rdt::{RdtCollector, RdtTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
 use crate::metrics::{
-    CollectorMetadata, EventProfile, InfoMetadata, MetricEvent, MetricUpdate, MetricsState,
+    CollectorMetadata, EventProfile, InfoMetadata, MetricEvent, MetricsState, SampledUpdate,
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 64;
@@ -32,7 +33,7 @@ pub struct SamplerMetadata {
 pub struct SamplerReader {
     metadata: SamplerMetadata,
     latest: Arc<RwLock<MetricsState>>,
-    updates: broadcast::Sender<MetricUpdate>,
+    updates: broadcast::Sender<SampledUpdate>,
 }
 
 impl SamplerReader {
@@ -44,7 +45,7 @@ impl SamplerReader {
         self.metadata.clone()
     }
 
-    pub fn subscribe_updates(&self) -> broadcast::Receiver<MetricUpdate> {
+    pub fn subscribe_updates(&self) -> broadcast::Receiver<SampledUpdate> {
         self.updates.subscribe()
     }
 
@@ -55,10 +56,15 @@ impl SamplerReader {
         Self::from_parts(metadata, Arc::new(RwLock::new(latest_state)), updates)
     }
 
+    #[cfg(test)]
+    pub fn send_update_for_test(&self, update: SampledUpdate) {
+        let _ = self.updates.send(update);
+    }
+
     fn from_parts(
         metadata: SamplerMetadata,
         latest: Arc<RwLock<MetricsState>>,
-        updates: broadcast::Sender<MetricUpdate>,
+        updates: broadcast::Sender<SampledUpdate>,
     ) -> Self {
         Self {
             metadata,
@@ -353,21 +359,81 @@ fn spawn_collector(
 async fn aggregate_events(
     mut events: mpsc::Receiver<MetricEvent>,
     latest: Arc<RwLock<MetricsState>>,
-    updates: broadcast::Sender<MetricUpdate>,
+    updates: broadcast::Sender<SampledUpdate>,
 ) -> Result<(), String> {
     let mut state = MetricsState::default();
+    let mut sequences = BTreeMap::<&'static str, u64>::new();
 
     while let Some(event) = events.recv().await {
         match event {
             MetricEvent::Failure(error) => return Err(error),
-            MetricEvent::Update(update) => {
+            MetricEvent::Update(update, window) => {
                 let update = *update;
+                let sequence = sequences.entry(update.collector()).or_default();
+                *sequence += 1;
+                let sequence = *sequence;
                 state.apply(update.clone());
                 *latest.write().await = state.clone();
-                let _ = updates.send(update);
+                let _ = updates.send(SampledUpdate {
+                    update,
+                    sequence,
+                    window,
+                });
             }
         }
     }
 
     Err("sampler event channel closed".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::SystemTime;
+
+    use super::*;
+    use crate::metrics::MetricUpdate;
+
+    fn tsc_event() -> MetricEvent {
+        MetricEvent::update(
+            MetricUpdate::Tsc(Box::new(crate::metrics::tsc::TscMetrics {
+                frequency_hz: 1.0,
+            })),
+            SystemTime::now(),
+        )
+    }
+
+    fn rdt_event() -> MetricEvent {
+        MetricEvent::update(
+            MetricUpdate::Rdt(Box::new(crate::metrics::rdt::RdtMetrics {
+                scopes: Vec::new(),
+            })),
+            SystemTime::now(),
+        )
+    }
+
+    #[test]
+    fn numbers_samples_per_collector() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let received = runtime.block_on(async {
+            let (event_tx, event_rx) = mpsc::channel(8);
+            let (update_tx, mut update_rx) = broadcast::channel(8);
+            let latest = Arc::new(RwLock::new(MetricsState::default()));
+            tokio::spawn(aggregate_events(event_rx, latest.clone(), update_tx));
+
+            for event in [tsc_event(), rdt_event(), tsc_event()] {
+                event_tx.send(event).await.unwrap();
+            }
+            let mut received = Vec::new();
+            for _ in 0..3 {
+                let update = update_rx.recv().await.unwrap();
+                assert!(update.window.start <= update.window.end);
+                received.push((update.update.collector(), update.sequence));
+            }
+            assert!(latest.read().await.tsc.is_some());
+            received
+        });
+
+        assert_eq!(received, [("tsc", 1), ("rdt", 1), ("tsc", 2)]);
+    }
 }

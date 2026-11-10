@@ -551,10 +551,13 @@ impl ChaMultiplexMode {
     }
 }
 
-/// Which requester locality the CHA filter matches.
+/// Which home node the CHA filter matches for the requested address.
 ///
-/// `All` counts local and remote requests; `Local` counts only requests from
-/// the local socket. Only Skylake-SP CHA filters expose this field.
+/// Skylake-SP CHA filter1 `loc`/`rem` match the target (home) node of the
+/// request's address, not the requester (uncore guide table 2-55). `All`
+/// counts requests to local and remote memory; `Local` counts only requests
+/// whose address is homed on the CHA's own socket, from any requester. Only
+/// Skylake-SP CHA filters expose this field.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChaRequestLocality {
     #[default]

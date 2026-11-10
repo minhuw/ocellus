@@ -112,7 +112,7 @@ struct Config {
         long,
         value_enum,
         default_value_t = ChaRequestLocalityConfig::All,
-        help = "CHA requester locality to count (Skylake-SP only)"
+        help = "Count CHA requests whose address is homed on the local node only, or all (Skylake-SP only)"
     )]
     cha_request_locality: ChaRequestLocalityConfig,
 

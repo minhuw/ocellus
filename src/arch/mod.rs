@@ -128,6 +128,7 @@ impl IntelServerCpuModel {
             self,
             Self::HaswellXeon
                 | Self::BroadwellXeon
+                | Self::BroadwellDe
                 | Self::KnightsLanding
                 | Self::SkylakeXeon
                 | Self::IceLakeXeon
@@ -180,7 +181,13 @@ mod tests {
     }
 
     #[test]
-    fn broadwell_de_uses_msr_dram_energy_unit() {
-        assert!(!IntelServerCpuModel::BroadwellDe.has_fixed_dram_energy_unit());
+    fn broadwell_de_uses_fixed_dram_energy_unit() {
+        assert!(IntelServerCpuModel::BroadwellDe.has_fixed_dram_energy_unit());
+    }
+
+    #[test]
+    fn sapphire_and_emerald_rapids_use_msr_dram_energy_unit() {
+        assert!(!IntelServerCpuModel::SapphireRapids.has_fixed_dram_energy_unit());
+        assert!(!IntelServerCpuModel::EmeraldRapids.has_fixed_dram_energy_unit());
     }
 }

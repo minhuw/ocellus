@@ -20,7 +20,9 @@ const ENERGY_STATUS_WIDTH: u32 = 32;
 const MSR_DRAM_ENERGY_STATUS: u64 = 0x619;
 const MSR_PKG_ENERGY_STATUS: u64 = 0x611;
 const MSR_RAPL_POWER_UNIT: u64 = 0x606;
-const SERVER_DRAM_ENERGY_UNIT_JOULES: f64 = 0.0000153;
+// 2^-16 J, as Linux arch/x86/events/rapl.c RAPL_UNIT_QUIRK_INTEL_HSW sets
+// for the DRAM domain of the models in has_fixed_dram_energy_unit.
+const SERVER_DRAM_ENERGY_UNIT_JOULES: f64 = 1.0 / 65536.0;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -361,12 +363,8 @@ fn available_domains(
     domain_specs()
         .into_iter()
         .map(|spec| {
-            let energy_unit_joules = match spec.kind {
-                RaplDomainKind::Dram if model.has_fixed_dram_energy_unit() => {
-                    SERVER_DRAM_ENERGY_UNIT_JOULES
-                }
-                _ => package_energy_unit_joules,
-            };
+            let energy_unit_joules =
+                domain_energy_unit_joules(model, spec.kind, package_energy_unit_joules);
 
             Msr::open_readonly(leader.cpu)?.read(spec.status_msr)?;
 
@@ -423,6 +421,19 @@ fn rapl_leaders() -> Result<Vec<RaplLeader>, String> {
         .collect())
 }
 
+fn domain_energy_unit_joules(
+    model: IntelServerCpuModel,
+    kind: RaplDomainKind,
+    package_energy_unit_joules: f64,
+) -> f64 {
+    match kind {
+        RaplDomainKind::Dram if model.has_fixed_dram_energy_unit() => {
+            SERVER_DRAM_ENERGY_UNIT_JOULES
+        }
+        _ => package_energy_unit_joules,
+    }
+}
+
 fn energy_unit_joules(rapl_power_unit: u64) -> f64 {
     let energy_status_unit = (rapl_power_unit >> 8) & 0x1f;
     1.0 / (1_u64 << energy_status_unit) as f64
@@ -451,6 +462,33 @@ mod tests {
         let rapl_power_unit = 14_u64 << 8;
 
         assert_eq!(energy_unit_joules(rapl_power_unit), 1.0 / 16384.0);
+    }
+
+    #[test]
+    fn uses_the_fixed_dram_energy_unit_on_skx_and_bdx_de() {
+        let package_unit = energy_unit_joules(14_u64 << 8);
+
+        for model in [
+            IntelServerCpuModel::SkylakeXeon,
+            IntelServerCpuModel::BroadwellDe,
+        ] {
+            assert_eq!(
+                domain_energy_unit_joules(model, RaplDomainKind::Dram, package_unit),
+                1.0 / 65536.0
+            );
+            assert_eq!(
+                domain_energy_unit_joules(model, RaplDomainKind::Package, package_unit),
+                package_unit
+            );
+        }
+        assert_eq!(
+            domain_energy_unit_joules(
+                IntelServerCpuModel::SapphireRapids,
+                RaplDomainKind::Dram,
+                package_unit
+            ),
+            package_unit
+        );
     }
 
     #[test]

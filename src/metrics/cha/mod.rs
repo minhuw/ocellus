@@ -116,7 +116,6 @@ pub enum ChaCacheState {
     S,
     SfE,
     SfH,
-    SfM,
     SfS,
 }
 
@@ -131,7 +130,6 @@ impl ChaCacheState {
             Self::S => "s",
             Self::SfE => "sf_e",
             Self::SfH => "sf_h",
-            Self::SfM => "sf_m",
             Self::SfS => "sf_s",
         }
     }
@@ -143,7 +141,6 @@ impl ChaCacheState {
             Self::SfS => 0x02,
             Self::SfE => 0x04,
             Self::SfH => 0x08,
-            Self::SfM => 0x08,
             Self::S => 0x10,
             Self::E => 0x20,
             Self::M => 0x40,
@@ -610,7 +607,7 @@ pub(crate) fn llc_victim_metrics(
 pub(crate) const LLC_LOOKUP_STATES: [ChaCacheState; 8] = [
     ChaCacheState::SfS,
     ChaCacheState::SfE,
-    ChaCacheState::SfM,
+    ChaCacheState::SfH,
     ChaCacheState::I,
     ChaCacheState::S,
     ChaCacheState::E,

@@ -14074,11 +14074,11 @@
           "transparent": false
         }
       },
-      "panel-cha-llc-lookup-sf-m": {
+      "panel-cha-llc-lookup-sf-h": {
         "kind": "Panel",
         "spec": {
           "id": 105,
-          "title": "CHA LLC Lookup SF_M",
+          "title": "CHA LLC Lookup SF_H",
           "description": "",
           "links": [],
           "data": {
@@ -14097,7 +14097,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "label_replace(label_replace(label_join(((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_m\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)), \"scope\", \"/\", \"package\", \"die_group\", \"die\"), \"scope\", \"pkg $1\", \"scope\", \"^([^/]+)/unknown/unknown$\"), \"scope\", \"pkg $1 die $2/$3\", \"scope\", \"^([^/]+)/([^/]+)/([^/]+)$\")",
+                        "expr": "label_replace(label_replace(label_join(((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_h\",instance=\"$instance\"} / 64) and on() (vector(${traffic_mode}) == 0)), \"scope\", \"/\", \"package\", \"die_group\", \"die\"), \"scope\", \"pkg $1\", \"scope\", \"^([^/]+)/unknown/unknown$\"), \"scope\", \"pkg $1 die $2/$3\", \"scope\", \"^([^/]+)/([^/]+)/([^/]+)$\")",
                         "legendFormat": "{{operation}} {{scope}}",
                         "range": true,
                         "interval": "1s",
@@ -14120,7 +14120,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "label_replace(label_replace(label_join((((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_m\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)), \"scope\", \"/\", \"package\", \"die_group\", \"die\"), \"scope\", \"pkg $1\", \"scope\", \"^([^/]+)/unknown/unknown$\"), \"scope\", \"pkg $1 die $2/$3\", \"scope\", \"^([^/]+)/([^/]+)/([^/]+)$\")",
+                        "expr": "label_replace(label_replace(label_join((((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_h\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) == 1)), \"scope\", \"/\", \"package\", \"die_group\", \"die\"), \"scope\", \"pkg $1\", \"scope\", \"^([^/]+)/unknown/unknown$\"), \"scope\", \"pkg $1 die $2/$3\", \"scope\", \"^([^/]+)/([^/]+)/([^/]+)$\")",
                         "legendFormat": "{{operation}} {{scope}}",
                         "range": true,
                         "interval": "1s",
@@ -14143,7 +14143,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "label_replace(label_replace(label_join((((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_m\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)), \"scope\", \"/\", \"package\", \"die_group\", \"die\"), \"scope\", \"pkg $1\", \"scope\", \"^([^/]+)/unknown/unknown$\"), \"scope\", \"pkg $1 die $2/$3\", \"scope\", \"^([^/]+)/([^/]+)/([^/]+)$\")",
+                        "expr": "label_replace(label_replace(label_join((((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=~\"$die_group\",die=~\"$die\",state=\"sf_h\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)), \"scope\", \"/\", \"package\", \"die_group\", \"die\"), \"scope\", \"pkg $1\", \"scope\", \"^([^/]+)/unknown/unknown$\"), \"scope\", \"pkg $1 die $2/$3\", \"scope\", \"^([^/]+)/([^/]+)/([^/]+)$\")",
                         "legendFormat": "{{operation}} {{scope}}",
                         "range": true,
                         "interval": "1s",
@@ -16027,7 +16027,7 @@
                                   "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-cha-llc-lookup-sf-m"
+                                    "name": "panel-cha-llc-lookup-sf-h"
                                   }
                                 }
                               },

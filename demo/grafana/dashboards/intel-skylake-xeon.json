@@ -13676,7 +13676,7 @@
         "kind": "Panel",
         "spec": {
           "id": 140,
-          "title": "CHA LLC Lookup SF_M",
+          "title": "CHA LLC Lookup SF_H",
           "description": "",
           "links": [],
           "data": {
@@ -13695,7 +13695,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"unknown\",die=\"unknown\",state=\"sf_m\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"unknown\",die=\"unknown\",state=\"sf_h\",instance=\"$instance\"}) / 1073741824) and on() (vector(${traffic_mode}) < 2)",
                         "legendFormat": "{{operation}}",
                         "range": true,
                         "interval": "1s",
@@ -13718,7 +13718,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"unknown\",die=\"unknown\",state=\"sf_m\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
+                        "expr": "((ocellus_cha_llc_lookup_bytes_per_second{package=\"$package\",die_group=\"unknown\",die=\"unknown\",state=\"sf_h\",instance=\"$instance\"}) * 8 / 1000000000) and on() (vector(${traffic_mode}) == 2)",
                         "legendFormat": "{{operation}}",
                         "range": true,
                         "interval": "1s",

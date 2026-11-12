@@ -317,7 +317,7 @@ const fn spr_cha_llc_lookup_state_umask(state: ChaCacheState) -> u8 {
         ChaCacheState::E => 0x20,
         ChaCacheState::M => 0x40,
         ChaCacheState::F => 0x80,
-        ChaCacheState::All | ChaCacheState::SfM => 0x00,
+        ChaCacheState::All => 0x00,
     }
 }
 

@@ -700,7 +700,7 @@ const ICX_CHA_EVENT_GROUPS: [IcxChaEventGroup; 36] = [
     IcxChaEventGroup::ha_requests(),
     IcxChaEventGroup::llc_lookup(ChaCacheState::SfS),
     IcxChaEventGroup::llc_lookup(ChaCacheState::SfE),
-    IcxChaEventGroup::llc_lookup(ChaCacheState::SfM),
+    IcxChaEventGroup::llc_lookup(ChaCacheState::SfH),
     IcxChaEventGroup::llc_lookup(ChaCacheState::I),
     IcxChaEventGroup::llc_lookup(ChaCacheState::S),
     IcxChaEventGroup::llc_lookup(ChaCacheState::E),
@@ -2420,6 +2420,49 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn exports_icx_llc_lookup_mask_08_as_sf_h() {
+        let lookups: Vec<_> = ICX_CHA_EVENT_GROUPS
+            .iter()
+            .flat_map(|group| group.events)
+            .filter_map(|event| match event.kind {
+                IcxChaEventKind::Exported(kind @ ChaEventKind::LlcLookup(state, _)) => {
+                    Some((kind, state, event.umask))
+                }
+                _ => None,
+            })
+            .collect();
+        let mask_08_labels: Vec<_> = lookups
+            .iter()
+            .filter(|(_, _, umask)| *umask == 0x08)
+            .map(|(_, state, _)| state.label())
+            .collect();
+        assert_eq!(mask_08_labels, ["sf_h"; 4]);
+
+        let scope = UncoreScope {
+            die_group_id: None,
+            die_id: None,
+            package_id: 0,
+        };
+        let measurements = lookups
+            .iter()
+            .map(|(kind, _, _)| {
+                (
+                    *kind,
+                    ChaEventMeasurement {
+                        enabled: Duration::from_secs(1),
+                        represented_unit_count: 1,
+                        running: Duration::from_secs(1),
+                        value: 1,
+                    },
+                )
+            })
+            .collect();
+        let metrics = llc_lookup_metrics(scope, &measurements).unwrap();
+
+        assert!(metrics.iter().any(|metric| metric.state.label() == "sf_h"));
     }
 
     #[test]

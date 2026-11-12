@@ -522,7 +522,7 @@ const SKX_CHA_EVENT_GROUPS: [ChaEventGroup; SKX_CHA_EVENT_GROUP_COUNT] = [
     ChaEventGroup::eviction(),
     ChaEventGroup::llc_lookup(ChaCacheState::SfS),
     ChaEventGroup::llc_lookup(ChaCacheState::SfE),
-    ChaEventGroup::llc_lookup(ChaCacheState::SfM),
+    ChaEventGroup::llc_lookup(ChaCacheState::SfH),
     ChaEventGroup::llc_lookup(ChaCacheState::I),
     ChaEventGroup::llc_lookup(ChaCacheState::S),
     ChaEventGroup::llc_lookup(ChaCacheState::E),
@@ -2420,6 +2420,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exports_skx_llc_lookup_state_08_as_sf_h() {
+        let labels: Vec<_> = SKX_CHA_EVENT_GROUPS
+            .iter()
+            .filter(|group| group.filter0.state == 0x08)
+            .flat_map(|group| group.events)
+            .filter_map(|event| match event.kind {
+                ChaEventKind::LlcLookup(state, _) => Some(state.label()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(labels, ["sf_h"; 4]);
+        assert!(
+            LLC_LOOKUP_STATES
+                .iter()
+                .any(|state| state.filter0_bits() == 0x08 && state.label() == "sf_h")
+        );
+    }
+
+    #[test]
     fn computes_cha_metrics() {
         let scope = test_scope();
         let metrics = SkxChaMetrics::from_measurements(
@@ -3342,7 +3362,7 @@ mod tests {
         for state in [
             ChaCacheState::SfS,
             ChaCacheState::SfE,
-            ChaCacheState::SfM,
+            ChaCacheState::SfH,
             ChaCacheState::I,
             ChaCacheState::S,
             ChaCacheState::E,

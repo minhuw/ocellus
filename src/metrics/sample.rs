@@ -1,5 +1,5 @@
 use std::sync::atomic::AtomicU64;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
@@ -24,6 +24,21 @@ impl SampleWindow {
             end: SystemTime::now(),
         }
     }
+}
+
+/// How long from `now` to the next whole multiple of `interval` since the
+/// Unix epoch that is at least `interval / 2` away. Collectors sample or read
+/// until then, so their samples start and end together on whole multiples of
+/// the interval.
+pub fn until_next_boundary(now: SystemTime, interval: Duration) -> Duration {
+    let now = now
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must be after Unix epoch")
+        .as_nanos();
+    let interval = interval.as_nanos();
+    let boundary = (now + interval / 2).div_ceil(interval) * interval;
+
+    Duration::from_nanos(u64::try_from(boundary - now).expect("intervals fit in u64 nanoseconds"))
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
@@ -117,8 +132,6 @@ fn unix_seconds(time: SystemTime) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
 
     fn window(start_seconds: u64) -> SampleWindow {
@@ -148,6 +161,43 @@ mod tests {
         );
         assert!(
             text.contains("ocellus_sample_window_end_timestamp_seconds{collector=\"cha\"} 103.002")
+        );
+    }
+
+    #[test]
+    fn ends_samples_on_the_next_boundary_at_least_half_an_interval_away() {
+        let at = |milliseconds: u64| UNIX_EPOCH + Duration::from_millis(milliseconds);
+        let second = Duration::from_secs(1);
+        let cases = [
+            (at(10_300), second, Duration::from_millis(700)),
+            (at(10_500), second, Duration::from_millis(500)),
+            (at(10_501), second, Duration::from_millis(1_499)),
+            (at(11_000), second, second),
+            // A sample that ended a little after a boundary.
+            (at(11_003), second, Duration::from_millis(997)),
+            (
+                at(1_010),
+                Duration::from_millis(250),
+                Duration::from_millis(240),
+            ),
+            (
+                at(1_130),
+                Duration::from_millis(250),
+                Duration::from_millis(370),
+            ),
+        ];
+
+        for (now, interval, expected) in cases {
+            assert_eq!(until_next_boundary(now, interval), expected, "{now:?}");
+        }
+        let now = at(1_700_000_000_123) + Duration::from_nanos(456);
+        let until = until_next_boundary(now, second);
+        assert_eq!(
+            (now + until)
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos(),
+            0
         );
     }
 

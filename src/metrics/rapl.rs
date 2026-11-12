@@ -7,7 +7,6 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
-use tokio::time::MissedTickBehavior;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
@@ -229,11 +228,12 @@ impl RaplTask {
     }
 
     pub async fn run(mut self) {
-        let mut interval = tokio::time::interval(self.interval);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
         loop {
-            interval.tick().await;
+            tokio::time::sleep(crate::metrics::sample::until_next_boundary(
+                SystemTime::now(),
+                self.interval,
+            ))
+            .await;
             let started_at = SystemTime::now();
             match self.collector.sample() {
                 Ok(Some(rapl)) => {

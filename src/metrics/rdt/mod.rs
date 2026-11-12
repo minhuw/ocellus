@@ -8,13 +8,13 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
-use tokio::time::MissedTickBehavior;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
 use crate::metrics::common::topology_label;
+use crate::metrics::sample::until_next_boundary;
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 const IA32_QM_EVTSEL: u64 = 0xC8D;
@@ -494,11 +494,8 @@ impl RdtTask {
     /// machine, so an RDT error stops only RDT. Returning drops the collector,
     /// which removes the monitor groups it created.
     pub async fn run(mut self) -> Result<(), String> {
-        let mut interval = tokio::time::interval(self.interval);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
         loop {
-            interval.tick().await;
+            tokio::time::sleep(until_next_boundary(SystemTime::now(), self.interval)).await;
             let started_at = SystemTime::now();
             if let Some(rdt) = self.collector.sample()?
                 && self

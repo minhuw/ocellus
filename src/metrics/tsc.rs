@@ -5,10 +5,10 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
-use tokio::time::MissedTickBehavior;
 
 use crate::arch::Architecture;
 use crate::metal;
+use crate::metrics::sample::until_next_boundary;
 use crate::metrics::{MetricEvent, MetricUpdate};
 
 const IA32_TSC: u64 = 0x10;
@@ -59,11 +59,8 @@ impl TscTask {
     }
 
     pub async fn run(mut self) {
-        let mut interval = tokio::time::interval(self.interval);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
         loop {
-            interval.tick().await;
+            tokio::time::sleep(until_next_boundary(SystemTime::now(), self.interval)).await;
             let started_at = SystemTime::now();
             match self.collector.sample() {
                 Ok(Some(tsc)) => {

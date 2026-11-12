@@ -481,10 +481,10 @@ pub(crate) trait ConfigurableCollector: Send {
     ) -> impl Future<Output = Result<UncoreCounts, String>> + Send;
 }
 
-/// Samples `collector` back to back: its config while one is set, its
-/// default groups otherwise. A config request cancels the sample in flight
-/// at its next await; samples touch registers only between awaits, never
-/// across one.
+/// Samples `collector` back to back, each sample ending on a whole multiple
+/// of `interval`: its config while one is set, its default groups otherwise.
+/// A config request cancels the sample in flight at its next await; samples
+/// touch registers only between awaits, never across one.
 pub(crate) async fn run_configurable_collector<C: ConfigurableCollector>(
     mut collector: C,
     interval: Duration,
@@ -495,6 +495,7 @@ pub(crate) async fn run_configurable_collector<C: ConfigurableCollector>(
 
     loop {
         let started_at = SystemTime::now();
+        let duration = sample::until_next_boundary(started_at, interval);
         let sample = tokio::select! {
             biased;
             request = requests.next() => {
@@ -511,7 +512,7 @@ pub(crate) async fn run_configurable_collector<C: ConfigurableCollector>(
                 let _ = ack.send(result);
                 continue;
             }
-            sample = sample_configurable(&mut collector, interval) => sample,
+            sample = sample_configurable(&mut collector, duration) => sample,
         };
 
         match sample {

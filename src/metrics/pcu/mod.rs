@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metrics::common::topology_label;
+use crate::metrics::sample::until_next_boundary;
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
@@ -256,7 +257,8 @@ impl PcuTask {
     pub async fn run(mut self) {
         loop {
             let started_at = SystemTime::now();
-            match self.collector.sample(self.interval).await {
+            let duration = until_next_boundary(started_at, self.interval);
+            match self.collector.sample(duration).await {
                 Ok(pcu) => {
                     if self
                         .events

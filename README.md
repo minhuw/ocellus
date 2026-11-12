@@ -80,6 +80,10 @@ A delta of a box type's counts is valid only between two samples with equal
 same one again, restarts its counts from 0. Rates are Δcount / Δrunning
 seconds of the counter's group.
 
+Collectors sample from one whole multiple of the measure interval (in Unix
+time) to the next, so the samples of all box types cover the same intervals
+to within a few milliseconds.
+
 ## Releases
 
 Tagged releases publish a statically linked Linux x86_64 binary:

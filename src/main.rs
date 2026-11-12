@@ -7,6 +7,7 @@ use clap::{Parser, ValueEnum};
 mod arch;
 mod metal;
 mod metrics;
+mod pmu_config;
 mod runtime;
 
 const DEFAULT_LISTEN: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080));

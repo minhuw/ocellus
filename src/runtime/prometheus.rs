@@ -1,18 +1,24 @@
-use axum::Router;
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::{Json, Router};
 use prometheus_client::encoding::text::encode;
 use prometheus_client::registry::Registry;
+use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, oneshot};
 
 use crate::metrics::{MetricsRegistry, SamplerUpdate};
+use crate::pmu_config::spec::{self, PmuConfigRequest};
+use crate::pmu_config::types::PmuConfig;
+use crate::runtime::pmu_control::PmuControl;
 use crate::runtime::sampler::SamplerReader;
 
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
@@ -61,6 +67,10 @@ impl PrometheusExporter {
                         let _registry = registry.lock().await;
                         metrics.stop(collector);
                     }
+                    Ok(SamplerUpdate::ConfigChanged(box_type)) => {
+                        let _registry = registry.lock().await;
+                        metrics.config_changed(box_type);
+                    }
                     Err(RecvError::Lagged(skipped)) => {
                         eprintln!("ocellus: Prometheus metrics updater skipped {skipped} updates");
                     }
@@ -74,21 +84,25 @@ impl PrometheusExporter {
         let mut metrics = String::new();
         let registry = self.registry.lock().await;
         encode(&mut metrics, &registry)?;
-        Ok(metrics)
+        Ok(self.metrics.without_configured_defaults(metrics))
     }
 }
 
 #[derive(Debug)]
 struct AppState {
+    control: PmuControl,
     exporter: PrometheusExporter,
 }
 
 impl AppState {
     fn new(sampler: SamplerReader) -> Self {
         let exporter = PrometheusExporter::new(sampler.clone());
-        exporter.spawn_updater(sampler);
+        exporter.spawn_updater(sampler.clone());
 
-        Self { exporter }
+        Self {
+            control: sampler.pmu_control(),
+            exporter,
+        }
     }
 }
 
@@ -103,12 +117,7 @@ pub async fn run(
     let local_addr = listener
         .local_addr()
         .map_err(|error| format!("failed to read listener address: {error}"))?;
-    let state = Arc::new(AppState::new(sampler));
-    let app = Router::new()
-        .route("/", get(healthz))
-        .route("/healthz", get(healthz))
-        .route("/metrics", get(metrics))
-        .with_state(state);
+    let app = router(Arc::new(AppState::new(sampler)));
 
     eprintln!(
         "ocellus {}: serving Prometheus metrics on http://{local_addr}/metrics",
@@ -121,6 +130,20 @@ pub async fn run(
         })
         .await
         .map_err(|error| format!("server failed: {error}"))
+}
+
+fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/", get(healthz))
+        .route("/healthz", get(healthz))
+        .route("/metrics", get(metrics))
+        .route(
+            "/pmu-config",
+            get(get_pmu_config)
+                .put(put_pmu_config)
+                .delete(delete_pmu_config),
+        )
+        .with_state(state)
 }
 
 async fn healthz() -> &'static str {
@@ -148,6 +171,84 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Response {
         )
             .into_response(),
     }
+}
+
+async fn get_pmu_config(State(state): State<Arc<AppState>>) -> Response {
+    let configs = state.control.configs().await;
+
+    (StatusCode::OK, Json(config_summary(configs.values()))).into_response()
+}
+
+/// Sets the configs of the box types the request names and returns every
+/// other configured box type to its default groups.
+async fn put_pmu_config(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    let request = match serde_json::from_slice::<PmuConfigRequest>(&body) {
+        Ok(request) => request,
+        Err(error) => return pmu_config_error(StatusCode::BAD_REQUEST, error.to_string()),
+    };
+    let control = &state.control;
+    if let Some(box_type) = request
+        .box_types()
+        .into_iter()
+        .find(|box_type| !control.is_running(*box_type))
+    {
+        return pmu_config_error(
+            StatusCode::CONFLICT,
+            format!("no {} collector runs on this host", box_type.label()),
+        );
+    }
+    let programs = match spec::validate(request, control.topology(), control.model()) {
+        Ok(programs) => programs,
+        Err(error) => return pmu_config_error(StatusCode::BAD_REQUEST, error),
+    };
+
+    let started_at = SystemTime::now();
+    let configs = programs
+        .into_iter()
+        .map(|program| PmuConfig {
+            config_id: program.config_id,
+            started_at,
+            program: program.program,
+        })
+        .collect::<Vec<_>>();
+    let summary = config_summary(&configs);
+    match control.set(configs).await {
+        Ok(()) => (StatusCode::OK, Json(summary)).into_response(),
+        Err(error) => pmu_config_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+/// Returns every configured box type to its default groups.
+async fn delete_pmu_config(State(state): State<Arc<AppState>>) -> Response {
+    match state.control.set(Vec::new()).await {
+        Ok(()) => (StatusCode::OK, Json(json!({}))).into_response(),
+        Err(error) => pmu_config_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+/// `{"cha": {"config_id": N, "start_timestamp_seconds": T}, ...}`
+fn config_summary<'a>(configs: impl IntoIterator<Item = &'a PmuConfig>) -> Value {
+    configs
+        .into_iter()
+        .map(|config| {
+            let started_at = config
+                .started_at
+                .duration_since(UNIX_EPOCH)
+                .expect("PMU configs start after the Unix epoch");
+            (
+                config.program.box_type.label().to_string(),
+                json!({
+                    "config_id": config.config_id,
+                    "start_timestamp_seconds": started_at.as_secs_f64(),
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
+fn pmu_config_error(status: StatusCode, error: String) -> Response {
+    (status, Json(json!({ "error": error }))).into_response()
 }
 
 #[cfg(test)]
@@ -330,6 +431,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -363,6 +465,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: Some(crate::metrics::rapl::RaplMetrics {
@@ -504,6 +607,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -579,6 +683,7 @@ mod tests {
             imc: None,
             interconnect: Some(interconnect),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -781,6 +886,7 @@ mod tests {
             imc: Some(imc),
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -835,6 +941,7 @@ mod tests {
             imc: Some(imc),
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -976,6 +1083,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -1034,6 +1142,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -1103,6 +1212,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: Some(crate::metrics::irp::IrpMetrics::Skx(
                 crate::metrics::irp::skx::SkxIrpMetrics {
                     scopes: vec![crate::metrics::irp::skx::IrpScopeMetrics {
@@ -1170,6 +1280,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: Some(crate::metrics::irp::IrpMetrics::Emr(
                 crate::metrics::irp::spr::SprIrpMetrics {
                     scopes: vec![crate::metrics::irp::spr::SprIrpScopeMetrics {
@@ -1238,6 +1349,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: Some(crate::metrics::pcu::PcuMetrics::Bdx(hsx_pcu_metrics())),
             rapl: None,
@@ -1276,6 +1388,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: Some(crate::metrics::pcu::PcuMetrics::Skx(skx_pcu_metrics())),
             rapl: None,
@@ -1316,6 +1429,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: Some(crate::metrics::pcu::PcuMetrics::Icx(
                 crate::metrics::pcu::icx::IcxPcuMetrics {
@@ -1378,6 +1492,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: Some(pcu),
             rapl: None,
@@ -1416,6 +1531,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: Some(pcu),
             rapl: None,
@@ -1614,6 +1730,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: Some(irp),
             pcu: None,
             rapl: None,
@@ -1759,6 +1876,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -1864,6 +1982,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -1955,6 +2074,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -1996,6 +2116,7 @@ mod tests {
             imc: None,
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -2213,6 +2334,7 @@ mod tests {
             )),
             interconnect: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            uncore: Default::default(),
             irp: None,
             pcu: None,
             rapl: None,
@@ -2239,5 +2361,450 @@ mod tests {
         assert!(metrics.contains("ocellus_haswell_ha_local_read_bytes_per_second"));
         assert!(metrics.contains("ocellus_haswell_ha_local_read_ratio"));
         assert!(metrics.contains("package=\"0\""));
+    }
+
+    fn skx_irp_metrics() -> crate::metrics::irp::IrpMetrics {
+        crate::metrics::irp::IrpMetrics::Skx(crate::metrics::irp::skx::SkxIrpMetrics {
+            scopes: vec![crate::metrics::irp::skx::IrpScopeMetrics {
+                clflush_bytes_per_second: 3.0,
+                core_read_bytes_per_second: 8.0,
+                demand_read_bytes_per_second: 9.0,
+                faf_occupancy_entries: 2.0,
+                pcie_inbound_reads_per_second: 13.0,
+                frequency_hz: 1_000_000_000.0,
+                io_write_conflict_ratio: 0.25,
+                pci_dca_hint_bytes_per_second: 10.0,
+                pci_itom_bytes_per_second: 4.0,
+                pcie_read_current_bytes_per_second: 5.0,
+                read_for_ownership_bytes_per_second: 6.0,
+                scope: crate::metrics::uncore::skx::UncoreScope {
+                    die_group_id: None,
+                    die_id: None,
+                    package_id: 0,
+                },
+                stack: crate::metrics::uncore::skx::SkxIioStack::Pcie1,
+                total_irp_occupancy_entries: 11.0,
+                wbmtoi_bytes_per_second: 7.0,
+                pcie_inbound_writes_per_second: 12.0,
+                pcie_inbound_write_latency_seconds: 0.000001,
+            }],
+        })
+    }
+
+    fn sampled(
+        update: crate::metrics::MetricUpdate,
+        sequence: u64,
+    ) -> crate::metrics::SampledUpdate {
+        crate::metrics::SampledUpdate {
+            update,
+            sequence,
+            window: crate::metrics::SampleWindow {
+                start: std::time::UNIX_EPOCH,
+                end: std::time::UNIX_EPOCH,
+            },
+        }
+    }
+
+    fn uncore_update(
+        box_type: crate::pmu_config::types::BoxType,
+        config_id: u64,
+        started_at_ms: u64,
+        value: u64,
+    ) -> crate::metrics::MetricUpdate {
+        crate::metrics::MetricUpdate::Uncore(Box::new(crate::metrics::testing::uncore_counts(
+            crate::metrics::testing::pmu_config(box_type, config_id, started_at_ms),
+            value,
+        )))
+    }
+
+    fn skylake_exporter() -> PrometheusExporter {
+        PrometheusExporter::new(SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: skylake_info_metadata(),
+            },
+            crate::metrics::MetricsState::default(),
+        ))
+    }
+
+    /// The lines of the PMU config families, sorted: series within a family
+    /// render in no fixed order.
+    fn uncore_lines(metrics: &str) -> Vec<&str> {
+        let mut lines = metrics
+            .lines()
+            .filter(|line| line.contains("ocellus_uncore_"))
+            .collect::<Vec<_>>();
+        lines.sort_unstable();
+        lines
+    }
+
+    #[test]
+    fn renders_pmu_config_counts() {
+        use crate::pmu_config::types::BoxType;
+
+        let exporter = skylake_exporter();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let before = runtime.block_on(exporter.render_metrics()).unwrap();
+        assert!(!before.contains("ocellus_uncore_"));
+
+        exporter.metrics.update(sampled(
+            uncore_update(BoxType::Cha, 123_456_789, 1_700_000_000_250, 42),
+            1,
+        ));
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        let mut expected = vec![
+            "# HELP ocellus_uncore_count Raw count of a PMU config counter since the config started; ocellus_uncore_event_info says what it counts.",
+            "# TYPE ocellus_uncore_count counter",
+            r#"ocellus_uncore_count_total{box_type="cha",package="0",unit="sum",group="0",slot="0"} 42"#,
+            r#"ocellus_uncore_count_total{box_type="cha",package="0",unit="sum",group="0",slot="1"} 84"#,
+            "# HELP ocellus_uncore_running_seconds Time a PMU config group has counted since the config started.",
+            "# TYPE ocellus_uncore_running_seconds counter",
+            r#"ocellus_uncore_running_seconds_total{box_type="cha",package="0",group="0"} 0.5"#,
+            "# HELP ocellus_uncore_config_id Hash of the box type's PMU config programming; deltas are valid only between samples with equal config_id and config start.",
+            "# TYPE ocellus_uncore_config_id gauge",
+            r#"ocellus_uncore_config_id{box_type="cha"} 123456789"#,
+            "# HELP ocellus_uncore_config_start_timestamp_seconds Unix time the box type's PMU config was set and its counts started from 0.",
+            "# TYPE ocellus_uncore_config_start_timestamp_seconds gauge",
+            r#"ocellus_uncore_config_start_timestamp_seconds{box_type="cha"} 1700000000.25"#,
+            "# HELP ocellus_uncore_event_info What each counter of a PMU config counts, per package and group.",
+            "# TYPE ocellus_uncore_event_info gauge",
+            r#"ocellus_uncore_event_info{config_id="123456789",box_type="cha",package="0",group="0",slot="0",units="0-2,4",alias="raw",event="0x35",filter0="0x0",filter1="0x3b",umask="0x34"} 1"#,
+            r#"ocellus_uncore_event_info{config_id="123456789",box_type="cha",package="0",group="0",slot="1",units="0-2,4",alias="raw",event="0x35",filter0="0x0",filter1="0x3b",umask="0x24"} 1"#,
+        ];
+        expected.sort_unstable();
+        assert_eq!(uncore_lines(&metrics), expected);
+        // Config samples count as samples of the box type's collector.
+        assert!(metrics.contains(r#"ocellus_samples_total{collector="cha"} 1"#));
+        assert!(
+            metrics.contains(r#"ocellus_sample_window_end_timestamp_seconds{collector="cha"}"#)
+        );
+    }
+
+    #[test]
+    fn replaces_the_series_of_a_changed_config() {
+        use crate::pmu_config::types::BoxType;
+
+        let exporter = skylake_exporter();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let render = || runtime.block_on(exporter.render_metrics()).unwrap();
+        let slot_0 = |value: u64| {
+            format!(
+                r#"ocellus_uncore_count_total{{box_type="cha",package="0",unit="sum",group="0",slot="0"}} {value}"#
+            )
+        };
+
+        exporter
+            .metrics
+            .update(sampled(uncore_update(BoxType::Cha, 1, 1_000, 42), 1));
+        exporter
+            .metrics
+            .update(sampled(uncore_update(BoxType::Iio, 7, 1_000, 5), 1));
+        assert!(render().contains(&slot_0(42)));
+
+        // Another config starts its counters from its own counts.
+        exporter
+            .metrics
+            .update(sampled(uncore_update(BoxType::Cha, 2, 2_000, 3), 2));
+        let metrics = render();
+        assert!(metrics.contains(&slot_0(3)), "{metrics}");
+        assert!(metrics.contains(r#"ocellus_uncore_config_id{box_type="cha"} 2"#));
+        assert!(!metrics.contains(r#"config_id="1""#));
+        assert_eq!(
+            uncore_lines(&metrics)
+                .iter()
+                .filter(|line| line.contains(r#"box_type="cha""#))
+                .count(),
+            7
+        );
+
+        // So does the same config set again.
+        exporter
+            .metrics
+            .update(sampled(uncore_update(BoxType::Cha, 2, 3_000, 1), 3));
+        let metrics = render();
+        assert!(metrics.contains(&slot_0(1)), "{metrics}");
+        assert!(
+            metrics
+                .contains(r#"ocellus_uncore_config_start_timestamp_seconds{box_type="cha"} 3.0"#)
+        );
+
+        exporter.metrics.config_changed(BoxType::Cha);
+        let metrics = render();
+        assert!(!metrics.contains(r#"box_type="cha""#));
+        // Other box types keep their config.
+        assert!(metrics.contains(r#"ocellus_uncore_config_id{box_type="iio"} 7"#));
+    }
+
+    #[test]
+    fn leaves_out_default_metrics_while_a_config_runs() {
+        use crate::metrics::MetricUpdate;
+        use crate::pmu_config::types::BoxType;
+
+        let exporter = skylake_exporter();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let render = || runtime.block_on(exporter.render_metrics()).unwrap();
+        let has_irp_defaults = |metrics: &str| {
+            metrics.lines().any(|line| {
+                line.starts_with("ocellus_irp_") || line.starts_with("# HELP ocellus_irp_")
+            })
+        };
+        exporter.metrics.update(sampled(
+            MetricUpdate::Tsc(Box::new(crate::metrics::tsc::TscMetrics {
+                frequency_hz: 1.0,
+            })),
+            1,
+        ));
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Irp(Box::new(skx_irp_metrics())), 1));
+        let defaults = render();
+        assert!(has_irp_defaults(&defaults));
+
+        exporter.metrics.config_changed(BoxType::Irp);
+        assert!(!has_irp_defaults(&render()));
+        exporter
+            .metrics
+            .update(sampled(uncore_update(BoxType::Irp, 1, 1_000, 42), 2));
+        let configured = render();
+        assert!(!has_irp_defaults(&configured));
+        assert!(configured.contains(r#"ocellus_uncore_config_id{box_type="irp"} 1"#));
+        assert!(configured.contains("ocellus_tsc_frequency_hz"));
+        assert!(configured.ends_with("# EOF\n"));
+
+        exporter.metrics.config_changed(BoxType::Irp);
+        assert!(!has_irp_defaults(&render()));
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Irp(Box::new(skx_irp_metrics())), 3));
+        let restored = render();
+        assert!(!restored.contains("ocellus_uncore_"));
+        assert_eq!(
+            restored.replace(r#"ocellus_samples_total{collector="irp"} 3"#, ""),
+            defaults.replace(r#"ocellus_samples_total{collector="irp"} 1"#, "")
+        );
+    }
+
+    /// Serves the app on a free local port.
+    async fn serve(sampler: SamplerReader) -> (Arc<AppState>, SocketAddr) {
+        let state = Arc::new(AppState::new(sampler));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(axum::serve(listener, router(state.clone())).into_future());
+
+        (state, addr)
+    }
+
+    /// Sends one HTTP/1.1 request and returns the status and body.
+    async fn http(addr: SocketAddr, method: &str, path: &str, body: &str) -> (u16, String) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                format!(
+                    "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        let (head, body) = response.split_once("\r\n\r\n").unwrap();
+        let status = head.split(' ').nth(1).unwrap().parse().unwrap();
+
+        (status, body.to_string())
+    }
+
+    async fn http_json(addr: SocketAddr, method: &str, body: &str) -> (u16, Value) {
+        let (status, body) = http(addr, method, "/pmu-config", body).await;
+        (status, serde_json::from_str(&body).unwrap())
+    }
+
+    /// Scrapes until `ready` holds for the metrics, and returns them.
+    async fn scrape_until(addr: SocketAddr, ready: impl Fn(&str) -> bool) -> String {
+        for _ in 0..200 {
+            let (status, metrics) = http(addr, "GET", "/metrics", "").await;
+            assert_eq!(status, 200);
+            if ready(&metrics) {
+                return metrics;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("metrics never got ready");
+    }
+
+    fn fake_irp_sampler() -> (SamplerReader, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        let (collector, log) = crate::metrics::testing::FakeCollector::new(
+            crate::metrics::MetricUpdate::Irp(Box::new(skx_irp_metrics())),
+        );
+        let sampler = SamplerReader::spawn_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(20),
+                info: skylake_info_metadata(),
+            },
+            crate::pmu_config::types::BoxType::Irp,
+            collector,
+        );
+
+        (sampler, log)
+    }
+
+    fn irp_request(alias: &str) -> String {
+        json!({"pmus": {"irp": {"groups": [{"events": [{"alias": alias}]}]}}}).to_string()
+    }
+
+    fn has_irp_defaults(metrics: &str) -> bool {
+        metrics
+            .lines()
+            .any(|line| line.starts_with("ocellus_irp_frequency_hz{"))
+    }
+
+    #[test]
+    fn sets_pmu_configs_over_http() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            let (sampler, mut log) = fake_irp_sampler();
+            let (_state, addr) = serve(sampler.clone()).await;
+            scrape_until(addr, has_irp_defaults).await;
+            assert_eq!(http_json(addr, "GET", "").await, (200, json!({})));
+
+            let (status, set) = http_json(addr, "PUT", &irp_request("clockticks")).await;
+            assert_eq!(status, 200, "{set}");
+            let first = set["irp"]["config_id"].as_u64().unwrap();
+            assert!(set["irp"]["start_timestamp_seconds"].as_f64().unwrap() > 0.0);
+            assert_eq!(set.as_object().unwrap().len(), 1);
+            assert_eq!(http_json(addr, "GET", "").await, (200, set.clone()));
+            // The collector switched and samples the config.
+            let mut lines = Vec::new();
+            while !lines.contains(&"config sample started".to_string()) {
+                lines.push(log.recv().await.unwrap());
+            }
+            assert!(lines.contains(&format!("set_config {first}")));
+
+            let metrics = scrape_until(addr, |metrics| {
+                metrics.contains(&format!(r#"ocellus_uncore_config_id{{box_type="irp"}} {first}"#))
+                    && metrics.contains(r#"ocellus_uncore_count_total{box_type="irp""#)
+            })
+            .await;
+            assert!(!has_irp_defaults(&metrics));
+            assert!(metrics.contains(&format!(
+                r#"ocellus_uncore_event_info{{config_id="{first}",box_type="irp",package="1",group="0",slot="0",units="0-5",alias="clockticks",event="0x01",umask="0x00"}} 1"#
+            )));
+            assert!(metrics.contains(r#"ocellus_uncore_running_seconds_total{box_type="irp",package="0",group="0"} 0.5"#));
+            assert!(metrics.contains(r#"ocellus_uncore_config_start_timestamp_seconds{box_type="irp"}"#));
+
+            // Another config replaces the series of the first.
+            let (status, set) = http_json(addr, "PUT", &irp_request("faf_inserts")).await;
+            assert_eq!(status, 200, "{set}");
+            let second = set["irp"]["config_id"].as_u64().unwrap();
+            assert_ne!(second, first);
+            let metrics = scrape_until(addr, |metrics| {
+                metrics.contains(&format!(r#"config_id="{second}""#))
+                    && metrics.contains(r#"ocellus_uncore_count_total{box_type="irp""#)
+            })
+            .await;
+            assert!(!metrics.contains(&format!(r#"config_id="{first}""#)));
+            assert_eq!(
+                metrics
+                    .lines()
+                    .filter(|line| line.starts_with("ocellus_uncore_config_id{"))
+                    .collect::<Vec<_>>(),
+                [format!(r#"ocellus_uncore_config_id{{box_type="irp"}} {second}"#)]
+            );
+
+            // DELETE brings the default groups back.
+            assert_eq!(http_json(addr, "DELETE", "").await, (200, json!({})));
+            assert_eq!(http_json(addr, "GET", "").await, (200, json!({})));
+            let metrics = scrape_until(addr, has_irp_defaults).await;
+            assert!(!metrics.contains("ocellus_uncore_"));
+            let state = sampler.latest_state().await;
+            assert!(state.uncore.is_empty());
+            assert!(state.irp.is_some());
+        });
+    }
+
+    #[test]
+    fn rejects_invalid_pmu_configs() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            let (sampler, mut log) = fake_irp_sampler();
+            let (_state, addr) = serve(sampler).await;
+            let cases = [
+                ("{", "EOF while parsing an object"),
+                (
+                    r#"{"pmus": {}, "window_id": 1}"#,
+                    "unknown field `window_id`",
+                ),
+                (r#"{"pmus": {}}"#, "pmus: must program at least one PMU"),
+                (
+                    &irp_request("clockticks").replace("clockticks", "tor_inserts"),
+                    "pmus.irp.groups[0].events[0].alias: unknown Skylake-SP IRP alias \"tor_inserts\"",
+                ),
+            ];
+
+            for (body, expected) in cases {
+                let (status, error) = http_json(addr, "PUT", body).await;
+                assert_eq!(status, 400, "{body}: {error}");
+                let error = error["error"].as_str().unwrap();
+                assert!(error.starts_with(expected), "{body}: {error}");
+            }
+            assert_eq!(http_json(addr, "GET", "").await, (200, json!({})));
+            while let Ok(line) = log.try_recv() {
+                assert!(!line.starts_with("set_config"), "{line}");
+            }
+        });
+    }
+
+    #[test]
+    fn rejects_pmu_configs_of_box_types_without_a_collector() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            let (sampler, _log) = fake_irp_sampler();
+            let (_state, addr) = serve(sampler).await;
+            let request = json!({"pmus": {
+                "irp": {"groups": [{"events": [{"alias": "clockticks"}]}]},
+                "cha": {"groups": [{"events": [{"alias": "clockticks"}]}]}
+            }});
+
+            assert_eq!(
+                http_json(addr, "PUT", &request.to_string()).await,
+                (409, json!({"error": "no cha collector runs on this host"}))
+            );
+            assert_eq!(http_json(addr, "GET", "").await, (200, json!({})));
+        });
+    }
+
+    #[test]
+    fn reports_which_box_types_switched_when_a_collector_fails() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            let (collector, _log) = crate::metrics::testing::FakeCollector::new(
+                crate::metrics::MetricUpdate::Irp(Box::new(skx_irp_metrics())),
+            );
+            let sampler = SamplerReader::spawn_for_test(
+                crate::runtime::sampler::SamplerMetadata {
+                    measure_interval: std::time::Duration::from_millis(20),
+                    info: skylake_info_metadata(),
+                },
+                crate::pmu_config::types::BoxType::Irp,
+                collector.failing("cannot program the IRP boxes"),
+            );
+            let (_state, addr) = serve(sampler).await;
+
+            assert_eq!(
+                http_json(addr, "PUT", &irp_request("clockticks")).await,
+                (
+                    500,
+                    json!({"error": "irp: cannot program the IRP boxes (box types already switched: none)"})
+                )
+            );
+        });
     }
 }

@@ -17,9 +17,11 @@ use crate::metrics::rapl::{RaplCollector, RaplTask};
 use crate::metrics::rdt::{RdtCollector, RdtTask};
 use crate::metrics::tsc::{TscCollector, TscTask};
 use crate::metrics::{
-    CollectorMetadata, EventProfile, InfoMetadata, MetricEvent, MetricsState, SampledUpdate,
-    SamplerUpdate,
+    CollectorMetadata, ConfigurableCollector, EventProfile, InfoMetadata, MetricEvent,
+    MetricsState, SampledUpdate, SamplerUpdate,
 };
+use crate::pmu_config::types::BoxType;
+use crate::runtime::pmu_control::PmuControl;
 
 const EVENT_CHANNEL_CAPACITY: usize = 64;
 const UPDATE_CHANNEL_CAPACITY: usize = 64;
@@ -32,12 +34,18 @@ pub struct SamplerMetadata {
 
 #[derive(Clone, Debug)]
 pub struct SamplerReader {
+    control: PmuControl,
     metadata: SamplerMetadata,
     latest: Arc<RwLock<MetricsState>>,
     updates: broadcast::Sender<SamplerUpdate>,
 }
 
 impl SamplerReader {
+    /// Sets the PMU configs of the CHA, IIO, IRP and IMC collectors.
+    pub fn pmu_control(&self) -> PmuControl {
+        self.control.clone()
+    }
+
     pub async fn latest_state(&self) -> MetricsState {
         self.latest.read().await.clone()
     }
@@ -54,7 +62,39 @@ impl SamplerReader {
     pub fn new_for_test(metadata: SamplerMetadata, latest_state: MetricsState) -> Self {
         let (updates, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
 
-        Self::from_parts(metadata, Arc::new(RwLock::new(latest_state)), updates)
+        Self::from_parts(
+            PmuControl::new(crate::arch::IntelServerCpuModel::SkylakeXeon),
+            metadata,
+            Arc::new(RwLock::new(latest_state)),
+            updates,
+        )
+    }
+
+    /// A sampler of one fake collector of `box_type`.
+    #[cfg(test)]
+    pub fn spawn_for_test(
+        metadata: SamplerMetadata,
+        box_type: BoxType,
+        collector: crate::metrics::testing::FakeCollector,
+    ) -> Self {
+        let latest = Arc::new(RwLock::new(MetricsState::default()));
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let (update_tx, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
+        let mut control = PmuControl::new(crate::arch::IntelServerCpuModel::SkylakeXeon);
+        let requests = control.register(box_type, collector.config_units());
+        tokio::spawn(crate::metrics::run_configurable_collector(
+            collector,
+            metadata.measure_interval,
+            requests,
+            event_tx,
+        ));
+        tokio::spawn(aggregate_events(
+            event_rx,
+            latest.clone(),
+            update_tx.clone(),
+        ));
+
+        Self::from_parts(control, metadata, latest, update_tx)
     }
 
     #[cfg(test)]
@@ -63,11 +103,13 @@ impl SamplerReader {
     }
 
     fn from_parts(
+        control: PmuControl,
         metadata: SamplerMetadata,
         latest: Arc<RwLock<MetricsState>>,
         updates: broadcast::Sender<SamplerUpdate>,
     ) -> Self {
         Self {
+            control,
             metadata,
             latest,
             updates,
@@ -108,12 +150,13 @@ pub fn spawn(config: SamplerConfig, architecture: Architecture) -> Sampler {
     let latest = Arc::new(RwLock::new(MetricsState::default()));
     let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
     let (update_tx, _) = broadcast::channel(UPDATE_CHANNEL_CAPACITY);
+    let mut control = PmuControl::new(architecture.intel_server_model());
 
-    spawn_cha_collector(&architecture, config, &event_tx);
+    spawn_cha_collector(&architecture, config, &event_tx, &mut control);
     spawn_rapl_collector(&architecture, measure_interval, &event_tx);
-    spawn_imc_collector(&architecture, config, &event_tx);
-    spawn_iio_collector(&architecture, measure_interval, &event_tx);
-    spawn_irp_collector(&architecture, measure_interval, &event_tx);
+    spawn_imc_collector(&architecture, config, &event_tx, &mut control);
+    spawn_iio_collector(&architecture, measure_interval, &event_tx, &mut control);
+    spawn_irp_collector(&architecture, measure_interval, &event_tx, &mut control);
     spawn_pcu_collector(&architecture, measure_interval, &event_tx);
     spawn_interconnect_collector(&architecture, measure_interval, &event_tx);
     spawn_rdt_collector(&architecture, measure_interval, &event_tx);
@@ -130,7 +173,7 @@ pub fn spawn(config: SamplerConfig, architecture: Architecture) -> Sampler {
     ));
 
     Sampler {
-        reader: SamplerReader::from_parts(metadata, latest, update_tx),
+        reader: SamplerReader::from_parts(control, metadata, latest, update_tx),
         task,
     }
 }
@@ -174,6 +217,7 @@ fn spawn_cha_collector(
     architecture: &Architecture,
     config: SamplerConfig,
     events: &mpsc::Sender<MetricEvent>,
+    control: &mut PmuControl,
 ) {
     let measure_interval = config.measure_interval;
 
@@ -185,9 +229,10 @@ fn spawn_cha_collector(
     }) {
         Ok(cha) => {
             eprintln!("ocellus: starting CHA collector");
+            let requests = control.register(BoxType::Cha, cha.config_units());
             spawn_collector(
                 "cha",
-                ChaTask::new(cha, measure_interval, events.clone()).run(),
+                ChaTask::new(cha, measure_interval, events.clone(), requests).run(),
                 events.clone(),
             );
         }
@@ -201,13 +246,15 @@ fn spawn_iio_collector(
     architecture: &Architecture,
     measure_interval: Duration,
     events: &mpsc::Sender<MetricEvent>,
+    control: &mut PmuControl,
 ) {
     match IioCollector::new(architecture) {
         Ok(iio) => {
             eprintln!("ocellus: starting IIO collector");
+            let requests = control.register(BoxType::Iio, iio.config_units());
             spawn_collector(
                 "iio",
-                IioTask::new(iio, measure_interval, events.clone()).run(),
+                IioTask::new(iio, measure_interval, events.clone(), requests).run(),
                 events.clone(),
             );
         }
@@ -221,6 +268,7 @@ fn spawn_imc_collector(
     architecture: &Architecture,
     config: SamplerConfig,
     events: &mpsc::Sender<MetricEvent>,
+    control: &mut PmuControl,
 ) {
     let measure_interval = config.measure_interval;
 
@@ -230,9 +278,10 @@ fn spawn_imc_collector(
     }) {
         Ok(imc) => {
             eprintln!("ocellus: starting IMC collector");
+            let requests = control.register(BoxType::Imc, imc.config_units());
             spawn_collector(
                 "imc",
-                ImcTask::new(imc, measure_interval, events.clone()).run(),
+                ImcTask::new(imc, measure_interval, events.clone(), requests).run(),
                 events.clone(),
             );
         }
@@ -246,13 +295,15 @@ fn spawn_irp_collector(
     architecture: &Architecture,
     measure_interval: Duration,
     events: &mpsc::Sender<MetricEvent>,
+    control: &mut PmuControl,
 ) {
     match IrpCollector::new(architecture) {
         Ok(irp) => {
             eprintln!("ocellus: starting IRP collector");
+            let requests = control.register(BoxType::Irp, irp.config_units());
             spawn_collector(
                 "irp",
-                IrpTask::new(irp, measure_interval, events.clone()).run(),
+                IrpTask::new(irp, measure_interval, events.clone(), requests).run(),
                 events.clone(),
             );
         }
@@ -399,6 +450,11 @@ async fn aggregate_events(
                 *latest.write().await = state.clone();
                 let _ = updates.send(SamplerUpdate::Stopped(collector));
             }
+            MetricEvent::ConfigChanged(box_type) => {
+                state.config_changed(box_type);
+                *latest.write().await = state.clone();
+                let _ = updates.send(SamplerUpdate::ConfigChanged(box_type));
+            }
             MetricEvent::Update(update, window) => {
                 let update = *update;
                 let sequence = sequences.entry(update.collector()).or_default();
@@ -506,6 +562,55 @@ mod tests {
             assert!(!aggregate.is_finished());
             let state = latest.read().await;
             assert!(state.rdt.is_none());
+            assert!(state.tsc.is_some());
+        });
+    }
+
+    #[test]
+    fn keeps_config_counts_until_the_config_changes() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            let (event_tx, event_rx) = mpsc::channel(8);
+            let (update_tx, mut update_rx) = broadcast::channel(8);
+            let latest = Arc::new(RwLock::new(MetricsState::default()));
+            tokio::spawn(aggregate_events(event_rx, latest.clone(), update_tx));
+            let counts = crate::metrics::testing::uncore_counts(
+                crate::metrics::testing::pmu_config(BoxType::Irp, 7, 1_000),
+                42,
+            );
+
+            event_tx.send(tsc_event()).await.unwrap();
+            event_tx
+                .send(MetricEvent::ConfigChanged(BoxType::Irp))
+                .await
+                .unwrap();
+            event_tx
+                .send(MetricEvent::update(
+                    MetricUpdate::Uncore(Box::new(counts.clone())),
+                    SystemTime::now(),
+                ))
+                .await
+                .unwrap();
+            for _ in 0..2 {
+                update_rx.recv().await.unwrap();
+            }
+            let SamplerUpdate::Sample(update) = update_rx.recv().await.unwrap() else {
+                panic!("expected a sample");
+            };
+            assert_eq!((update.update.collector(), update.sequence), ("irp", 1));
+            assert_eq!(latest.read().await.uncore[&BoxType::Irp], counts);
+
+            event_tx
+                .send(MetricEvent::ConfigChanged(BoxType::Irp))
+                .await
+                .unwrap();
+            assert!(matches!(
+                update_rx.recv().await.unwrap(),
+                SamplerUpdate::ConfigChanged(BoxType::Irp)
+            ));
+            let state = latest.read().await;
+            assert!(state.uncore.is_empty());
             assert!(state.tsc.is_some());
         });
     }

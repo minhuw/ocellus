@@ -44,14 +44,14 @@ const CHA_FILTER1_BASE: u64 = 0x0e06;
 const CHA_UNIT_CONTROL_BASE: u64 = 0x0e00;
 const CHA_UNIT_STRIDE: u64 = 0x10;
 
-const CHA_FILTER0_STATE_SHIFT: u32 = 17;
-const CHA_FILTER1_REMOTE_BIT: u32 = 1 << 0;
-const CHA_FILTER1_LOCAL_BIT: u32 = 1 << 1;
-const CHA_FILTER1_ALL_OPCODE_BIT: u32 = 1 << 3;
-const CHA_FILTER1_NEAR_MEMORY_BIT: u32 = 1 << 4;
-const CHA_FILTER1_NOT_NEAR_MEMORY_BIT: u32 = 1 << 5;
-const CHA_FILTER1_OPCODE0_SHIFT: u32 = 9;
-const CHA_FILTER1_OPCODE1_SHIFT: u32 = 19;
+pub(crate) const CHA_FILTER0_STATE_SHIFT: u32 = 17;
+pub(crate) const CHA_FILTER1_REMOTE_BIT: u32 = 1 << 0;
+pub(crate) const CHA_FILTER1_LOCAL_BIT: u32 = 1 << 1;
+pub(crate) const CHA_FILTER1_ALL_OPCODE_BIT: u32 = 1 << 3;
+pub(crate) const CHA_FILTER1_NEAR_MEMORY_BIT: u32 = 1 << 4;
+pub(crate) const CHA_FILTER1_NOT_NEAR_MEMORY_BIT: u32 = 1 << 5;
+pub(crate) const CHA_FILTER1_OPCODE0_SHIFT: u32 = 9;
+pub(crate) const CHA_FILTER1_OPCODE1_SHIFT: u32 = 19;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 enum ChaTransactionKind {
@@ -1092,6 +1092,35 @@ pub struct SkxChaCollector {
     next_partition_offset: usize,
     packages: Vec<ChaPackage>,
     request_locality: ChaRequestLocality,
+}
+
+impl SkxChaCollector {
+    /// The CHA ids of each package that PMU configs can program.
+    pub fn config_units(&self) -> std::collections::BTreeMap<u16, std::collections::BTreeSet<u16>> {
+        std::collections::BTreeMap::new()
+    }
+
+    pub fn has_config(&self) -> bool {
+        false
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(
+        &mut self,
+        _config: Option<crate::pmu_config::types::PmuConfig>,
+    ) -> Result<(), String> {
+        Err("PMU configs are not implemented for Skylake-SP CHA yet".to_string())
+    }
+
+    /// Samples the set config for `interval`. Its counts are cumulative since
+    /// the config was set.
+    pub async fn sample_config(
+        &mut self,
+        _interval: Duration,
+    ) -> Result<crate::pmu_config::types::UncoreCounts, String> {
+        Err("PMU configs are not implemented for Skylake-SP CHA yet".to_string())
+    }
 }
 
 impl SkxChaCollector {

@@ -4,13 +4,18 @@ pub mod skx;
 pub mod snb;
 pub mod spr;
 
-use std::time::{Duration, SystemTime};
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
 
 use crate::arch::{Architecture, IntelServerCpuModel};
-use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
+use crate::metrics::{
+    ConfigurableCollector, InfoMetadata, MetricEvent, MetricUpdate, run_configurable_collector,
+};
+use crate::pmu_config::types::{PmuConfig, UncoreCounts};
+use crate::runtime::pmu_control::ConfigRequests;
 
 pub use hsx::HsxIrpMetrics;
 pub use icx::IcxIrpMetrics;
@@ -92,11 +97,80 @@ impl IrpCollector {
     }
 }
 
+impl ConfigurableCollector for IrpCollector {
+    async fn sample_update(&mut self, interval: Duration) -> Result<MetricUpdate, String> {
+        self.sample(interval)
+            .await
+            .map(|irp| MetricUpdate::Irp(Box::new(irp)))
+    }
+
+    fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        match self {
+            Self::Skx(collector) => collector.config_units(),
+            Self::Emr(_)
+            | Self::Hsx(_)
+            | Self::Icx(_)
+            | Self::Ivb(_)
+            | Self::Snb(_)
+            | Self::Spr(_) => BTreeMap::new(),
+        }
+    }
+
+    fn has_config(&self) -> bool {
+        match self {
+            Self::Skx(collector) => collector.has_config(),
+            Self::Emr(_)
+            | Self::Hsx(_)
+            | Self::Icx(_)
+            | Self::Ivb(_)
+            | Self::Snb(_)
+            | Self::Spr(_) => false,
+        }
+    }
+
+    fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        match self {
+            Self::Skx(collector) => collector.set_config(config),
+            _ if config.is_none() => Ok(()),
+            collector => Err(format!(
+                "PMU configs are not supported on {}",
+                collector.architecture()
+            )),
+        }
+    }
+
+    async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+        match self {
+            Self::Skx(collector) => collector.sample_config(interval).await,
+            collector => Err(format!(
+                "PMU configs are not supported on {}",
+                collector.architecture()
+            )),
+        }
+    }
+}
+
+impl IrpCollector {
+    /// The architecture's name, for errors.
+    fn architecture(&self) -> &'static str {
+        match self {
+            Self::Emr(_) => "Emerald Rapids",
+            Self::Hsx(_) => "Haswell-EP and Broadwell-EP",
+            Self::Icx(_) => "Ice Lake-SP",
+            Self::Ivb(_) => "Ivy Bridge-EP",
+            Self::Snb(_) => "Sandy Bridge-EP",
+            Self::Spr(_) => "Sapphire Rapids",
+            Self::Skx(_) => "Skylake-SP",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct IrpTask {
     collector: IrpCollector,
     events: mpsc::Sender<MetricEvent>,
     interval: Duration,
+    requests: ConfigRequests,
 }
 
 impl IrpTask {
@@ -104,37 +178,18 @@ impl IrpTask {
         collector: IrpCollector,
         interval: Duration,
         events: mpsc::Sender<MetricEvent>,
+        requests: ConfigRequests,
     ) -> Self {
         Self {
             collector,
             events,
             interval,
+            requests,
         }
     }
 
-    pub async fn run(mut self) {
-        loop {
-            let started_at = SystemTime::now();
-            match self.collector.sample(self.interval).await {
-                Ok(irp) => {
-                    if self
-                        .events
-                        .send(MetricEvent::update(
-                            MetricUpdate::Irp(Box::new(irp)),
-                            started_at,
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    let _ = self.events.send(MetricEvent::Failure(error)).await;
-                    return;
-                }
-            }
-        }
+    pub async fn run(self) {
+        run_configurable_collector(self.collector, self.interval, self.requests, self.events).await;
     }
 }
 

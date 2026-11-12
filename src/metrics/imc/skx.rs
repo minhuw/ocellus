@@ -194,6 +194,35 @@ pub struct SkxImcCollector {
 }
 
 impl SkxImcCollector {
+    /// The IMC channels of each package that PMU configs can program.
+    pub fn config_units(&self) -> std::collections::BTreeMap<u16, std::collections::BTreeSet<u16>> {
+        std::collections::BTreeMap::new()
+    }
+
+    pub fn has_config(&self) -> bool {
+        false
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(
+        &mut self,
+        _config: Option<crate::pmu_config::types::PmuConfig>,
+    ) -> Result<(), String> {
+        Err("PMU configs are not implemented for Skylake-SP IMC yet".to_string())
+    }
+
+    /// Samples the set config for `interval`. Its counts are cumulative since
+    /// the config was set.
+    pub async fn sample_config(
+        &mut self,
+        _interval: Duration,
+    ) -> Result<crate::pmu_config::types::UncoreCounts, String> {
+        Err("PMU configs are not implemented for Skylake-SP IMC yet".to_string())
+    }
+}
+
+impl SkxImcCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         Ok(Self {
             channels: discover_channels(architecture.intel_server_model())?,

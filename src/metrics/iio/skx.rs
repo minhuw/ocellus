@@ -229,6 +229,35 @@ pub struct SkxIioCollector {
 }
 
 impl SkxIioCollector {
+    /// The IIO stacks of each package that PMU configs can program.
+    pub fn config_units(&self) -> std::collections::BTreeMap<u16, std::collections::BTreeSet<u16>> {
+        std::collections::BTreeMap::new()
+    }
+
+    pub fn has_config(&self) -> bool {
+        false
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(
+        &mut self,
+        _config: Option<crate::pmu_config::types::PmuConfig>,
+    ) -> Result<(), String> {
+        Err("PMU configs are not implemented for Skylake-SP IIO yet".to_string())
+    }
+
+    /// Samples the set config for `interval`. Its counts are cumulative since
+    /// the config was set.
+    pub async fn sample_config(
+        &mut self,
+        _interval: Duration,
+    ) -> Result<crate::pmu_config::types::UncoreCounts, String> {
+        Err("PMU configs are not implemented for Skylake-SP IIO yet".to_string())
+    }
+}
+
+impl SkxIioCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         let packages = discover_packages(architecture.intel_server_model())?;
         probe_writable_msrs(&packages)?;
@@ -279,6 +308,14 @@ impl SkxIioCollector {
         self.rotate_group();
 
         SkxIioMetrics::from_measurements(measurements.into_measurements(), ports)
+    }
+
+    /// Forgets the last PCIe readings, so the next sample reports no PCIe
+    /// bandwidth rather than one averaged over a pause.
+    pub fn discard_readings(&mut self) {
+        for package in &mut self.packages {
+            package.free_running.previous = None;
+        }
     }
 
     fn rotate_group(&mut self) {
@@ -564,6 +601,14 @@ impl IioFreeRunningCounters {
 
     fn sample(&mut self, scope: UncoreScope) -> Result<Vec<IioPciePortMetrics>, String> {
         let current = (Instant::now(), self.read()?);
+        self.advance(scope, current)
+    }
+
+    fn advance(
+        &mut self,
+        scope: UncoreScope,
+        current: (Instant, Vec<u64>),
+    ) -> Result<Vec<IioPciePortMetrics>, String> {
         let previous = match self.previous.replace(current.clone()) {
             Some(previous) => previous,
             None => return Ok(Vec::new()),
@@ -1037,6 +1082,37 @@ mod tests {
         assert_eq!(ports[0].read_bytes_per_second, 4_000.0);
         assert_eq!(ports[0].stack, SkxIioStack::CbdmaDmi);
         assert_eq!(ports[0].write_bytes_per_second, 8_000.0);
+    }
+
+    #[test]
+    fn computes_no_pcie_bandwidth_from_readings_before_a_pause() {
+        let scope = test_scope();
+        let mut collector = test_collector();
+        collector.packages.push(IioPackage::new(0, scope));
+        let start = Instant::now();
+        let reading = |milliseconds, read_count| {
+            let mut values = vec![0; IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT * 2];
+            values[0] = read_count;
+            (start + Duration::from_millis(milliseconds), values)
+        };
+        collector.packages[0]
+            .free_running
+            .advance(scope, reading(0, 0))
+            .unwrap();
+
+        collector.discard_readings();
+
+        // The window ran for a second in between.
+        let resumed = collector.packages[0]
+            .free_running
+            .advance(scope, reading(1_000, 1_000_000))
+            .unwrap();
+        assert!(resumed.is_empty());
+        let ports = collector.packages[0]
+            .free_running
+            .advance(scope, reading(1_100, 1_000_100))
+            .unwrap();
+        assert_eq!(ports[0].read_bytes_per_second, 4_000.0);
     }
 
     #[test]

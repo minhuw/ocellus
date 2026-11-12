@@ -6,6 +6,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::oneshot;
 
 pub mod local;
+pub mod pmu_control;
 pub mod prometheus;
 pub mod sampler;
 

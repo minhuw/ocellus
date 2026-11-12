@@ -4,8 +4,8 @@ pub mod skx;
 pub mod snb;
 pub mod spr;
 
-use std::collections::BTreeMap;
-use std::time::{Duration, SystemTime};
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc;
@@ -14,7 +14,12 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::pci;
 use crate::metrics::common::BYTES_PER_CACHE_LINE;
 use crate::metrics::uncore::skx::{UncoreScope, events_per_second, scale_to_enabled};
-use crate::metrics::{EventProfile, InfoMetadata, MetricEvent, MetricUpdate};
+use crate::metrics::{
+    ConfigurableCollector, EventProfile, InfoMetadata, MetricEvent, MetricUpdate,
+    run_configurable_collector,
+};
+use crate::pmu_config::types::{PmuConfig, UncoreCounts};
+use crate::runtime::pmu_control::ConfigRequests;
 
 pub const CHA_COUNTER_COUNT: usize = 4;
 const LINUX_UNCORE_EVENT_SOURCE_ROOT: &str = "/sys/bus/event_source/devices";
@@ -813,11 +818,80 @@ impl ChaCollector {
     }
 }
 
+impl ConfigurableCollector for ChaCollector {
+    async fn sample_update(&mut self, interval: Duration) -> Result<MetricUpdate, String> {
+        self.sample(interval)
+            .await
+            .map(|cha| MetricUpdate::Cha(Box::new(cha)))
+    }
+
+    fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        match self {
+            Self::Skx(collector) => collector.config_units(),
+            Self::Hsx(_)
+            | Self::Icx(_)
+            | Self::Ivb(_)
+            | Self::Snb(_)
+            | Self::Emr(_)
+            | Self::Spr(_) => BTreeMap::new(),
+        }
+    }
+
+    fn has_config(&self) -> bool {
+        match self {
+            Self::Skx(collector) => collector.has_config(),
+            Self::Hsx(_)
+            | Self::Icx(_)
+            | Self::Ivb(_)
+            | Self::Snb(_)
+            | Self::Emr(_)
+            | Self::Spr(_) => false,
+        }
+    }
+
+    fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        match self {
+            Self::Skx(collector) => collector.set_config(config),
+            _ if config.is_none() => Ok(()),
+            collector => Err(format!(
+                "PMU configs are not supported on {}",
+                collector.architecture()
+            )),
+        }
+    }
+
+    async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+        match self {
+            Self::Skx(collector) => collector.sample_config(interval).await,
+            collector => Err(format!(
+                "PMU configs are not supported on {}",
+                collector.architecture()
+            )),
+        }
+    }
+}
+
+impl ChaCollector {
+    /// The architecture's name, for errors.
+    fn architecture(&self) -> &'static str {
+        match self {
+            Self::Hsx(_) => "Haswell-EP and Broadwell-EP",
+            Self::Icx(_) => "Ice Lake-SP",
+            Self::Ivb(_) => "Ivy Bridge-EP",
+            Self::Snb(_) => "Sandy Bridge-EP",
+            Self::Emr(_) => "Emerald Rapids",
+            Self::Spr(_) => "Sapphire Rapids",
+            Self::Skx(_) => "Skylake-SP",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ChaTask {
     collector: ChaCollector,
     events: mpsc::Sender<MetricEvent>,
     interval: Duration,
+    requests: ConfigRequests,
 }
 
 impl ChaTask {
@@ -825,37 +899,18 @@ impl ChaTask {
         collector: ChaCollector,
         interval: Duration,
         events: mpsc::Sender<MetricEvent>,
+        requests: ConfigRequests,
     ) -> Self {
         Self {
             collector,
             events,
             interval,
+            requests,
         }
     }
 
-    pub async fn run(mut self) {
-        loop {
-            let started_at = SystemTime::now();
-            match self.collector.sample(self.interval).await {
-                Ok(cha) => {
-                    if self
-                        .events
-                        .send(MetricEvent::update(
-                            MetricUpdate::Cha(Box::new(cha)),
-                            started_at,
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    let _ = self.events.send(MetricEvent::Failure(error)).await;
-                    return;
-                }
-            }
-        }
+    pub async fn run(self) {
+        run_configurable_collector(self.collector, self.interval, self.requests, self.events).await;
     }
 }
 

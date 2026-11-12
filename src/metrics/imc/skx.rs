@@ -466,7 +466,10 @@ impl ImcChannel {
                 self.read_counter(2)?,
                 self.read_counter(3)?,
             ],
-            ticks: self.device.read_u64(IMC_DCLK_CTR_OFFSET)?,
+            ticks: self
+                .device
+                .read_u64(IMC_DCLK_CTR_OFFSET)
+                .map(mask_counter)?,
         })
     }
 

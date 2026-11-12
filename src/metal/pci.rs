@@ -67,6 +67,12 @@ impl PciDevice {
         Self::open_with_options(location, false)
     }
 
+    /// A device whose config space is `file`, for tests that must not touch PCI.
+    #[cfg(test)]
+    pub(crate) fn from_file(file: File, location: PciLocation) -> Self {
+        Self { file, location }
+    }
+
     fn open_with_options(location: PciLocation, write: bool) -> Result<Self, String> {
         let path = pci_config_path(location);
         let file = OpenOptions::new()

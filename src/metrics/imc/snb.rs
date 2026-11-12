@@ -564,7 +564,10 @@ impl SnbImcChannel {
                 self.read_counter(2)?,
                 self.read_counter(3)?,
             ],
-            ticks: self.device.read_u64(SNB_IMC_DCLK_CTR_OFFSET)?,
+            ticks: self
+                .device
+                .read_u64(SNB_IMC_DCLK_CTR_OFFSET)
+                .map(mask_counter)?,
         })
     }
 
@@ -1296,6 +1299,39 @@ mod tests {
     #[test]
     fn wraps_48_bit_counters() {
         assert_eq!(mask_counter((1_u64 << 50) | 7), 7);
+    }
+
+    #[test]
+    fn masks_snb_imc_dclk_counter_to_48_bits() {
+        let mut config_space = [0_u8; 0x100];
+        config_space[0xa0..0xa8].copy_from_slice(&((0x1234_u64 << 48) | 5).to_le_bytes());
+        config_space[0xd0..0xd8].copy_from_slice(&((0xabcd_u64 << 48) | 1_234).to_le_bytes());
+        let path = std::env::temp_dir().join(format!(
+            "ocellus-snb-imc-config-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, config_space).unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let channel = SnbImcChannel {
+            architecture: SnbImcArchitecture::Snb,
+            device: PciDevice::from_file(
+                file,
+                metal::pci::PciLocation {
+                    bus: 0,
+                    device: 0,
+                    function: 0,
+                    group: 0,
+                },
+            ),
+            scope: test_scope(),
+        };
+
+        let reading = channel.read().unwrap();
+
+        assert_eq!(reading.counters[0], 5);
+        assert_eq!(reading.ticks, 1_234);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -13,6 +13,10 @@ use crate::metal::pci::PciDevice;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
 use crate::metrics::EventProfile;
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE, topology_label};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, Grouping, PmuConfig, ProgrammedBoxType,
+    ProgrammedGroup, UncoreCounts,
+};
 
 const IMC_COUNTER_WIDTH: u32 = 48;
 const IMC_CTL_OFFSETS: [u64; 4] = [0xd8, 0xdc, 0xe0, 0xe4];
@@ -189,36 +193,86 @@ impl ImcMetrics {
 #[derive(Debug)]
 pub struct SkxImcCollector {
     channels: Vec<ImcChannel>,
+    config: Option<CountAccumulator>,
     groups: &'static [ImcEventGroup],
     next_group: usize,
 }
 
 impl SkxImcCollector {
     /// The IMC channels of each package that PMU configs can program.
-    pub fn config_units(&self) -> std::collections::BTreeMap<u16, std::collections::BTreeSet<u16>> {
-        std::collections::BTreeMap::new()
+    /// Unit id: the channel's index in its package, 0..=5 by (memory controller, channel).
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        let mut units = BTreeMap::<u16, BTreeSet<u16>>::new();
+        for (package, unit) in channel_units(self.channels.iter().map(|channel| channel.scope)) {
+            units.entry(package).or_default().insert(unit);
+        }
+
+        units
     }
 
     pub fn has_config(&self) -> bool {
-        false
+        self.config.is_some()
     }
 
     /// Counts `config`'s groups from the next sample on, or the default
     /// groups for `None`. Counts restart from 0.
-    pub fn set_config(
-        &mut self,
-        _config: Option<crate::pmu_config::types::PmuConfig>,
-    ) -> Result<(), String> {
-        Err("PMU configs are not implemented for Skylake-SP IMC yet".to_string())
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        // The default sample reprograms every counter, DCLK included.
+        let Some(config) = config else {
+            self.config = None;
+            return Ok(());
+        };
+        check_config(&config.program, &self.config_units())?;
+        self.config = Some(CountAccumulator::new(config));
+
+        Ok(())
     }
 
     /// Samples the set config for `interval`. Its counts are cumulative since
     /// the config was set.
-    pub async fn sample_config(
-        &mut self,
-        _interval: Duration,
-    ) -> Result<crate::pmu_config::types::UncoreCounts, String> {
-        Err("PMU configs are not implemented for Skylake-SP IMC yet".to_string())
+    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "no PMU config is set for Skylake-SP IMC".to_string())?;
+        if interval.is_zero() {
+            return Err("IMC measure interval must be non-zero".to_string());
+        }
+
+        let units = channel_units(self.channels.iter().map(|channel| channel.scope));
+        let program = accumulator.config().program.clone();
+
+        for slice in config_schedule(&program, interval) {
+            let targets = slice_channels(&units, &program, &slice)?;
+            for &(channel, group) in &targets {
+                self.channels[channel].program_config(&program.groups[group])?;
+            }
+
+            let started_at = Instant::now();
+            for &(channel, _) in &targets {
+                self.channels[channel].unfreeze()?;
+            }
+            tokio::time::sleep(slice.duration).await;
+            for &(channel, _) in &targets {
+                self.channels[channel].freeze()?;
+            }
+            let running = started_at.elapsed();
+
+            let mut readings = Vec::with_capacity(targets.len());
+            for &(channel, group) in &targets {
+                let group = &program.groups[group];
+                let (package, unit) = units[channel];
+                readings.push(ConfigReading {
+                    package,
+                    unit,
+                    group: group.index,
+                    counters: self.channels[channel].read_config(group)?,
+                });
+            }
+            fold_readings(accumulator, &readings, running)?;
+        }
+
+        Ok(accumulator.counts())
     }
 }
 
@@ -226,6 +280,7 @@ impl SkxImcCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         Ok(Self {
             channels: discover_channels(architecture.intel_server_model())?,
+            config: None,
             groups: &SKX_IMC_EVENT_GROUPS,
             next_group: 0,
         })
@@ -512,6 +567,27 @@ impl ImcChannel {
         self.device
             .write_u32(IMC_UNIT_CTL_OFFSET, pmon::UNIT_UNFREEZE)
     }
+
+    fn program_config(&self, group: &ProgrammedGroup) -> Result<(), String> {
+        for (offset, value) in channel_writes(group)? {
+            self.device.write_u32(offset, value)?;
+        }
+
+        Ok(())
+    }
+
+    /// The raw values of `group`'s counters.
+    fn read_config(&self, group: &ProgrammedGroup) -> Result<Vec<(CounterSlot, u64)>, String> {
+        group
+            .counters
+            .iter()
+            .map(|counter| {
+                let (_, offset) = slot_offsets(counter.slot)?;
+                let value = read_counter_dwords(offset, |offset| self.device.read_u32(offset))?;
+                Ok((counter.slot, value))
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -783,6 +859,222 @@ fn unfreeze_channels(channels: &[ImcChannel]) -> Result<(), String> {
     Ok(())
 }
 
+/// One slice of a config sample: its groups count together.
+#[derive(Debug, PartialEq, Eq)]
+struct ConfigSlice {
+    duration: Duration,
+    /// Positions in the config's groups.
+    groups: Vec<usize>,
+}
+
+/// The raw counter values of one channel and group in a slice.
+#[derive(Debug)]
+struct ConfigReading {
+    package: u16,
+    unit: u16,
+    group: u8,
+    counters: Vec<(CounterSlot, u64)>,
+}
+
+/// The package and unit id of each channel, in channel order.
+fn channel_units(scopes: impl IntoIterator<Item = ImcScope>) -> Vec<(u16, u16)> {
+    let mut next_units = BTreeMap::<u16, u16>::new();
+
+    scopes
+        .into_iter()
+        .map(|scope| {
+            let package = scope.package_id as u16;
+            let next_unit = next_units.entry(package).or_default();
+            let unit = *next_unit;
+            *next_unit += 1;
+            (package, unit)
+        })
+        .collect()
+}
+
+/// Errs for a program the IMC channels in `units` cannot count.
+fn check_config(
+    program: &ProgrammedBoxType,
+    units: &BTreeMap<u16, BTreeSet<u16>>,
+) -> Result<(), String> {
+    if program.box_type != BoxType::Imc {
+        return Err(format!(
+            "Skylake-SP IMC cannot count a {} config",
+            program.box_type.label()
+        ));
+    }
+
+    for group in &program.groups {
+        if group.filters.is_some() {
+            return Err(format!(
+                "IMC config group {} has filters, which IMC channels do not have",
+                group.index
+            ));
+        }
+        for (package, group_units) in &group.units {
+            let host_units = units.get(package).ok_or_else(|| {
+                format!(
+                    "IMC config group {} runs on package {package}, which has no IMC channels on this host",
+                    group.index
+                )
+            })?;
+            if let Some(unit) = group_units.difference(host_units).next() {
+                return Err(format!(
+                    "IMC config group {} runs on channel {unit} of package {package}, which this host does not have",
+                    group.index
+                ));
+            }
+        }
+        channel_writes(group)?;
+    }
+
+    Ok(())
+}
+
+/// The control and counter offsets of a counter slot.
+fn slot_offsets(slot: CounterSlot) -> Result<(u64, u64), String> {
+    match slot {
+        CounterSlot::General(index) => IMC_CTL_OFFSETS
+            .get(usize::from(index))
+            .zip(IMC_CTR_OFFSETS.get(usize::from(index)))
+            .map(|(&control, &counter)| (control, counter))
+            .ok_or_else(|| format!("Skylake-SP IMC channels have no counter slot {index}")),
+        CounterSlot::Fixed => Ok((IMC_DCLK_CTL_OFFSET, IMC_DCLK_CTR_OFFSET)),
+    }
+}
+
+/// The (offset, value) writes that program one channel for `group`: freeze
+/// and reset the channel, then reset and enable each counter of the group,
+/// and write 0 to the controls of the others, DCLK included.
+fn channel_writes(group: &ProgrammedGroup) -> Result<Vec<(u64, u32)>, String> {
+    let mut controls = IMC_CTL_OFFSETS
+        .into_iter()
+        .chain([IMC_DCLK_CTL_OFFSET])
+        .map(|offset| (offset, 0))
+        .collect::<BTreeMap<u64, u32>>();
+
+    for counter in &group.counters {
+        let (offset, _) = slot_offsets(counter.slot)
+            .map_err(|error| format!("IMC config group {}: {error}", group.index))?;
+        let control = u32::try_from(counter.control).map_err(|_| {
+            format!(
+                "IMC config group {} slot {} control 0x{:x} does not fit in 32 bits",
+                group.index,
+                counter.slot.label(),
+                counter.control
+            )
+        })?;
+        let reset = match counter.slot {
+            CounterSlot::General(_) => pmon::COUNTER_RESET,
+            CounterSlot::Fixed => pmon::FIXED_COUNTER_RESET,
+        };
+        controls.insert(offset, control | reset);
+    }
+
+    Ok([(IMC_UNIT_CTL_OFFSET, pmon::UNIT_FREEZE_AND_RESET)]
+        .into_iter()
+        .chain(controls)
+        .collect())
+}
+
+/// Fixed and spatial groups count for the whole interval in one slice;
+/// temporal groups take turns in equal slices, in group order every round.
+fn config_schedule(program: &ProgrammedBoxType, interval: Duration) -> Vec<ConfigSlice> {
+    let group_count = program.groups.len();
+
+    match program.grouping {
+        Grouping::Fixed | Grouping::Spatial => vec![ConfigSlice {
+            duration: interval,
+            groups: (0..group_count).collect(),
+        }],
+        Grouping::Temporal => {
+            let round_count = measurement_round_count(interval, group_count);
+            let duration = interval.div_f64((group_count * round_count) as f64);
+
+            (0..round_count)
+                .flat_map(|_| 0..group_count)
+                .map(|group| ConfigSlice {
+                    duration,
+                    groups: vec![group],
+                })
+                .collect()
+        }
+    }
+}
+
+/// The channels `slice` programs, as (position in `units`, position in the
+/// config's groups). `units` holds each channel's package and unit id.
+fn slice_channels(
+    units: &[(u16, u16)],
+    program: &ProgrammedBoxType,
+    slice: &ConfigSlice,
+) -> Result<Vec<(usize, usize)>, String> {
+    let mut channels = Vec::new();
+
+    for &group in &slice.groups {
+        for (&package, group_units) in &program.groups[group].units {
+            for &unit in group_units {
+                let channel = units
+                    .iter()
+                    .position(|&channel_unit| channel_unit == (package, unit))
+                    .ok_or_else(|| {
+                        format!("this host has no IMC channel {unit} in package {package}")
+                    })?;
+                channels.push((channel, group));
+            }
+        }
+    }
+
+    Ok(channels)
+}
+
+/// Reads the counter at `offset` from its two dwords: high, low, high, and
+/// again until the high dword holds.
+fn read_counter_dwords(
+    offset: u64,
+    mut read_dword: impl FnMut(u64) -> Result<u32, String>,
+) -> Result<u64, String> {
+    let mut high = read_dword(offset + 4)?;
+
+    loop {
+        let low = read_dword(offset)?;
+        let next_high = read_dword(offset + 4)?;
+        if next_high == high {
+            return Ok((u64::from(high) << 32) | u64::from(low));
+        }
+        high = next_high;
+    }
+}
+
+/// Adds one slice's readings, masked to the counter width, and its running
+/// time to each package and group it read.
+fn fold_readings(
+    accumulator: &mut CountAccumulator,
+    readings: &[ConfigReading],
+    running: Duration,
+) -> Result<(), String> {
+    let mut groups = BTreeSet::new();
+
+    for reading in readings {
+        for &(slot, value) in &reading.counters {
+            accumulator.add_count(
+                reading.package,
+                reading.unit,
+                reading.group,
+                slot,
+                mask_counter(value),
+            )?;
+        }
+        groups.insert((reading.package, reading.group));
+    }
+
+    for (package, group) in groups {
+        accumulator.add_running(package, group, running)?;
+    }
+
+    Ok(())
+}
+
 fn required_measurement(
     measurements: &BTreeMap<ImcEventKind, ImcEventMeasurement>,
     kind: ImcEventKind,
@@ -875,7 +1167,12 @@ fn scale_to_enabled(value: u64, enabled: Duration, running: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
+    use crate::pmu_config::types::{
+        Aggregate, ChaFilters, CountUnit, EventLabels, ProgrammedCounter,
+    };
 
     #[test]
     fn computes_multiplexed_metrics() {
@@ -1097,6 +1394,460 @@ mod tests {
         assert_eq!(measurement.running, Duration::from_millis(300));
     }
 
+    #[test]
+    fn numbers_channels_within_each_package() {
+        let scope = |package_id| ImcScope {
+            die_group_id: None,
+            die_id: None,
+            package_id,
+        };
+
+        assert_eq!(
+            channel_units([0, 0, 0, 1, 1].map(scope)),
+            vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1)]
+        );
+    }
+
+    #[test]
+    fn programs_two_general_counters_and_dclk_on_channel_3() {
+        let program = config_program(
+            Grouping::Fixed,
+            vec![config_group(
+                0,
+                vec![
+                    config_counter(CounterSlot::General(0), 0x50_0304),
+                    config_counter(CounterSlot::General(3), 0x50_0c04),
+                    config_counter(CounterSlot::Fixed, 0x40_0000),
+                ],
+                BTreeMap::from([(1, BTreeSet::from([3]))]),
+            )],
+        );
+        let slices = config_schedule(&program, Duration::from_secs(1));
+
+        assert_eq!(
+            slice_channels(&two_package_units(), &program, &slices[0]).unwrap(),
+            vec![(9, 0)]
+        );
+        assert_eq!(
+            channel_writes(&program.groups[0]).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0x52_0304),
+                (0xdc, 0),
+                (0xe0, 0),
+                (0xe4, 0x52_0c04),
+                (0xf0, 0x48_0000),
+            ]
+        );
+    }
+
+    #[test]
+    fn clears_dclk_control_of_groups_without_fixed() {
+        let group = config_group(
+            0,
+            vec![config_counter(CounterSlot::General(1), 0x50_0304)],
+            BTreeMap::from([(0, BTreeSet::from([0]))]),
+        );
+
+        assert_eq!(
+            channel_writes(&group).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0),
+                (0xdc, 0x52_0304),
+                (0xe0, 0),
+                (0xe4, 0),
+                (0xf0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn schedules_config_slices() {
+        let units = |units: &[u16]| BTreeMap::from([(0, units.iter().copied().collect())]);
+        let general = || vec![config_counter(CounterSlot::General(0), 0x50_0304)];
+
+        let fixed = config_program(
+            Grouping::Fixed,
+            vec![config_group(0, general(), units(&[0, 4]))],
+        );
+        let slices = config_schedule(&fixed, Duration::from_secs(1));
+        assert_eq!(
+            slices,
+            vec![ConfigSlice {
+                duration: Duration::from_secs(1),
+                groups: vec![0],
+            }]
+        );
+        assert_eq!(
+            slice_channels(&two_package_units(), &fixed, &slices[0]).unwrap(),
+            vec![(0, 0), (4, 0)]
+        );
+
+        let spatial = config_program(
+            Grouping::Spatial,
+            vec![
+                config_group(0, general(), units(&[0, 1])),
+                config_group(1, general(), units(&[2])),
+            ],
+        );
+        let slices = config_schedule(&spatial, Duration::from_secs(1));
+        assert_eq!(
+            slices,
+            vec![ConfigSlice {
+                duration: Duration::from_secs(1),
+                groups: vec![0, 1],
+            }]
+        );
+        assert_eq!(
+            slice_channels(&two_package_units(), &spatial, &slices[0]).unwrap(),
+            vec![(0, 0), (1, 0), (2, 1)]
+        );
+
+        let temporal = config_program(
+            Grouping::Temporal,
+            vec![
+                config_group(0, general(), units(&[5])),
+                config_group(1, general(), units(&[5])),
+            ],
+        );
+        let slices = config_schedule(&temporal, Duration::from_secs(1));
+        assert_eq!(slices.len(), 10);
+        for (position, slice) in slices.iter().enumerate() {
+            assert_eq!(
+                *slice,
+                ConfigSlice {
+                    duration: Duration::from_millis(100),
+                    groups: vec![position % 2],
+                }
+            );
+        }
+        assert_eq!(
+            slice_channels(&two_package_units(), &temporal, &slices[1]).unwrap(),
+            vec![(5, 1)]
+        );
+        assert_eq!(
+            config_schedule(&temporal, Duration::from_millis(100)),
+            vec![
+                ConfigSlice {
+                    duration: Duration::from_millis(50),
+                    groups: vec![0],
+                },
+                ConfigSlice {
+                    duration: Duration::from_millis(50),
+                    groups: vec![1],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rereads_counter_when_high_dword_changes() {
+        let read = |dwords: Vec<(u64, u32)>| {
+            let mut dwords = dwords.into_iter();
+            let value = read_counter_dwords(0xa8, |offset| {
+                let (expected, dword) = dwords.next().unwrap();
+                assert_eq!(offset, expected);
+                Ok(dword)
+            });
+            assert!(dwords.next().is_none());
+            value.unwrap()
+        };
+
+        assert_eq!(
+            read(vec![(0xac, 0x7), (0xa8, 0x1234), (0xac, 0x7)]),
+            0x7_0000_1234
+        );
+        assert_eq!(
+            read(vec![
+                (0xac, 0x7),
+                (0xa8, 0xffff_fffe),
+                (0xac, 0x8),
+                (0xa8, 0x3),
+                (0xac, 0x8),
+            ]),
+            0x8_0000_0003
+        );
+    }
+
+    #[test]
+    fn folds_config_readings_per_box_or_sum() {
+        for aggregate in [Aggregate::Box, Aggregate::Sum] {
+            let mut program = config_program(
+                Grouping::Fixed,
+                vec![config_group(
+                    0,
+                    vec![
+                        config_counter(CounterSlot::General(0), 0x50_0304),
+                        config_counter(CounterSlot::Fixed, 0x40_0000),
+                    ],
+                    BTreeMap::from([(0, BTreeSet::from([1, 2])), (1, BTreeSet::from([1]))]),
+                )],
+            );
+            program.aggregate = aggregate;
+            let mut accumulator = CountAccumulator::new(config(program));
+            let readings = [
+                config_reading(0, 1, 0, [10, 1_000]),
+                config_reading(0, 2, 0, [(0xffff << 48) | 20, 1_000]),
+                config_reading(1, 1, 0, [30, 2_000]),
+            ];
+
+            for _ in 0..2 {
+                fold_readings(&mut accumulator, &readings, Duration::from_millis(500)).unwrap();
+            }
+            let counts = accumulator.counts();
+
+            match aggregate {
+                Aggregate::Box => assert_eq!(
+                    count_values(&counts),
+                    vec![
+                        (0, CountUnit::Box(1), CounterSlot::General(0), 20),
+                        (0, CountUnit::Box(1), CounterSlot::Fixed, 2_000),
+                        (0, CountUnit::Box(2), CounterSlot::General(0), 40),
+                        (0, CountUnit::Box(2), CounterSlot::Fixed, 2_000),
+                        (1, CountUnit::Box(1), CounterSlot::General(0), 60),
+                        (1, CountUnit::Box(1), CounterSlot::Fixed, 4_000),
+                    ]
+                ),
+                Aggregate::Sum => assert_eq!(
+                    count_values(&counts),
+                    vec![
+                        (0, CountUnit::Sum, CounterSlot::General(0), 60),
+                        (0, CountUnit::Sum, CounterSlot::Fixed, 4_000),
+                        (1, CountUnit::Sum, CounterSlot::General(0), 60),
+                        (1, CountUnit::Sum, CounterSlot::Fixed, 4_000),
+                    ]
+                ),
+            }
+            assert_eq!(
+                counts
+                    .running
+                    .iter()
+                    .map(|running| (running.package, running.group, running.seconds))
+                    .collect::<Vec<_>>(),
+                vec![(0, 0, 1.0), (1, 0, 1.0)]
+            );
+        }
+    }
+
+    #[test]
+    fn folds_running_time_per_temporal_group() {
+        let general = || vec![config_counter(CounterSlot::General(0), 0x50_0304)];
+        let units = || BTreeMap::from([(0, BTreeSet::from([0]))]);
+        let mut accumulator = CountAccumulator::new(config(config_program(
+            Grouping::Temporal,
+            vec![
+                config_group(0, general(), units()),
+                config_group(1, general(), units()),
+            ],
+        )));
+
+        for _ in 0..2 {
+            fold_readings(
+                &mut accumulator,
+                &[ConfigReading {
+                    package: 0,
+                    unit: 0,
+                    group: 0,
+                    counters: vec![(CounterSlot::General(0), 1)],
+                }],
+                Duration::from_millis(250),
+            )
+            .unwrap();
+            fold_readings(
+                &mut accumulator,
+                &[ConfigReading {
+                    package: 0,
+                    unit: 0,
+                    group: 1,
+                    counters: vec![(CounterSlot::General(0), 2)],
+                }],
+                Duration::from_millis(125),
+            )
+            .unwrap();
+        }
+        let counts = accumulator.counts();
+
+        assert_eq!(
+            counts
+                .counts
+                .iter()
+                .map(|count| (count.group, count.value))
+                .collect::<Vec<_>>(),
+            vec![(0, 2), (1, 4)]
+        );
+        assert_eq!(
+            counts
+                .running
+                .iter()
+                .map(|running| (running.group, running.seconds))
+                .collect::<Vec<_>>(),
+            vec![(0, 0.5), (1, 0.25)]
+        );
+    }
+
+    #[test]
+    fn rejects_configs_imc_channels_cannot_count() {
+        let host = BTreeMap::from([(0, (0..6).collect()), (1, (0..6).collect())]);
+        let valid = || {
+            config_program(
+                Grouping::Fixed,
+                vec![config_group(
+                    0,
+                    vec![
+                        config_counter(CounterSlot::General(3), 0x50_0304),
+                        config_counter(CounterSlot::Fixed, 0x40_0000),
+                    ],
+                    BTreeMap::from([(0, BTreeSet::from([0, 5])), (1, BTreeSet::from([2]))]),
+                )],
+            )
+        };
+        check_config(&valid(), &host).unwrap();
+
+        let mut cha = valid();
+        cha.box_type = BoxType::Cha;
+        let mut package = valid();
+        package.groups[0].units.insert(2, BTreeSet::from([0]));
+        let mut channel = valid();
+        channel.groups[0].units.insert(1, BTreeSet::from([2, 6]));
+        let mut slot = valid();
+        slot.groups[0]
+            .counters
+            .push(config_counter(CounterSlot::General(4), 0x50_0304));
+        let mut filters = valid();
+        filters.groups[0].filters = Some(ChaFilters {
+            filter0: 0,
+            filter1: 0,
+        });
+
+        for (program, error) in [
+            (cha, "Skylake-SP IMC cannot count a cha config"),
+            (
+                package,
+                "IMC config group 0 runs on package 2, which has no IMC channels on this host",
+            ),
+            (
+                channel,
+                "IMC config group 0 runs on channel 6 of package 1, which this host does not have",
+            ),
+            (
+                slot,
+                "IMC config group 0: Skylake-SP IMC channels have no counter slot 4",
+            ),
+            (
+                filters,
+                "IMC config group 0 has filters, which IMC channels do not have",
+            ),
+        ] {
+            assert_eq!(check_config(&program, &host), Err(error.to_string()));
+        }
+    }
+
+    #[test]
+    fn sets_and_drops_configs() {
+        let mut collector = test_collector();
+        let program = config_program(
+            Grouping::Fixed,
+            vec![config_group(
+                0,
+                vec![config_counter(CounterSlot::Fixed, 0x40_0000)],
+                BTreeMap::from([(0, BTreeSet::from([0]))]),
+            )],
+        );
+
+        assert!(collector.config_units().is_empty());
+        assert_eq!(
+            collector.set_config(Some(config(program))),
+            Err(
+                "IMC config group 0 runs on package 0, which has no IMC channels on this host"
+                    .to_string()
+            )
+        );
+        assert!(!collector.has_config());
+
+        collector.config = Some(CountAccumulator::new(config(config_program(
+            Grouping::Fixed,
+            Vec::new(),
+        ))));
+        assert!(collector.has_config());
+        collector.set_config(None).unwrap();
+        assert!(!collector.has_config());
+    }
+
+    fn config_counter(slot: CounterSlot, control: u64) -> ProgrammedCounter {
+        ProgrammedCounter {
+            slot,
+            control,
+            labels: EventLabels::new(),
+        }
+    }
+
+    fn config_group(
+        index: u8,
+        counters: Vec<ProgrammedCounter>,
+        units: BTreeMap<u16, BTreeSet<u16>>,
+    ) -> ProgrammedGroup {
+        ProgrammedGroup {
+            index,
+            counters,
+            filters: None,
+            units,
+        }
+    }
+
+    fn config_program(grouping: Grouping, groups: Vec<ProgrammedGroup>) -> ProgrammedBoxType {
+        ProgrammedBoxType {
+            box_type: BoxType::Imc,
+            grouping,
+            aggregate: Aggregate::Box,
+            groups,
+        }
+    }
+
+    fn config(program: ProgrammedBoxType) -> PmuConfig {
+        PmuConfig {
+            config_id: 1,
+            started_at: SystemTime::UNIX_EPOCH,
+            program,
+        }
+    }
+
+    fn config_reading(
+        package: u16,
+        unit: u16,
+        group: u8,
+        [general, fixed]: [u64; 2],
+    ) -> ConfigReading {
+        ConfigReading {
+            package,
+            unit,
+            group,
+            counters: vec![
+                (CounterSlot::General(0), general),
+                (CounterSlot::Fixed, fixed),
+            ],
+        }
+    }
+
+    fn count_values(counts: &UncoreCounts) -> Vec<(u16, CountUnit, CounterSlot, u64)> {
+        counts
+            .counts
+            .iter()
+            .map(|count| (count.package, count.unit, count.slot, count.value))
+            .collect()
+    }
+
+    /// Two packages of six channels each.
+    fn two_package_units() -> Vec<(u16, u16)> {
+        channel_units(
+            [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1].map(|package_id| ImcScope {
+                die_group_id: None,
+                die_id: None,
+                package_id,
+            }),
+        )
+    }
+
     fn measurement(
         kind: ImcEventKind,
         value: u64,
@@ -1136,6 +1887,7 @@ mod tests {
     fn test_collector() -> SkxImcCollector {
         SkxImcCollector {
             channels: Vec::new(),
+            config: None,
             groups: &SKX_IMC_EVENT_GROUPS,
             next_group: 0,
         }

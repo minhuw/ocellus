@@ -226,12 +226,6 @@ impl SprChaEventGroup {
         Self {
             events: [
                 SprChaEventSpec::new(
-                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::All)),
-                    0x35,
-                    0x02,
-                    0,
-                ),
-                SprChaEventSpec::new(
                     SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::M)),
                     0x3d,
                     0x01,
@@ -249,6 +243,7 @@ impl SprChaEventGroup {
                     0x04,
                     0,
                 ),
+                SprChaEventSpec::unused(),
             ],
         }
     }
@@ -1945,12 +1940,9 @@ fn spr_sf_eviction_metrics(
 ) -> Result<Vec<ChaSfEvictionMetrics>, String> {
     let mut metrics = Vec::new();
 
-    for state in [
-        ChaCacheState::All,
-        ChaCacheState::M,
-        ChaCacheState::E,
-        ChaCacheState::S,
-    ] {
+    // EMR uncore guide 817509 table 2-120: SF_EVICTION's M/E/S umasks are
+    // disjoint, so their sum is every snoop filter capacity eviction.
+    for state in [ChaCacheState::M, ChaCacheState::E, ChaCacheState::S] {
         metrics.push(ChaSfEvictionMetrics {
             bytes_per_second: bytes_per_second(required_measurement(
                 measurements,
@@ -1960,6 +1952,11 @@ fn spr_sf_eviction_metrics(
             state,
         });
     }
+    metrics.push(ChaSfEvictionMetrics {
+        bytes_per_second: metrics.iter().map(|metric| metric.bytes_per_second).sum(),
+        scope,
+        state: ChaCacheState::All,
+    });
 
     Ok(metrics)
 }
@@ -2272,18 +2269,12 @@ mod tests {
     }
 
     #[test]
-    fn uses_spr_sf_llc_and_state_eviction_events() {
+    fn uses_spr_sf_state_eviction_events() {
         let group = SprChaEventGroup::sf_evictions();
 
         assert_eq!(
             group.events,
             [
-                SprChaEventSpec::new(
-                    SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::All)),
-                    0x35,
-                    0x02,
-                    0
-                ),
                 SprChaEventSpec::new(
                     SprChaEventKind::Exported(ChaEventKind::SfEviction(ChaCacheState::M)),
                     0x3d,
@@ -2302,8 +2293,45 @@ mod tests {
                     0x04,
                     0
                 ),
+                SprChaEventSpec::unused(),
             ]
         );
+    }
+
+    #[test]
+    fn derives_spr_all_sf_evictions_from_state_evictions() {
+        let scope = UncoreScope {
+            die_group_id: None,
+            die_id: None,
+            package_id: 0,
+        };
+        let measurements = [
+            (ChaCacheState::M, 10),
+            (ChaCacheState::E, 20),
+            (ChaCacheState::S, 30),
+        ]
+        .into_iter()
+        .map(|(state, value)| {
+            (
+                ChaEventKind::SfEviction(state),
+                ChaEventMeasurement {
+                    enabled: Duration::from_secs(1),
+                    represented_unit_count: 1,
+                    running: Duration::from_secs(1),
+                    value,
+                },
+            )
+        })
+        .collect();
+
+        let metrics = spr_sf_eviction_metrics(scope, &measurements).unwrap();
+        let all = metrics
+            .iter()
+            .find(|metric| metric.state == ChaCacheState::All)
+            .unwrap();
+
+        assert_eq!(metrics.len(), 4);
+        assert_eq!(all.bytes_per_second, 60.0 * 64.0);
     }
 
     #[test]

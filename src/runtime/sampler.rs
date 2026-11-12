@@ -494,6 +494,7 @@ mod tests {
         MetricEvent::update(
             MetricUpdate::Rdt(Box::new(crate::metrics::rdt::RdtMetrics {
                 scopes: Vec::new(),
+                unavailable_scopes: Vec::new(),
             })),
             SystemTime::now(),
         )

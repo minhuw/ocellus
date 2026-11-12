@@ -571,6 +571,7 @@ mod tests {
                     },
                     total_memory_bandwidth_bytes_per_second: Some(3072.0),
                 }],
+                unavailable_scopes: Vec::new(),
             }),
             ..crate::metrics::MetricsState::default()
         };
@@ -600,6 +601,78 @@ mod tests {
     }
 
     #[test]
+    fn removes_unavailable_rdt_scope_series_until_it_rejoins() {
+        let scope = |cpu| crate::metrics::rdt::RdtScope {
+            core_id: cpu,
+            cpu,
+            die_group_id: None,
+            die_id: None,
+            package_id: 0,
+        };
+        let scope_metrics = |cpu, bandwidth| crate::metrics::rdt::RdtScopeMetrics {
+            l3_occupancy_bytes: Some(4096.0),
+            local_memory_bandwidth_bytes_per_second: bandwidth,
+            remote_memory_bandwidth_bytes_per_second: bandwidth,
+            scope: scope(cpu),
+            total_memory_bandwidth_bytes_per_second: bandwidth,
+        };
+        let rdt_state = |scopes, unavailable_scopes| crate::metrics::MetricsState {
+            rdt: Some(crate::metrics::rdt::RdtMetrics {
+                scopes,
+                unavailable_scopes,
+            }),
+            ..crate::metrics::MetricsState::default()
+        };
+        let sampler = SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: info_metadata(),
+            },
+            crate::metrics::MetricsState::default(),
+        );
+        let exporter = PrometheusExporter::new(sampler);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let series = |cpu: &str| {
+            runtime
+                .block_on(exporter.render_metrics())
+                .unwrap()
+                .lines()
+                .filter(|line| {
+                    line.starts_with("ocellus_rdt_") && line.contains(&format!("cpu=\"{cpu}\""))
+                })
+                .map(|line| line.split_once('{').unwrap().0.to_string())
+                .collect::<Vec<_>>()
+        };
+        let occupancy = "ocellus_rdt_l3_occupancy_bytes";
+        let bandwidth = "ocellus_rdt_memory_bandwidth_bytes_per_second";
+        let all_series = vec![occupancy, bandwidth, bandwidth, bandwidth];
+
+        exporter.update_state(rdt_state(
+            vec![scope_metrics(0, Some(1.0)), scope_metrics(1, Some(1.0))],
+            Vec::new(),
+        ));
+        assert_eq!(series("0"), all_series);
+        assert_eq!(series("1"), all_series);
+
+        exporter.update_state(rdt_state(vec![scope_metrics(1, Some(1.0))], vec![scope(0)]));
+        assert!(series("0").is_empty());
+        assert_eq!(series("1"), all_series);
+
+        exporter.update_state(rdt_state(
+            vec![scope_metrics(0, None), scope_metrics(1, Some(1.0))],
+            Vec::new(),
+        ));
+        assert_eq!(series("0"), vec![occupancy]);
+
+        exporter.update_state(rdt_state(
+            vec![scope_metrics(0, Some(1.0)), scope_metrics(1, Some(1.0))],
+            Vec::new(),
+        ));
+        assert_eq!(series("0"), all_series);
+        assert_eq!(series("1"), all_series);
+    }
+
+    #[test]
     fn renders_rdt_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
@@ -625,6 +698,7 @@ mod tests {
                     },
                     total_memory_bandwidth_bytes_per_second: Some(3072.0),
                 }],
+                unavailable_scopes: Vec::new(),
             }),
             tsc: None,
         };

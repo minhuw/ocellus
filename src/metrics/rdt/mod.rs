@@ -179,6 +179,7 @@ struct RdtCounters {
 struct RdtReading {
     at: Instant,
     scopes: Vec<RdtScopeReading>,
+    unavailable_scopes: Vec<RdtScope>,
 }
 
 #[derive(Clone, Debug)]
@@ -192,6 +193,10 @@ struct RdtScopeReading {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RdtMetrics {
     pub scopes: Vec<RdtScopeMetrics>,
+    /// Scopes whose CPUs another resctrl group holds this sample; their
+    /// series are removed.
+    #[serde(skip)]
+    pub unavailable_scopes: Vec<RdtScope>,
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize)]
@@ -220,15 +225,24 @@ impl RdtMetrics {
             return Err("RDT sample elapsed time is zero".to_string());
         }
 
-        if previous.scopes.len() != current.scopes.len() {
-            return Err("RDT reading length does not match discovered scope count".to_string());
-        }
-
         let mut scopes = Vec::with_capacity(current.scopes.len());
-        for (previous, current) in previous.scopes.iter().zip(&current.scopes) {
-            if previous.scope != current.scope {
-                return Err("RDT reading scope order changed between samples".to_string());
-            }
+        for current in &current.scopes {
+            // A scope missing from the previous reading has just become
+            // available, so bandwidth starts from this reading.
+            let Some(previous) = previous
+                .scopes
+                .iter()
+                .find(|previous| previous.scope == current.scope)
+            else {
+                scopes.push(RdtScopeMetrics {
+                    l3_occupancy_bytes: current.l3_occupancy_bytes,
+                    local_memory_bandwidth_bytes_per_second: None,
+                    remote_memory_bandwidth_bytes_per_second: None,
+                    scope: current.scope,
+                    total_memory_bandwidth_bytes_per_second: None,
+                });
+                continue;
+            };
             if previous.conversion_factor_bytes != current.conversion_factor_bytes {
                 return Err("RDT conversion factor changed between samples".to_string());
             }
@@ -241,7 +255,10 @@ impl RdtMetrics {
             ));
         }
 
-        Ok(Self { scopes })
+        Ok(Self {
+            scopes,
+            unavailable_scopes: current.unavailable_scopes,
+        })
     }
 }
 
@@ -365,6 +382,7 @@ impl MsrRdtCollector {
         Ok(RdtReading {
             at: Instant::now(),
             scopes,
+            unavailable_scopes: Vec::new(),
         })
     }
 
@@ -434,20 +452,35 @@ impl ResctrlRdtCollector {
         ResctrlMonitorFeatures::from_resctrl(mount_point).is_ok_and(|features| features.occupancy)
     }
 
-    fn read(&self) -> Result<RdtReading, String> {
+    fn read(
+        &mut self,
+        write_cpus_list: &mut impl FnMut(&Path, &str) -> io::Result<()>,
+    ) -> Result<RdtReading, String> {
         let mut scopes = Vec::with_capacity(self.groups.len());
-        for group in &self.groups {
-            scopes.push(read_resctrl_monitor_group(group, self.features)?);
+        let mut unavailable_scopes = Vec::new();
+        for group in &mut self.groups {
+            match read_resctrl_monitor_group(group, self.features, write_cpus_list)? {
+                Some(reading) => scopes.push(reading),
+                None => unavailable_scopes.push(group.scope),
+            }
         }
 
         Ok(RdtReading {
             at: Instant::now(),
             scopes,
+            unavailable_scopes,
         })
     }
 
     fn sample(&mut self) -> Result<Option<RdtMetrics>, String> {
-        let current = self.read()?;
+        self.sample_with_cpus_list_writer(|path, cpus| std::fs::write(path, cpus))
+    }
+
+    fn sample_with_cpus_list_writer(
+        &mut self,
+        mut write_cpus_list: impl FnMut(&Path, &str) -> io::Result<()>,
+    ) -> Result<Option<RdtMetrics>, String> {
+        let current = self.read(&mut write_cpus_list)?;
         let previous = match self.previous.replace(current.clone()) {
             Some(previous) => previous,
             None => return Ok(None),
@@ -522,6 +555,18 @@ struct RdtScopeLabels {
     package: String,
 }
 
+impl RdtScopeLabels {
+    fn new(scope: RdtScope) -> Self {
+        Self {
+            core: scope.core_id.to_string(),
+            cpu: scope.cpu.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
+            package: scope.package_id.to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct RdtMemoryBandwidthLabels {
     core: String,
@@ -531,6 +576,21 @@ struct RdtMemoryBandwidthLabels {
     package: String,
     traffic: &'static str,
 }
+
+impl RdtMemoryBandwidthLabels {
+    fn new(scope: RdtScope, traffic: &'static str) -> Self {
+        Self {
+            core: scope.core_id.to_string(),
+            cpu: scope.cpu.to_string(),
+            die: topology_label(scope.die_id),
+            die_group: topology_label(scope.die_group_id),
+            package: scope.package_id.to_string(),
+            traffic,
+        }
+    }
+}
+
+const RDT_TRAFFIC: [&str; 3] = ["total", "local", "remote"];
 
 #[derive(Debug)]
 pub struct RdtPrometheusMetrics {
@@ -571,46 +631,30 @@ impl RdtPrometheusMetrics {
     }
 
     pub fn update(&self, metrics: RdtMetrics) {
-        for scope_metrics in metrics.scopes {
-            let scope_labels = RdtScopeLabels {
-                core: scope_metrics.scope.core_id.to_string(),
-                cpu: scope_metrics.scope.cpu.to_string(),
-                die: topology_label(scope_metrics.scope.die_id),
-                die_group: topology_label(scope_metrics.scope.die_group_id),
-                package: scope_metrics.scope.package_id.to_string(),
-            };
+        for scope in metrics.unavailable_scopes {
+            self.l3_occupancy_bytes.remove(&RdtScopeLabels::new(scope));
+            for traffic in RDT_TRAFFIC {
+                self.memory_bandwidth_bytes_per_second
+                    .remove(&RdtMemoryBandwidthLabels::new(scope, traffic));
+            }
+        }
 
+        for scope_metrics in metrics.scopes {
             if let Some(l3_occupancy_bytes) = scope_metrics.l3_occupancy_bytes {
                 self.l3_occupancy_bytes
-                    .get_or_create(&scope_labels)
+                    .get_or_create(&RdtScopeLabels::new(scope_metrics.scope))
                     .set(l3_occupancy_bytes);
             }
 
             let bandwidths = [
-                (
-                    "total",
-                    scope_metrics.total_memory_bandwidth_bytes_per_second,
-                ),
-                (
-                    "local",
-                    scope_metrics.local_memory_bandwidth_bytes_per_second,
-                ),
-                (
-                    "remote",
-                    scope_metrics.remote_memory_bandwidth_bytes_per_second,
-                ),
+                scope_metrics.total_memory_bandwidth_bytes_per_second,
+                scope_metrics.local_memory_bandwidth_bytes_per_second,
+                scope_metrics.remote_memory_bandwidth_bytes_per_second,
             ];
-            for (traffic, bytes_per_second) in bandwidths {
+            for (traffic, bytes_per_second) in RDT_TRAFFIC.into_iter().zip(bandwidths) {
                 if let Some(bytes_per_second) = bytes_per_second {
                     self.memory_bandwidth_bytes_per_second
-                        .get_or_create(&RdtMemoryBandwidthLabels {
-                            core: scope_metrics.scope.core_id.to_string(),
-                            cpu: scope_metrics.scope.cpu.to_string(),
-                            die: topology_label(scope_metrics.scope.die_id),
-                            die_group: topology_label(scope_metrics.scope.die_group_id),
-                            package: scope_metrics.scope.package_id.to_string(),
-                            traffic,
-                        })
+                        .get_or_create(&RdtMemoryBandwidthLabels::new(scope_metrics.scope, traffic))
                         .set(bytes_per_second);
                 }
             }
@@ -889,6 +933,7 @@ impl ResctrlMonitorFeatures {
 struct ResctrlMonitorGroup {
     cpus: Vec<u32>,
     l3_domains: Vec<String>,
+    lost_cpus: bool,
     path: PathBuf,
     scope: RdtScope,
 }
@@ -1032,6 +1077,7 @@ fn create_resctrl_monitor_groups_with_l3_domain_mapper(
         groups.push(ResctrlMonitorGroup {
             cpus: domain.cpus.clone(),
             l3_domains: group_l3_domains,
+            lost_cpus: false,
             path: group_path,
             scope: domain.scope,
         });
@@ -1077,10 +1123,13 @@ fn create_resctrl_monitor_groups_with_l3_domain_mapper(
     Ok(groups)
 }
 
+/// Reads a monitor group's counters, or returns `None` while the group does
+/// not hold its CPUs.
 fn read_resctrl_monitor_group(
-    group: &ResctrlMonitorGroup,
+    group: &mut ResctrlMonitorGroup,
     features: ResctrlMonitorFeatures,
-) -> Result<RdtScopeReading, String> {
+    write_cpus_list: &mut impl FnMut(&Path, &str) -> io::Result<()>,
+) -> Result<Option<RdtScopeReading>, String> {
     if !group.path.is_dir() {
         return Err(format!(
             "Ocellus resctrl monitor group {} disappeared",
@@ -1094,12 +1143,25 @@ fn read_resctrl_monitor_group(
     let mut expected = group.cpus.clone();
     expected.sort_unstable();
     if cpus != expected {
-        return Err(format!(
-            "Ocellus resctrl monitor group {} lost CPU(s): it monitors CPU(s) {:?} but holds {:?}; another resctrl group took them",
-            group.path.display(),
+        if !group.lost_cpus {
+            eprintln!(
+                "ocellus: Ocellus resctrl monitor group {} lost CPU(s): it monitors CPU(s) {:?} but holds {:?}; another resctrl group took them, so its RDT metrics are omitted until they rejoin",
+                group.path.display(),
+                expected,
+                cpus
+            );
+            group.lost_cpus = true;
+        }
+        rejoin_resctrl_monitor_group(group, write_cpus_list)?;
+        return Ok(None);
+    }
+    if group.lost_cpus {
+        eprintln!(
+            "ocellus: CPU(s) {:?} rejoined Ocellus resctrl monitor group {}; its RDT metrics resume",
             expected,
-            cpus
-        ));
+            group.path.display()
+        );
+        group.lost_cpus = false;
     }
 
     let l3_occupancy_bytes = if features.occupancy {
@@ -1118,7 +1180,7 @@ fn read_resctrl_monitor_group(
         None
     };
 
-    Ok(RdtScopeReading {
+    Ok(Some(RdtScopeReading {
         conversion_factor_bytes: 1.0,
         counters: RdtCounters {
             local_memory_bandwidth,
@@ -1126,7 +1188,52 @@ fn read_resctrl_monitor_group(
         },
         l3_occupancy_bytes,
         scope: group.scope,
-    })
+    }))
+}
+
+/// Writes the group's CPUs back to its `cpus_list` once its parent control
+/// group holds them again. The kernel takes only CPUs of the parent, so while
+/// another control group holds one of them the group stays without them
+/// until a later sample. The parent is read before the write, so a group
+/// removed between the write and the read cannot turn an expected EINVAL
+/// into an error.
+fn rejoin_resctrl_monitor_group(
+    group: &ResctrlMonitorGroup,
+    write_cpus_list: &mut impl FnMut(&Path, &str) -> io::Result<()>,
+) -> Result<(), String> {
+    if !parent_holds_resctrl_monitor_group_cpus(group)? {
+        return Ok(());
+    }
+    let cpu_list = format_cpu_list(&group.cpus);
+    let error = match write_cpus_list(&group.path.join("cpus_list"), &format!("{cpu_list}\n")) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    // Another control group took a CPU between the read and the write.
+    if error.raw_os_error() == Some(nix::errno::Errno::EINVAL as i32)
+        && !parent_holds_resctrl_monitor_group_cpus(group)?
+    {
+        return Ok(());
+    }
+
+    Err(format!(
+        "failed to assign CPUs {cpu_list} back to {}: {error}",
+        group.path.display()
+    ))
+}
+
+fn parent_holds_resctrl_monitor_group_cpus(group: &ResctrlMonitorGroup) -> Result<bool, String> {
+    let parent = group.path.parent().and_then(Path::parent).ok_or_else(|| {
+        format!(
+            "Ocellus resctrl monitor group {} has no parent control group",
+            group.path.display()
+        )
+    })?;
+    let parent_cpus_path = parent.join("cpus_list");
+    let parent_cpus = read_optional_cpu_list(&parent_cpus_path)?
+        .ok_or_else(|| format!("{} is missing", parent_cpus_path.display()))?;
+
+    Ok(cpus_are_subset(&group.cpus, &parent_cpus))
 }
 
 fn sum_resctrl_counters(group: &ResctrlMonitorGroup, counter: &str) -> Result<Option<u64>, String> {
@@ -2563,6 +2670,7 @@ mod tests {
                 l3_occupancy_bytes: Some(4096.0),
                 scope: test_scope(),
             }],
+            unavailable_scopes: Vec::new(),
         };
         let current = RdtReading {
             at: previous.at + Duration::from_secs(2),
@@ -2575,6 +2683,7 @@ mod tests {
                 l3_occupancy_bytes: Some(8192.0),
                 scope: test_scope(),
             }],
+            unavailable_scopes: Vec::new(),
         };
 
         let metrics = RdtMetrics::from_readings(previous, current, u64::MAX).unwrap();
@@ -2605,6 +2714,7 @@ mod tests {
         let group = ResctrlMonitorGroup {
             cpus: vec![0],
             l3_domains: vec!["mon_L3_00".to_string(), "mon_L3_01".to_string()],
+            lost_cpus: false,
             path: root.clone(),
             scope: test_scope(),
         };
@@ -2770,6 +2880,7 @@ mod tests {
         let group = ResctrlMonitorGroup {
             cpus: vec![0],
             l3_domains: vec!["mon_L3_00".to_string(), "mon_L3_01".to_string()],
+            lost_cpus: false,
             path: root.clone(),
             scope: test_scope(),
         };
@@ -2780,32 +2891,201 @@ mod tests {
     }
 
     #[test]
-    fn rejects_monitor_group_that_lost_its_cpus() {
-        let root = unique_test_dir("resctrl-rdt-lost-cpus");
-        std::fs::create_dir_all(root.join("mon_data/mon_L3_00")).unwrap();
-        std::fs::write(root.join("mon_data/mon_L3_00/llc_occupancy"), "4096\n").unwrap();
-        std::fs::write(root.join("cpus_list"), "2\n").unwrap();
-        let group = ResctrlMonitorGroup {
-            cpus: vec![2],
-            l3_domains: vec!["mon_L3_00".to_string()],
-            path: root.clone(),
-            scope: test_scope(),
-        };
-        let features = ResctrlMonitorFeatures {
-            local_bandwidth: false,
-            num_rmids: 8,
-            occupancy: true,
-            total_bandwidth: false,
-        };
+    fn omits_scope_whose_monitor_group_lost_its_cpu() {
+        let root = unique_test_dir("resctrl-rdt-lost-cpu");
+        let mut collector = test_resctrl_collector(&root);
+        assert!(
+            collector
+                .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+                .unwrap()
+                .is_none()
+        );
 
-        let reading = read_resctrl_monitor_group(&group, features).unwrap();
-        assert_eq!(reading.l3_occupancy_bytes, Some(4096.0));
+        take_test_resctrl_cpu0(&root);
+        write_test_resctrl_counters(&root, 1, 8192, 1300, 600);
+        let metrics = collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap()
+            .unwrap();
 
-        // Assigning CPU 2 to another control group empties this group.
-        std::fs::write(root.join("cpus_list"), "\n").unwrap();
-        let error = read_resctrl_monitor_group(&group, features).unwrap_err();
-        assert!(error.contains("lost CPU(s)"), "{error}");
+        assert_eq!(metrics.unavailable_scopes, vec![collector.groups[0].scope]);
+        assert!(test_scope_metrics(&metrics, 0).is_none());
+        let other = test_scope_metrics(&metrics, 1).unwrap();
+        assert_eq!(other.l3_occupancy_bytes, Some(8192.0));
+        assert!(other.total_memory_bandwidth_bytes_per_second.is_some());
+        assert!(other.local_memory_bandwidth_bytes_per_second.is_some());
+        assert!(other.remote_memory_bandwidth_bytes_per_second.is_some());
 
+        drop(collector);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_scope_unavailable_while_another_control_group_holds_its_cpu() {
+        let root = unique_test_dir("resctrl-rdt-rejoin-einval");
+        let mut collector = test_resctrl_collector(&root);
+        collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap();
+        take_test_resctrl_cpu0(&root);
+
+        // The root group lacks CPU 0, so no rewrite is attempted.
+        for _ in 0..2 {
+            let metrics = collector
+                .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+                .unwrap()
+                .unwrap();
+
+            assert!(test_scope_metrics(&metrics, 0).is_none());
+            assert_eq!(metrics.unavailable_scopes, vec![collector.groups[0].scope]);
+        }
+
+        let cpus_list = root.join("mon_groups/ocellus-p0-c0-cpu0/cpus_list");
+        assert_eq!(std::fs::read_to_string(&cpus_list).unwrap(), "\n");
+        assert!(collector.groups[0].lost_cpus);
+
+        drop(collector);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stays_unavailable_when_another_group_takes_the_cpu_during_the_rewrite() {
+        let root = unique_test_dir("resctrl-rdt-rejoin-race");
+        let mut collector = test_resctrl_collector(&root);
+        collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap();
+        take_test_resctrl_cpu0(&root);
+        std::fs::write(root.join("cpus_list"), "0-1\n").unwrap();
+
+        let mut writes = 0;
+        let metrics = collector
+            .sample_with_cpus_list_writer(|path, cpus| {
+                writes += 1;
+                // Another control group takes CPU 0 before the write lands.
+                std::fs::write(root.join("cpus_list"), "1\n").unwrap();
+                einval_cpus_list_write(path, cpus)
+            })
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(writes, 1);
+        assert!(test_scope_metrics(&metrics, 0).is_none());
+        assert!(collector.groups[0].lost_cpus);
+
+        drop(collector);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejoins_scope_with_bandwidth_from_post_rejoin_readings_only() {
+        let root = unique_test_dir("resctrl-rdt-rejoin");
+        let mut collector = test_resctrl_collector(&root);
+        collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap();
+        take_test_resctrl_cpu0(&root);
+        collector
+            .sample_with_cpus_list_writer(einval_cpus_list_write)
+            .unwrap();
+
+        // Removing the other control group gives CPU 0 back to the root group.
+        std::fs::write(root.join("cpus_list"), "0-1\n").unwrap();
+        let metrics = collector
+            .sample_with_cpus_list_writer(|path, cpus| std::fs::write(path, cpus))
+            .unwrap()
+            .unwrap();
+        assert!(test_scope_metrics(&metrics, 0).is_none());
+        assert_eq!(
+            std::fs::read_to_string(root.join("mon_groups/ocellus-p0-c0-cpu0/cpus_list")).unwrap(),
+            "0\n"
+        );
+
+        write_test_resctrl_counters(&root, 0, 2048, 900_000, 400_000);
+        let metrics = collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap()
+            .unwrap();
+        assert!(metrics.unavailable_scopes.is_empty());
+        assert!(!collector.groups[0].lost_cpus);
+        let rejoined = test_scope_metrics(&metrics, 0).unwrap();
+        assert_eq!(rejoined.l3_occupancy_bytes, Some(2048.0));
+        assert_eq!(rejoined.total_memory_bandwidth_bytes_per_second, None);
+        assert_eq!(rejoined.local_memory_bandwidth_bytes_per_second, None);
+        assert_eq!(rejoined.remote_memory_bandwidth_bytes_per_second, None);
+
+        // Both scopes count the same bytes over the same interval, so equal
+        // bandwidths show CPU 0's comes from its post-rejoin readings alone.
+        write_test_resctrl_counters(&root, 0, 2048, 900_300, 400_100);
+        write_test_resctrl_counters(&root, 1, 4096, 1300, 600);
+        let metrics = collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap()
+            .unwrap();
+        let rejoined = test_scope_metrics(&metrics, 0).unwrap();
+        let other = test_scope_metrics(&metrics, 1).unwrap();
+        assert!(rejoined.total_memory_bandwidth_bytes_per_second.is_some());
+        assert_eq!(
+            rejoined.total_memory_bandwidth_bytes_per_second,
+            other.total_memory_bandwidth_bytes_per_second
+        );
+        assert_eq!(
+            rejoined.local_memory_bandwidth_bytes_per_second,
+            other.local_memory_bandwidth_bytes_per_second
+        );
+        assert_eq!(
+            rejoined.remote_memory_bandwidth_bytes_per_second,
+            other.remote_memory_bandwidth_bytes_per_second
+        );
+
+        drop(collector);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fails_on_other_resctrl_cpus_list_write_errors() {
+        let root = unique_test_dir("resctrl-rdt-rejoin-error");
+        let mut collector = test_resctrl_collector(&root);
+        collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap();
+        take_test_resctrl_cpu0(&root);
+        // The parent control group holds CPU 0 again, so the rewrite runs.
+        std::fs::write(root.join("cpus_list"), "0-1\n").unwrap();
+
+        let error = collector
+            .sample_with_cpus_list_writer(|_, _| {
+                Err(io::Error::from_raw_os_error(nix::errno::Errno::EIO as i32))
+            })
+            .unwrap_err();
+        assert!(error.contains("failed to assign CPUs 0 back to"), "{error}");
+
+        // EINVAL while the parent still holds CPU 0 means no other group does.
+        let error = collector
+            .sample_with_cpus_list_writer(einval_cpus_list_write)
+            .unwrap_err();
+        assert!(error.contains("failed to assign CPUs 0 back to"), "{error}");
+
+        drop(collector);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fails_when_resctrl_monitor_group_disappears() {
+        let root = unique_test_dir("resctrl-rdt-vanished");
+        let mut collector = test_resctrl_collector(&root);
+        collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap();
+        std::fs::remove_dir_all(root.join("mon_groups/ocellus-p0-c0-cpu0")).unwrap();
+
+        let error = collector
+            .sample_with_cpus_list_writer(unexpected_cpus_list_write)
+            .unwrap_err();
+
+        assert!(error.contains("disappeared"), "{error}");
+
+        drop(collector);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3319,6 +3599,77 @@ mod tests {
         available: &[String],
     ) -> Result<Vec<String>, String> {
         Ok(available.first().cloned().into_iter().collect())
+    }
+
+    /// A fake resctrl tree whose root control group holds CPUs 0 and 1, each
+    /// in its own Ocellus monitor group.
+    fn test_resctrl_collector(root: &Path) -> ResctrlRdtCollector {
+        std::fs::write(root.join("cpus_list"), "0-1\n").unwrap();
+        let groups = [0, 1].map(|cpu| {
+            let path = root.join(format!("mon_groups/ocellus-p0-c{cpu}-cpu{cpu}"));
+            std::fs::create_dir_all(path.join("mon_data/mon_L3_00")).unwrap();
+            std::fs::write(path.join("cpus_list"), format!("{cpu}\n")).unwrap();
+            write_test_resctrl_counters(root, cpu, 4096, 1000, 500);
+            ResctrlMonitorGroup {
+                cpus: vec![cpu],
+                l3_domains: vec!["mon_L3_00".to_string()],
+                lost_cpus: false,
+                path,
+                scope: RdtScope {
+                    core_id: cpu,
+                    cpu,
+                    die_group_id: None,
+                    die_id: None,
+                    package_id: 0,
+                },
+            }
+        });
+
+        ResctrlRdtCollector {
+            features: ResctrlMonitorFeatures::parse(
+                "llc_occupancy\nmbm_total_bytes\nmbm_local_bytes\n",
+            ),
+            groups: groups.into(),
+            previous: None,
+        }
+    }
+
+    fn write_test_resctrl_counters(root: &Path, cpu: u32, occupancy: u64, total: u64, local: u64) {
+        let mon_data = root.join(format!(
+            "mon_groups/ocellus-p0-c{cpu}-cpu{cpu}/mon_data/mon_L3_00"
+        ));
+        std::fs::write(
+            mon_data.join(RESCTRL_L3_OCCUPANCY),
+            format!("{occupancy}\n"),
+        )
+        .unwrap();
+        std::fs::write(mon_data.join(RESCTRL_MBM_TOTAL), format!("{total}\n")).unwrap();
+        std::fs::write(mon_data.join(RESCTRL_MBM_LOCAL), format!("{local}\n")).unwrap();
+    }
+
+    /// Does what the kernel does when another control group's `cpus_list`
+    /// takes CPU 0.
+    fn take_test_resctrl_cpu0(root: &Path) {
+        std::fs::write(root.join("cpus_list"), "1\n").unwrap();
+        std::fs::write(root.join("mon_groups/ocellus-p0-c0-cpu0/cpus_list"), "\n").unwrap();
+    }
+
+    fn einval_cpus_list_write(_path: &Path, _cpus: &str) -> io::Result<()> {
+        Err(io::Error::from_raw_os_error(
+            nix::errno::Errno::EINVAL as i32,
+        ))
+    }
+
+    fn unexpected_cpus_list_write(path: &Path, _cpus: &str) -> io::Result<()> {
+        panic!("unexpected write to {}", path.display())
+    }
+
+    fn test_scope_metrics(metrics: &RdtMetrics, cpu: u32) -> Option<RdtScopeMetrics> {
+        metrics
+            .scopes
+            .iter()
+            .find(|scope| scope.scope.cpu == cpu)
+            .copied()
     }
 
     fn unique_test_dir(name: &str) -> PathBuf {

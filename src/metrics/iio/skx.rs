@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -14,6 +14,10 @@ use crate::metrics::uncore::skx::{
     SKX_IIO_STACK_COUNT, SKX_UNCORE_COUNTER_WIDTH, SkxIioStack, UncoreScope, events_per_second,
     frequency_hz, mask_counter, measurement_round_count, queue_residency_seconds, ratio,
     scale_to_enabled, uncore_leaders, wrapping_delta,
+};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, Grouping, PmuConfig, ProgrammedBoxType,
+    ProgrammedGroup, UncoreCounts,
 };
 
 const IIO_COUNTER_COUNT: usize = 4;
@@ -224,36 +228,93 @@ impl SkxIioMetrics {
 
 #[derive(Debug)]
 pub struct SkxIioCollector {
+    config: Option<CountAccumulator>,
     next_group: usize,
     packages: Vec<IioPackage>,
 }
 
 impl SkxIioCollector {
     /// The IIO stacks of each package that PMU configs can program.
-    pub fn config_units(&self) -> std::collections::BTreeMap<u16, std::collections::BTreeSet<u16>> {
-        std::collections::BTreeMap::new()
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        self.packages
+            .iter()
+            .map(|package| {
+                (
+                    package.scope.package_id as u16,
+                    package
+                        .units
+                        .iter()
+                        .map(|unit| unit.stack.id() as u16)
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     pub fn has_config(&self) -> bool {
-        false
+        self.config.is_some()
     }
 
     /// Counts `config`'s groups from the next sample on, or the default
     /// groups for `None`. Counts restart from 0.
-    pub fn set_config(
-        &mut self,
-        _config: Option<crate::pmu_config::types::PmuConfig>,
-    ) -> Result<(), String> {
-        Err("PMU configs are not implemented for Skylake-SP IIO yet".to_string())
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        if let Some(config) = &config {
+            check_config(
+                config,
+                BoxType::Iio,
+                &self.config_units(),
+                IIO_COUNTER_COUNT,
+            )?;
+        }
+
+        self.config = config.map(CountAccumulator::new);
+        // The free-running PCIe counters count on: no delta may span a config.
+        self.discard_readings();
+        Ok(())
     }
 
     /// Samples the set config for `interval`. Its counts are cumulative since
     /// the config was set.
-    pub async fn sample_config(
-        &mut self,
-        _interval: Duration,
-    ) -> Result<crate::pmu_config::types::UncoreCounts, String> {
-        Err("PMU configs are not implemented for Skylake-SP IIO yet".to_string())
+    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+        if interval.is_zero() {
+            return Err("IIO measure interval must be non-zero".to_string());
+        }
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "IIO has no PMU config to sample".to_string())?;
+        let program = accumulator.config().program.clone();
+
+        for slice in config_schedule(&program, interval) {
+            let units = config_targets(&program, &slice)
+                .into_iter()
+                .map(|target| Ok((config_unit(&self.packages, target)?, target)))
+                .collect::<Result<Vec<_>, String>>()?;
+            for (unit, target) in &units {
+                unit.write_registers(&iio_config_writes(unit.stack, target.group))?;
+            }
+
+            let started_at = Instant::now();
+            for (unit, _) in &units {
+                unit.unfreeze()?;
+            }
+            tokio::time::sleep(slice.duration).await;
+            for (unit, _) in &units {
+                unit.freeze()?;
+            }
+            let running = started_at.elapsed();
+
+            let mut readings = Vec::new();
+            for (unit, target) in &units {
+                for counter in &target.group.counters {
+                    let counter_index = general_counter_index(counter.slot, IIO_COUNTER_COUNT)?;
+                    readings.push(target.reading(counter.slot, unit.read_counter(counter_index)?));
+                }
+            }
+            fold_config_slice(accumulator, &slice, &readings, running)?;
+        }
+
+        Ok(accumulator.counts())
     }
 }
 
@@ -263,6 +324,7 @@ impl SkxIioCollector {
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
+            config: None,
             next_group: 0,
             packages,
         })
@@ -706,6 +768,15 @@ impl IioUnit {
     fn write_unit_control(self, value: u64) -> Result<(), String> {
         Msr::open(self.cpu)?.write(iio_unit_control_offset(self.stack), value)
     }
+
+    fn write_registers(self, writes: &[(u64, u64)]) -> Result<(), String> {
+        let msr = Msr::open(self.cpu)?;
+        for &(address, value) in writes {
+            msr.write(address, value)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1022,9 +1093,235 @@ fn unfreeze_packages(packages: &[IioPackage]) -> Result<(), String> {
     Ok(())
 }
 
+fn config_unit(packages: &[IioPackage], target: ConfigTarget<'_>) -> Result<IioUnit, String> {
+    packages
+        .iter()
+        .filter(|package| package.scope.package_id as u16 == target.package)
+        .flat_map(|package| &package.units)
+        .find(|unit| unit.stack.id() as u16 == target.unit)
+        .copied()
+        .ok_or_else(|| {
+            format!(
+                "IIO stack {} of package {} does not exist",
+                target.unit, target.package
+            )
+        })
+}
+
+/// The writes that freeze and reset an IIO stack and program `group` on it.
+fn iio_config_writes(stack: SkxIioStack, group: &ProgrammedGroup) -> Vec<(u64, u64)> {
+    let mut writes = vec![(
+        iio_unit_control_offset(stack),
+        u64::from(pmon::UNIT_FREEZE_AND_RESET),
+    )];
+    for counter_index in 0..IIO_COUNTER_COUNT {
+        writes.push((
+            iio_control_offset(stack, counter_index),
+            config_counter_control(group, counter_index),
+        ));
+    }
+
+    writes
+}
+
+// PMU config helpers shared with the SKX IRP collector.
+
+/// One slice of a config sample: the groups that count in it, by position in
+/// the config, and for how long.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ConfigSlice {
+    pub(crate) duration: Duration,
+    pub(crate) groups: Vec<usize>,
+}
+
+/// A unit that a config slice programs, and its group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ConfigTarget<'a> {
+    pub(crate) package: u16,
+    pub(crate) unit: u16,
+    pub(crate) group: &'a ProgrammedGroup,
+}
+
+impl ConfigTarget<'_> {
+    pub(crate) fn reading(self, slot: CounterSlot, raw: u64) -> ConfigReading {
+        ConfigReading {
+            package: self.package,
+            unit: self.unit,
+            group: self.group.index,
+            slot,
+            raw,
+        }
+    }
+}
+
+/// A counter as read at the end of a slice, before masking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ConfigReading {
+    pub(crate) package: u16,
+    pub(crate) unit: u16,
+    pub(crate) group: u8,
+    pub(crate) slot: CounterSlot,
+    pub(crate) raw: u64,
+}
+
+/// Checks that `config` programs `box_type` on units of `host_units`, with no
+/// filters and only the box's `counter_count` general counters.
+pub(crate) fn check_config(
+    config: &PmuConfig,
+    box_type: BoxType,
+    host_units: &BTreeMap<u16, BTreeSet<u16>>,
+    counter_count: usize,
+) -> Result<(), String> {
+    let label = box_type.label();
+    if config.program.box_type != box_type {
+        return Err(format!(
+            "the {label} collector cannot run a config for {}",
+            config.program.box_type.label()
+        ));
+    }
+
+    for group in &config.program.groups {
+        let path = format!("{label} config {} group {}", config.config_id, group.index);
+        if group.filters.is_some() {
+            return Err(format!("{path}: {label} groups take no filters"));
+        }
+        for counter in &group.counters {
+            general_counter_index(counter.slot, counter_count)
+                .map_err(|error| format!("{path}: {error}"))?;
+        }
+        for (package, units) in &group.units {
+            let host = host_units
+                .get(package)
+                .ok_or_else(|| format!("{path}: package {package} has no {label} boxes"))?;
+            if let Some(unit) = units.difference(host).next() {
+                return Err(format!(
+                    "{path}: unit {unit} does not exist in package {package}"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// The control value of general counter `counter_index` in `group`, with the
+/// reset bit added, or 0 for a counter the group does not use.
+pub(crate) fn config_counter_control(group: &ProgrammedGroup, counter_index: usize) -> u64 {
+    group
+        .counters
+        .iter()
+        .find(|counter| counter.slot == CounterSlot::General(counter_index as u8))
+        .map_or(0, |counter| {
+            counter.control | u64::from(pmon::COUNTER_RESET)
+        })
+}
+
+/// The slices of one sample: all groups at once for the whole interval, or
+/// for temporal grouping each group in turn, in rounds.
+pub(crate) fn config_schedule(program: &ProgrammedBoxType, interval: Duration) -> Vec<ConfigSlice> {
+    let group_count = program.groups.len();
+    match program.grouping {
+        Grouping::Fixed | Grouping::Spatial => vec![ConfigSlice {
+            duration: interval,
+            groups: (0..group_count).collect(),
+        }],
+        Grouping::Temporal => {
+            let round_count = measurement_round_count(interval, group_count);
+            let slice_count = group_count * round_count;
+            let duration = interval.div_f64(slice_count as f64);
+
+            (0..round_count)
+                .flat_map(|_| 0..group_count)
+                .map(|group| ConfigSlice {
+                    duration,
+                    groups: vec![group],
+                })
+                .collect()
+        }
+    }
+}
+
+/// The units the groups of `slice` program, in group and then package and
+/// unit order.
+pub(crate) fn config_targets<'a>(
+    program: &'a ProgrammedBoxType,
+    slice: &ConfigSlice,
+) -> Vec<ConfigTarget<'a>> {
+    let mut targets = Vec::new();
+    for &position in &slice.groups {
+        let group = &program.groups[position];
+        for (&package, units) in &group.units {
+            for &unit in units {
+                targets.push(ConfigTarget {
+                    package,
+                    unit,
+                    group,
+                });
+            }
+        }
+    }
+
+    targets
+}
+
+/// Adds one slice's readings, masked to the counter width, and its running
+/// time to every group of the slice in every package the group runs in.
+pub(crate) fn fold_config_slice(
+    accumulator: &mut CountAccumulator,
+    slice: &ConfigSlice,
+    readings: &[ConfigReading],
+    running: Duration,
+) -> Result<(), String> {
+    let groups = &accumulator.config().program.groups;
+    let running_groups = slice
+        .groups
+        .iter()
+        .flat_map(|&position| {
+            let group = &groups[position];
+            group.units.keys().map(|&package| (package, group.index))
+        })
+        .collect::<Vec<_>>();
+
+    for reading in readings {
+        accumulator.add_count(
+            reading.package,
+            reading.unit,
+            reading.group,
+            reading.slot,
+            mask_counter(reading.raw, SKX_UNCORE_COUNTER_WIDTH),
+        )?;
+    }
+    for (package, group) in running_groups {
+        accumulator.add_running(package, group, running)?;
+    }
+
+    Ok(())
+}
+
+/// The index of general counter `slot` among the box's `counter_count`.
+pub(crate) fn general_counter_index(
+    slot: CounterSlot,
+    counter_count: usize,
+) -> Result<usize, String> {
+    match slot {
+        CounterSlot::General(index) if usize::from(index) < counter_count => Ok(usize::from(index)),
+        _ => Err(format!(
+            "slot {} is not one of the {counter_count} general counters",
+            slot.label()
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
+    use crate::pmu_config::types::{
+        Aggregate, ChaFilters, CountUnit, EventLabels, GroupRunning, ProgrammedCounter, UnitCount,
+    };
+
+    const CONTROL: u64 = 0x50_0001;
 
     #[test]
     fn computes_iio_scope_metrics() {
@@ -1215,6 +1512,418 @@ mod tests {
         assert!(!SkxIioCollector::is_supported(&test_architecture(0xcf)));
     }
 
+    #[test]
+    fn addresses_config_units_by_package_and_stack_id() {
+        let mut collector = test_collector();
+        collector.packages.push(IioPackage::new(0, test_scope()));
+        collector.packages.push(IioPackage::new(
+            28,
+            UncoreScope {
+                package_id: 1,
+                ..test_scope()
+            },
+        ));
+
+        let stacks = BTreeSet::from([0, 1, 2, 3, 4, 5]);
+        assert_eq!(
+            collector.config_units(),
+            BTreeMap::from([(0, stacks.clone()), (1, stacks)])
+        );
+        let group = test_group(0, &[(0, CONTROL)], &[1], &[2]);
+        let unit = config_unit(
+            &collector.packages,
+            ConfigTarget {
+                package: 1,
+                unit: 2,
+                group: &group,
+            },
+        )
+        .unwrap();
+        assert_eq!((unit.cpu, unit.stack), (28, SkxIioStack::Pcie1));
+    }
+
+    #[test]
+    fn writes_config_group_on_stack_2() {
+        // Event 0xc2, umask 0x03, ch_mask 0x0f at bit 36, fc_mask 0x04 at bit 44.
+        let control = pmon::iio_counter_control_without_reset(0xc2, 0x03, 0x0f, 0x04, true);
+        assert_eq!(control, 0x40f0_0050_03c2);
+        let group = test_group(0, &[(0, control), (2, CONTROL)], &[0], &[2]);
+
+        assert_eq!(
+            iio_config_writes(SkxIioStack::Pcie1, &group),
+            vec![
+                (0x0a80, 0x3_0103),
+                (0x0a88, 0x40f0_0052_03c2),
+                (0x0a89, 0),
+                (0x0a8a, 0x52_0001),
+                (0x0a8b, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn schedules_config_slices() {
+        let interval = Duration::from_secs(1);
+        let fixed = test_config(
+            Grouping::Fixed,
+            Aggregate::Sum,
+            vec![test_group(0, &[(0, CONTROL)], &[0, 1], &[0, 2])],
+        );
+        assert_eq!(
+            config_schedule(&fixed.program, interval),
+            vec![slice(1_000, &[0])]
+        );
+
+        let spatial = test_config(
+            Grouping::Spatial,
+            Aggregate::Sum,
+            vec![
+                test_group(0, &[(0, CONTROL)], &[0], &[1]),
+                test_group(1, &[(0, CONTROL)], &[0], &[2, 3]),
+            ],
+        );
+        assert_eq!(
+            config_schedule(&spatial.program, interval),
+            vec![slice(1_000, &[0, 1])]
+        );
+
+        let temporal = test_config(
+            Grouping::Temporal,
+            Aggregate::Sum,
+            vec![
+                test_group(0, &[(0, CONTROL)], &[0], &[2]),
+                test_group(1, &[(0, CONTROL)], &[0], &[2]),
+            ],
+        );
+        assert_eq!(
+            config_schedule(&temporal.program, interval),
+            [0, 1]
+                .repeat(5)
+                .into_iter()
+                .map(|group| slice(100, &[group]))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            config_schedule(&temporal.program, Duration::from_millis(50)),
+            vec![slice(25, &[0]), slice(25, &[1])]
+        );
+    }
+
+    #[test]
+    fn lists_the_units_of_a_slice() {
+        let config = test_config(
+            Grouping::Spatial,
+            Aggregate::Sum,
+            vec![
+                test_group(0, &[(0, CONTROL)], &[0, 1], &[1]),
+                test_group(1, &[(0, CONTROL)], &[0, 1], &[2, 3]),
+            ],
+        );
+        let groups = &config.program.groups;
+
+        let targets = config_targets(&config.program, &slice(1_000, &[0, 1]))
+            .into_iter()
+            .map(|target| (target.package, target.unit, target.group.index))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            targets,
+            vec![
+                (0, 1, 0),
+                (1, 1, 0),
+                (0, 2, 1),
+                (0, 3, 1),
+                (1, 2, 1),
+                (1, 3, 1),
+            ]
+        );
+        assert_eq!(
+            config_targets(&config.program, &slice(1_000, &[1]))[0],
+            ConfigTarget {
+                package: 0,
+                unit: 2,
+                group: &groups[1],
+            }
+        );
+    }
+
+    #[test]
+    fn folds_config_readings_into_cumulative_counts() {
+        for aggregate in [Aggregate::Box, Aggregate::Sum] {
+            let mut accumulator = CountAccumulator::new(test_config(
+                Grouping::Spatial,
+                aggregate,
+                vec![
+                    test_group(0, &[(0, CONTROL), (3, CONTROL)], &[0], &[1, 2]),
+                    test_group(1, &[(1, CONTROL)], &[0], &[4]),
+                ],
+            ));
+            let readings = [
+                reading(1, 0, 0, 10),
+                // Bits above the 48-bit counter are dropped.
+                reading(2, 0, 0, (1 << 48) | 5),
+                reading(1, 0, 3, 7),
+                reading(2, 0, 3, 0),
+                reading(4, 1, 1, 100),
+            ];
+
+            // Two samples of one slice each.
+            for _ in 0..2 {
+                fold_config_slice(
+                    &mut accumulator,
+                    &slice(1_000, &[0, 1]),
+                    &readings,
+                    Duration::from_millis(250),
+                )
+                .unwrap();
+            }
+            let counts = accumulator.counts();
+
+            let expected = match aggregate {
+                Aggregate::Box => vec![
+                    count(CountUnit::Box(1), 0, 0, 20),
+                    count(CountUnit::Box(1), 0, 3, 14),
+                    count(CountUnit::Box(2), 0, 0, 10),
+                    count(CountUnit::Box(2), 0, 3, 0),
+                    count(CountUnit::Box(4), 1, 1, 200),
+                ],
+                Aggregate::Sum => vec![
+                    count(CountUnit::Sum, 0, 0, 30),
+                    count(CountUnit::Sum, 0, 3, 14),
+                    count(CountUnit::Sum, 1, 1, 200),
+                ],
+            };
+            assert_eq!(counts.counts, expected);
+            assert_eq!(counts.running, vec![running(0, 0.5), running(1, 0.5)]);
+        }
+    }
+
+    #[test]
+    fn folds_temporal_running_time_per_group() {
+        let mut accumulator = CountAccumulator::new(test_config(
+            Grouping::Temporal,
+            Aggregate::Sum,
+            vec![
+                test_group(0, &[(0, CONTROL)], &[0], &[2]),
+                test_group(1, &[(0, CONTROL)], &[0], &[2]),
+            ],
+        ));
+
+        for _ in 0..2 {
+            fold_config_slice(
+                &mut accumulator,
+                &slice(500, &[0]),
+                &[reading(2, 0, 0, 3)],
+                Duration::from_millis(250),
+            )
+            .unwrap();
+            fold_config_slice(
+                &mut accumulator,
+                &slice(500, &[1]),
+                &[reading(2, 1, 0, 4)],
+                Duration::from_millis(500),
+            )
+            .unwrap();
+        }
+        let counts = accumulator.counts();
+
+        assert_eq!(
+            counts.counts,
+            vec![
+                count(CountUnit::Sum, 0, 0, 6),
+                count(CountUnit::Sum, 1, 0, 8)
+            ]
+        );
+        assert_eq!(counts.running, vec![running(0, 0.5), running(1, 1.0)]);
+    }
+
+    #[test]
+    fn rejects_configs_iio_cannot_run() {
+        let mut collector = test_collector();
+        collector.packages.push(IioPackage::new(0, test_scope()));
+        let valid = || {
+            test_config(
+                Grouping::Fixed,
+                Aggregate::Box,
+                vec![test_group(0, &[(3, CONTROL)], &[0], &[2, 5])],
+            )
+        };
+        collector.set_config(Some(valid())).unwrap();
+
+        let mut other_box = valid();
+        other_box.program.box_type = BoxType::Irp;
+        let mut other_package = valid();
+        other_package.program.groups[0].units = BTreeMap::from([(1, BTreeSet::from([2]))]);
+        let mut other_unit = valid();
+        other_unit.program.groups[0].units = BTreeMap::from([(0, BTreeSet::from([2, 6]))]);
+        let mut fifth_counter = valid();
+        fifth_counter.program.groups[0].counters[0].slot = CounterSlot::General(4);
+        let mut fixed_counter = valid();
+        fixed_counter.program.groups[0].counters[0].slot = CounterSlot::Fixed;
+        let mut filters = valid();
+        filters.program.groups[0].filters = Some(ChaFilters {
+            filter0: 0,
+            filter1: 0,
+        });
+
+        for (config, error) in [
+            (other_box, "the iio collector cannot run a config for irp"),
+            (
+                other_package,
+                "iio config 7 group 0: package 1 has no iio boxes",
+            ),
+            (
+                other_unit,
+                "iio config 7 group 0: unit 6 does not exist in package 0",
+            ),
+            (
+                fifth_counter,
+                "iio config 7 group 0: slot 4 is not one of the 4 general counters",
+            ),
+            (
+                fixed_counter,
+                "iio config 7 group 0: slot fixed is not one of the 4 general counters",
+            ),
+            (filters, "iio config 7 group 0: iio groups take no filters"),
+        ] {
+            assert_eq!(collector.set_config(Some(config)), Err(error.to_string()));
+            // The config set before stays.
+            assert_eq!(collector.config.as_ref().unwrap().config(), &valid());
+        }
+    }
+
+    #[test]
+    fn setting_a_config_restarts_counts_and_discards_pcie_readings() {
+        let scope = test_scope();
+        let mut collector = test_collector();
+        collector.packages.push(IioPackage::new(0, scope));
+        let config = test_config(
+            Grouping::Fixed,
+            Aggregate::Box,
+            vec![test_group(0, &[(0, CONTROL)], &[0], &[2])],
+        );
+        let read_pcie = |collector: &mut SkxIioCollector| {
+            collector.packages[0]
+                .free_running
+                .advance(
+                    scope,
+                    (
+                        Instant::now(),
+                        vec![0; IIO_UNIT_COUNT * IIO_PCIE_PORT_COUNT * 2],
+                    ),
+                )
+                .unwrap();
+        };
+
+        read_pcie(&mut collector);
+        collector.set_config(Some(config.clone())).unwrap();
+        assert!(collector.has_config());
+        assert!(collector.packages[0].free_running.previous.is_none());
+
+        let accumulator = collector.config.as_mut().unwrap();
+        accumulator
+            .add_count(0, 2, 0, CounterSlot::General(0), 5)
+            .unwrap();
+        accumulator
+            .add_running(0, 0, Duration::from_secs(1))
+            .unwrap();
+        collector.set_config(Some(config)).unwrap();
+        let counts = collector.config.as_ref().unwrap().counts();
+        assert_eq!(counts.counts, vec![count(CountUnit::Box(2), 0, 0, 0)]);
+        assert_eq!(counts.running, vec![running(0, 0.0)]);
+
+        read_pcie(&mut collector);
+        collector.set_config(None).unwrap();
+        assert!(!collector.has_config());
+        assert!(collector.packages[0].free_running.previous.is_none());
+    }
+
+    #[test]
+    fn samples_no_config_unless_one_is_set() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let mut collector = test_collector();
+
+        assert_eq!(
+            runtime.block_on(collector.sample_config(Duration::from_millis(1))),
+            Err("IIO has no PMU config to sample".to_string())
+        );
+    }
+
+    fn count(unit: CountUnit, group: u8, slot: u8, value: u64) -> UnitCount {
+        UnitCount {
+            package: 0,
+            unit,
+            group,
+            slot: CounterSlot::General(slot),
+            value,
+        }
+    }
+
+    fn reading(unit: u16, group: u8, slot: u8, raw: u64) -> ConfigReading {
+        ConfigReading {
+            package: 0,
+            unit,
+            group,
+            slot: CounterSlot::General(slot),
+            raw,
+        }
+    }
+
+    fn running(group: u8, seconds: f64) -> GroupRunning {
+        GroupRunning {
+            package: 0,
+            group,
+            seconds,
+        }
+    }
+
+    fn slice(milliseconds: u64, groups: &[usize]) -> ConfigSlice {
+        ConfigSlice {
+            duration: Duration::from_millis(milliseconds),
+            groups: groups.to_vec(),
+        }
+    }
+
+    fn test_config(
+        grouping: Grouping,
+        aggregate: Aggregate,
+        groups: Vec<ProgrammedGroup>,
+    ) -> PmuConfig {
+        PmuConfig {
+            config_id: 7,
+            started_at: SystemTime::UNIX_EPOCH,
+            program: ProgrammedBoxType {
+                box_type: BoxType::Iio,
+                grouping,
+                aggregate,
+                groups,
+            },
+        }
+    }
+
+    fn test_group(
+        index: u8,
+        counters: &[(u8, u64)],
+        packages: &[u16],
+        units: &[u16],
+    ) -> ProgrammedGroup {
+        ProgrammedGroup {
+            index,
+            counters: counters
+                .iter()
+                .map(|&(slot, control)| ProgrammedCounter {
+                    slot: CounterSlot::General(slot),
+                    control,
+                    labels: EventLabels::new(),
+                })
+                .collect(),
+            filters: None,
+            units: packages
+                .iter()
+                .map(|&package| (package, units.iter().copied().collect()))
+                .collect(),
+        }
+    }
+
     fn measurement(
         kind: IioEventKind,
         value: u64,
@@ -1248,6 +1957,7 @@ mod tests {
 
     fn test_collector() -> SkxIioCollector {
         SkxIioCollector {
+            config: None,
             next_group: 0,
             packages: Vec::new(),
         }

@@ -633,18 +633,16 @@ impl IioUnit {
         Ok(())
     }
 
-    fn read(self) -> Result<IioUnitReading, String> {
-        Ok(IioUnitReading {
-            counters: [
+    fn read(self, group: IioEventGroup) -> Result<IioUnitReading, String> {
+        IioUnitReading::from_counters(
+            [
                 self.read_counter(0).map(mask_iio_counter)?,
                 self.read_counter(1).map(mask_iio_counter)?,
                 self.read_counter(2).map(mask_iio_counter)?,
                 self.read_counter(3).map(mask_iio_counter)?,
             ],
-            ticks: Msr::open_readonly(self.cpu)?
-                .read(iio_clock_counter_offset(self.stack))
-                .map(mask_iio_clock_counter)?,
-        })
+            group,
+        )
     }
 
     fn stack(self) -> SprIioStack {
@@ -668,6 +666,27 @@ impl IioUnit {
 struct IioUnitReading {
     counters: [u64; IIO_COUNTER_COUNT],
     ticks: u64,
+}
+
+impl IioUnitReading {
+    // Occupancy and its clock must cover the same freeze/reset slice, so the
+    // ticks are the CLOCKTICKS counter of the same group. The free-running
+    // IOCLK counter holds an absolute value that includes time outside it.
+    fn from_counters(
+        counters: [u64; IIO_COUNTER_COUNT],
+        group: IioEventGroup,
+    ) -> Result<Self, String> {
+        let clock_index = group
+            .events
+            .iter()
+            .position(|event| event.kind == IioEventKind::Clockticks)
+            .ok_or_else(|| "IIO event group has no CLOCKTICKS counter".to_string())?;
+
+        Ok(Self {
+            counters,
+            ticks: counters[clock_index],
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -835,10 +854,6 @@ fn freeze_packages(packages: &[IioPackage]) -> Result<(), String> {
     Ok(())
 }
 
-fn iio_clock_counter_offset(stack: SprIioStack) -> u64 {
-    stack.clock_counter
-}
-
 fn iio_control_offset(stack: SprIioStack, counter_index: usize) -> u64 {
     stack.control_base + counter_index as u64
 }
@@ -857,10 +872,6 @@ fn iio_pcie_write_counter_offset(stack: SprIioStack, port_index: usize) -> u64 {
 
 fn iio_unit_control_offset(stack: SprIioStack) -> u64 {
     stack.unit_control
-}
-
-fn mask_iio_clock_counter(counter: u64) -> u64 {
-    mask_counter(counter, SKX_UNCORE_COUNTER_WIDTH)
 }
 
 fn mask_iio_counter(counter: u64) -> u64 {
@@ -939,7 +950,7 @@ fn read_packages(
 ) -> Result<(), String> {
     for package in packages {
         for unit in &package.units {
-            let reading = unit.read()?;
+            let reading = unit.read(measurement.group)?;
 
             for counter_index in 0..IIO_COUNTER_COUNT {
                 let event = measurement.group.events[counter_index];
@@ -1092,7 +1103,7 @@ mod tests {
     fn uses_spr_iio_address_map() {
         assert_eq!(iio_unit_control_offset(SPR_IIO_STACKS[0]), 0x3000);
         assert_eq!(iio_counter_offset(SPR_IIO_STACKS[0], 0), 0x3008);
-        assert_eq!(iio_clock_counter_offset(SPR_IIO_STACKS[0]), 0x340e);
+        assert_eq!(SPR_IIO_STACKS[0].clock_counter, 0x340e);
         assert_eq!(iio_control_offset(SPR_IIO_STACKS[0], 0), 0x3002);
         assert_eq!(iio_unit_control_offset(SPR_IIO_STACKS[11]), 0x30b0);
         assert_eq!(iio_pcie_read_counter_offset(SPR_IIO_STACKS[9], 7), 0x3897);
@@ -1117,6 +1128,28 @@ mod tests {
         assert_eq!(UNIT_FREEZE_AND_CONTROL_RESET, 0x101);
         assert_eq!(UNIT_FREEZE_AND_COUNTER_RESET, 0x201);
         assert_eq!(UNIT_UNFREEZE, 0x000);
+    }
+
+    #[test]
+    fn takes_spr_iio_ticks_from_the_group_clockticks_counter() {
+        for group in SPR_IIO_EVENT_GROUPS {
+            let clock_index = group
+                .events
+                .iter()
+                .position(|event| event.kind == IioEventKind::Clockticks)
+                .unwrap();
+            let mut counters = [100, 200, 400, 300];
+            counters[clock_index] = 1_000;
+
+            let reading = IioUnitReading::from_counters(counters, group).unwrap();
+
+            assert_eq!(reading.counters, counters);
+            assert_eq!(reading.ticks, 1_000);
+        }
+
+        let mut group = SPR_IIO_EVENT_GROUPS[0];
+        group.events[3] = group.events[0];
+        assert!(IioUnitReading::from_counters([0; IIO_COUNTER_COUNT], group).is_err());
     }
 
     #[test]

@@ -15,6 +15,8 @@ pub enum BoxType {
     Iio,
     Irp,
     Imc,
+    /// Home agent; Haswell-EP and Broadwell-EP only.
+    Ha,
 }
 
 impl BoxType {
@@ -25,6 +27,7 @@ impl BoxType {
             Self::Iio => "iio",
             Self::Irp => "irp",
             Self::Imc => "imc",
+            Self::Ha => "ha",
         }
     }
 }

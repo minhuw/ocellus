@@ -328,6 +328,7 @@ pub(super) fn program_group(
         BoxType::Iio => &IIO,
         BoxType::Irp => &IRP,
         BoxType::Imc => &IMC,
+        BoxType::Ha => return Err(format!("{path}: Skylake-SP has no ha boxes")),
     };
     if group.events.len() > skx_box.general_counters {
         return Err(format!(

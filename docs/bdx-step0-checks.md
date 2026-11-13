@@ -66,3 +66,9 @@ it.
     all four counters under NIC receive: equal counts mean one IRP set and
     the current four-counter use is right; two different pairs mean counters
     0-1 and 2-3 belong to separate sets, which the collector must sum.
+11. **IMC channel discovery.** Ocellus pairs each IMC channel's PCI address
+    with a device id (D20:F0 = 0x6FB0, as in the kernel's table); the encoding
+    report read 0x6FB4 for D20:F0 from V4. Check that the IMC collector starts
+    and lists every populated channel, and that ocellus_uncore_count_total
+    for box_type="imc" uses the expected channel ids (index in the channel
+    table, D20:F0 = 0 to D24:F1 = 7).

@@ -37,11 +37,12 @@ sudo ./result/bin/ocellus --daemon --listen 0.0.0.0:8080 --measure-interval-ms 1
 
 ## PMU configs
 
-On Skylake-SP and Cascade Lake, daemon mode lets a client set uncore event
-groups at runtime. While a box type (`cha`, `iio`, `irp`, `imc`) has a config,
-its collector counts the config's groups instead of its default ones, and
-`/metrics` exports raw counts cumulative since the config was set in place of
-the box type's default `ocellus_<box type>_*` metrics.
+On Skylake-SP, Cascade Lake, Haswell-EP and Broadwell-EP, daemon mode lets a
+client set uncore event groups at runtime. While a box type (`cha`, `iio`,
+`irp`, `imc`, `ha`) has a config, its collector counts the config's groups
+instead of its default ones, and `/metrics` exports raw counts cumulative since
+the config was set in place of the box type's default `ocellus_<box type>_*`
+(Haswell-EP/Broadwell-EP: `ocellus_haswell_<box type>_*`) metrics.
 
 ```sh
 curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{

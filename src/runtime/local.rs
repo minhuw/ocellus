@@ -10,7 +10,7 @@ use tokio::time::MissedTickBehavior;
 use crate::metrics::MetricsState;
 use crate::runtime::sampler::SamplerReader;
 
-const SCHEMA_VERSION: u32 = 13;
+const SCHEMA_VERSION: u32 = 14;
 
 #[derive(Debug, Serialize)]
 struct LocalMetadata {
@@ -150,6 +150,7 @@ mod tests {
     fn encodes_sample_record() {
         let state = MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -185,6 +186,7 @@ mod tests {
         ] {
             let state = MetricsState {
                 cha: Some(cha),
+                ha: None,
                 iio: None,
                 imc: None,
                 interconnect: None,
@@ -217,6 +219,7 @@ mod tests {
         ] {
             let state = MetricsState {
                 cha: None,
+                ha: None,
                 iio: None,
                 imc: Some(imc),
                 interconnect: None,
@@ -249,6 +252,7 @@ mod tests {
         ] {
             let state = MetricsState {
                 cha: None,
+                ha: None,
                 iio: None,
                 imc: None,
                 interconnect: None,
@@ -309,6 +313,7 @@ mod tests {
         ] {
             let state = MetricsState {
                 cha: None,
+                ha: None,
                 iio: None,
                 imc: None,
                 interconnect: None,
@@ -381,6 +386,7 @@ mod tests {
         ] {
             let state = MetricsState {
                 cha: None,
+                ha: None,
                 iio: None,
                 imc: None,
                 interconnect: Some(interconnect),
@@ -403,6 +409,7 @@ mod tests {
     fn encodes_rapl_domain_sample() {
         let state = MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,

@@ -8,6 +8,7 @@ use tokio::task::JoinHandle;
 
 use crate::arch::Architecture;
 use crate::metrics::cha::{ChaCollector, ChaMultiplexMode, ChaRequestLocality, ChaTask};
+use crate::metrics::ha::{HaCollector, HaTask};
 use crate::metrics::iio::{IioCollector, IioTask};
 use crate::metrics::imc::{ImcCollector, ImcTask};
 use crate::metrics::interconnect::{InterconnectCollector, InterconnectTask};
@@ -41,7 +42,7 @@ pub struct SamplerReader {
 }
 
 impl SamplerReader {
-    /// Sets the PMU configs of the CHA, IIO, IRP and IMC collectors.
+    /// Sets the PMU configs of the CHA, IIO, IRP, IMC and HA collectors.
     pub fn pmu_control(&self) -> PmuControl {
         self.control.clone()
     }
@@ -155,6 +156,7 @@ pub fn spawn(config: SamplerConfig, architecture: Architecture) -> Sampler {
     spawn_cha_collector(&architecture, config, &event_tx, &mut control);
     spawn_rapl_collector(&architecture, measure_interval, &event_tx);
     spawn_imc_collector(&architecture, config, &event_tx, &mut control);
+    spawn_ha_collector(&architecture, measure_interval, &event_tx, &mut control);
     spawn_iio_collector(&architecture, measure_interval, &event_tx, &mut control);
     spawn_irp_collector(&architecture, measure_interval, &event_tx, &mut control);
     spawn_pcu_collector(&architecture, measure_interval, &event_tx);
@@ -194,6 +196,7 @@ fn sampler_metadata(config: SamplerConfig, architecture: &Architecture) -> Sampl
                     config.cha_request_locality,
                 ),
                 cha_supported: ChaCollector::is_supported(architecture),
+                ha_supported: HaCollector::is_supported(architecture),
                 iio_supported: IioCollector::is_supported(architecture),
                 imc_supported: ImcCollector::is_supported(architecture),
                 interconnect_supported: InterconnectCollector::is_supported(architecture),
@@ -287,6 +290,28 @@ fn spawn_imc_collector(
         }
         Err(error) => {
             eprintln!("ocellus: skipping IMC collector: {error}");
+        }
+    }
+}
+
+fn spawn_ha_collector(
+    architecture: &Architecture,
+    measure_interval: Duration,
+    events: &mpsc::Sender<MetricEvent>,
+    control: &mut PmuControl,
+) {
+    match HaCollector::new(architecture) {
+        Ok(ha) => {
+            eprintln!("ocellus: starting HA collector");
+            let requests = control.register(BoxType::Ha, ha.config_units());
+            spawn_collector(
+                "ha",
+                HaTask::new(ha, measure_interval, events.clone(), requests).run(),
+                events.clone(),
+            );
+        }
+        Err(error) => {
+            eprintln!("ocellus: skipping HA collector: {error}");
         }
     }
 }

@@ -6,6 +6,7 @@ use crate::metal;
 use crate::metal::arch::skx::pmon;
 use crate::metal::pci::PciDevice;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metrics::common::DEFAULT_MAX_SLICE;
 
 pub const COUNTER_COUNT: usize = 4;
 pub const COUNTER_WIDTH: u32 = 48;
@@ -189,6 +190,16 @@ pub fn frequency_hz(ticks: u64, duration: Duration) -> f64 {
 
 pub fn mask_counter(counter: u64) -> u64 {
     counter & ((1_u64 << COUNTER_WIDTH) - 1)
+}
+
+/// The rounds that split `interval` into slices of at most
+/// `DEFAULT_MAX_SLICE`, each round one slice per group.
+pub fn measurement_round_count(interval: Duration, group_count: usize) -> usize {
+    let interval_nanos = interval.as_nanos();
+    let max_round_nanos = DEFAULT_MAX_SLICE.as_nanos() * group_count as u128;
+    let rounds = interval_nanos.div_ceil(max_round_nanos).max(1);
+
+    usize::try_from(rounds).unwrap_or(usize::MAX)
 }
 
 pub fn ratio(numerator: u64, denominator: u64) -> f64 {

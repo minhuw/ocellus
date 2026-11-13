@@ -263,6 +263,7 @@ mod tests {
                 cha_multiplex_mode: crate::metrics::cha::ChaMultiplexMode::Temporal,
                 cha_request_locality: crate::metrics::cha::ChaRequestLocality::All,
                 cha_supported: true,
+                ha_supported: true,
                 iio_supported: true,
                 imc_supported: true,
                 interconnect_supported: false,
@@ -338,6 +339,7 @@ mod tests {
                 cha_multiplex_mode: crate::metrics::cha::ChaMultiplexMode::Temporal,
                 cha_request_locality: crate::metrics::cha::ChaRequestLocality::All,
                 cha_supported: false,
+                ha_supported: false,
                 iio_supported: false,
                 imc_supported: false,
                 interconnect_supported: false,
@@ -427,6 +429,7 @@ mod tests {
     fn renders_tsc_metric_after_first_sample() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -461,6 +464,7 @@ mod tests {
     fn renders_rapl_domain_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -676,6 +680,7 @@ mod tests {
     fn renders_rdt_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -753,6 +758,7 @@ mod tests {
         metadata.collectors.interconnect_supported = true;
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: Some(interconnect),
@@ -956,6 +962,7 @@ mod tests {
     ) {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: Some(imc),
             interconnect: None,
@@ -1011,6 +1018,7 @@ mod tests {
     ) {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: Some(imc),
             interconnect: None,
@@ -1119,6 +1127,7 @@ mod tests {
     fn renders_iio_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: Some(crate::metrics::iio::IioMetrics::Skx(
                 crate::metrics::iio::skx::SkxIioMetrics {
                     ports: vec![crate::metrics::iio::skx::IioPciePortMetrics {
@@ -1212,6 +1221,7 @@ mod tests {
     ) {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: Some(iio),
             imc: None,
             interconnect: None,
@@ -1282,6 +1292,7 @@ mod tests {
     fn renders_irp_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -1350,6 +1361,7 @@ mod tests {
     fn renders_emerald_rapids_irp_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -1419,6 +1431,7 @@ mod tests {
     fn renders_broadwell_pcu_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -1458,6 +1471,7 @@ mod tests {
     fn renders_skylake_pcu_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -1499,6 +1513,7 @@ mod tests {
     fn renders_ice_lake_pcu_metrics() {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -1562,6 +1577,7 @@ mod tests {
     ) {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -1601,6 +1617,7 @@ mod tests {
     ) {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -1800,6 +1817,7 @@ mod tests {
     ) {
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -1946,6 +1964,7 @@ mod tests {
                     }],
                 },
             )),
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -2052,6 +2071,7 @@ mod tests {
                     }],
                 },
             )),
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -2144,6 +2164,7 @@ mod tests {
     ) {
         let state = crate::metrics::MetricsState {
             cha: Some(cha),
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -2186,6 +2207,7 @@ mod tests {
     ) {
         let state = crate::metrics::MetricsState {
             cha: Some(cha),
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -2382,18 +2404,25 @@ mod tests {
         let scope = crate::metrics::uncore::hsx::HsxUncoreScope { package_id: 0 };
         let state = crate::metrics::MetricsState {
             cha: None,
+            ha: Some(crate::metrics::ha::HaMetrics::Hsx(
+                crate::metrics::ha::hsx::HsxHaMetrics {
+                    scopes: vec![crate::metrics::ha::hsx::HsxHaMetricsByScope {
+                        local_read_bytes_per_second: 1.0,
+                        local_read_ratio: 0.75,
+                        local_write_bytes_per_second: 2.0,
+                        local_write_ratio: 0.5,
+                        remote_read_bytes_per_second: 3.0,
+                        remote_write_bytes_per_second: 4.0,
+                        scope,
+                    }],
+                },
+            )),
             iio: None,
             imc: Some(crate::metrics::imc::ImcMetrics::Hsx(
                 crate::metrics::imc::hsx::HsxImcMetrics {
                     scopes: vec![crate::metrics::imc::hsx::HsxImcMetricsByScope {
                         activate_commands_per_second: 5.0,
                         frequency_hz: 1_000_000_000.0,
-                        ha_local_read_bytes_per_second: 1.0,
-                        ha_local_read_ratio: 0.75,
-                        ha_local_write_bytes_per_second: 2.0,
-                        ha_local_write_ratio: 0.5,
-                        ha_remote_read_bytes_per_second: 3.0,
-                        ha_remote_write_bytes_per_second: 4.0,
                         page_miss_precharge_commands_per_second: 6.0,
                         read_cas_commands_per_second: 7.0,
                         read_bytes_per_second: 8.0,
@@ -2435,6 +2464,151 @@ mod tests {
         assert!(metrics.contains("ocellus_haswell_ha_local_read_bytes_per_second"));
         assert!(metrics.contains("ocellus_haswell_ha_local_read_ratio"));
         assert!(metrics.contains("package=\"0\""));
+    }
+
+    /// The HSX IMC families as the IMC collector exported them when it also
+    /// sampled the home agents.
+    const HSX_IMC_LINES: [&str; 30] = [
+        r#"# HELP ocellus_haswell_imc_activate_commands_per_second Interval-derived Haswell IMC activate commands per second."#,
+        r#"# TYPE ocellus_haswell_imc_activate_commands_per_second gauge"#,
+        r#"ocellus_haswell_imc_activate_commands_per_second{package="0"} 5.0"#,
+        r#"# HELP ocellus_haswell_imc_frequency_hz Interval-derived Haswell IMC DCLK frequency in hertz."#,
+        r#"# TYPE ocellus_haswell_imc_frequency_hz gauge"#,
+        r#"ocellus_haswell_imc_frequency_hz{package="0"} 1000000000.0"#,
+        r#"# HELP ocellus_haswell_imc_page_miss_precharge_commands_per_second Interval-derived Haswell IMC page-miss precharge commands per second."#,
+        r#"# TYPE ocellus_haswell_imc_page_miss_precharge_commands_per_second gauge"#,
+        r#"ocellus_haswell_imc_page_miss_precharge_commands_per_second{package="0"} 6.0"#,
+        r#"# HELP ocellus_haswell_imc_read_cas_commands_per_second Interval-derived Haswell IMC read CAS commands per second."#,
+        r#"# TYPE ocellus_haswell_imc_read_cas_commands_per_second gauge"#,
+        r#"ocellus_haswell_imc_read_cas_commands_per_second{package="0"} 7.0"#,
+        r#"# HELP ocellus_haswell_imc_read_bytes_per_second Interval-derived Haswell IMC read bandwidth in bytes per second."#,
+        r#"# TYPE ocellus_haswell_imc_read_bytes_per_second gauge"#,
+        r#"ocellus_haswell_imc_read_bytes_per_second{package="0"} 8.0"#,
+        r#"# HELP ocellus_haswell_imc_rpq_non_empty_ratio Haswell IMC read pending queue non-empty cycle ratio."#,
+        r#"# TYPE ocellus_haswell_imc_rpq_non_empty_ratio gauge"#,
+        r#"ocellus_haswell_imc_rpq_non_empty_ratio{package="0"} 0.2"#,
+        r#"# HELP ocellus_haswell_imc_write_cas_commands_per_second Interval-derived Haswell IMC write CAS commands per second."#,
+        r#"# TYPE ocellus_haswell_imc_write_cas_commands_per_second gauge"#,
+        r#"ocellus_haswell_imc_write_cas_commands_per_second{package="0"} 9.0"#,
+        r#"# HELP ocellus_haswell_imc_write_bytes_per_second Interval-derived Haswell IMC write bandwidth in bytes per second."#,
+        r#"# TYPE ocellus_haswell_imc_write_bytes_per_second gauge"#,
+        r#"ocellus_haswell_imc_write_bytes_per_second{package="0"} 10.0"#,
+        r#"# HELP ocellus_haswell_imc_wpq_full_ratio Haswell IMC write pending queue full cycle ratio."#,
+        r#"# TYPE ocellus_haswell_imc_wpq_full_ratio gauge"#,
+        r#"ocellus_haswell_imc_wpq_full_ratio{package="0"} 0.5"#,
+        r#"# HELP ocellus_haswell_imc_wpq_non_empty_ratio Haswell IMC write pending queue non-empty cycle ratio."#,
+        r#"# TYPE ocellus_haswell_imc_wpq_non_empty_ratio gauge"#,
+        r#"ocellus_haswell_imc_wpq_non_empty_ratio{package="0"} 0.6"#,
+    ];
+
+    /// The HSX HA families as the IMC collector exported them.
+    const HSX_HA_LINES: [&str; 18] = [
+        r#"# HELP ocellus_haswell_ha_local_read_bytes_per_second Interval-derived Haswell HA local read request bandwidth in bytes per second."#,
+        r#"# TYPE ocellus_haswell_ha_local_read_bytes_per_second gauge"#,
+        r#"ocellus_haswell_ha_local_read_bytes_per_second{package="0"} 1.0"#,
+        r#"# HELP ocellus_haswell_ha_local_read_ratio Haswell HA local read request ratio."#,
+        r#"# TYPE ocellus_haswell_ha_local_read_ratio gauge"#,
+        r#"ocellus_haswell_ha_local_read_ratio{package="0"} 0.75"#,
+        r#"# HELP ocellus_haswell_ha_local_write_bytes_per_second Interval-derived Haswell HA local write request bandwidth in bytes per second."#,
+        r#"# TYPE ocellus_haswell_ha_local_write_bytes_per_second gauge"#,
+        r#"ocellus_haswell_ha_local_write_bytes_per_second{package="0"} 2.0"#,
+        r#"# HELP ocellus_haswell_ha_local_write_ratio Haswell HA local write request ratio."#,
+        r#"# TYPE ocellus_haswell_ha_local_write_ratio gauge"#,
+        r#"ocellus_haswell_ha_local_write_ratio{package="0"} 0.5"#,
+        r#"# HELP ocellus_haswell_ha_remote_read_bytes_per_second Interval-derived Haswell HA remote read request bandwidth in bytes per second."#,
+        r#"# TYPE ocellus_haswell_ha_remote_read_bytes_per_second gauge"#,
+        r#"ocellus_haswell_ha_remote_read_bytes_per_second{package="0"} 3.0"#,
+        r#"# HELP ocellus_haswell_ha_remote_write_bytes_per_second Interval-derived Haswell HA remote write request bandwidth in bytes per second."#,
+        r#"# TYPE ocellus_haswell_ha_remote_write_bytes_per_second gauge"#,
+        r#"ocellus_haswell_ha_remote_write_bytes_per_second{package="0"} 4.0"#,
+    ];
+
+    fn hsx_imc_metrics() -> crate::metrics::imc::ImcMetrics {
+        crate::metrics::imc::ImcMetrics::Hsx(crate::metrics::imc::hsx::HsxImcMetrics {
+            scopes: vec![crate::metrics::imc::hsx::HsxImcMetricsByScope {
+                activate_commands_per_second: 5.0,
+                frequency_hz: 1_000_000_000.0,
+                page_miss_precharge_commands_per_second: 6.0,
+                read_cas_commands_per_second: 7.0,
+                read_bytes_per_second: 8.0,
+                rpq_non_empty_ratio: 0.2,
+                scope: crate::metrics::uncore::hsx::HsxUncoreScope { package_id: 0 },
+                write_cas_commands_per_second: 9.0,
+                write_bytes_per_second: 10.0,
+                wpq_full_ratio: 0.5,
+                wpq_non_empty_ratio: 0.6,
+            }],
+        })
+    }
+
+    fn hsx_ha_metrics() -> crate::metrics::ha::HaMetrics {
+        crate::metrics::ha::HaMetrics::Hsx(crate::metrics::ha::hsx::HsxHaMetrics {
+            scopes: vec![crate::metrics::ha::hsx::HsxHaMetricsByScope {
+                local_read_bytes_per_second: 1.0,
+                local_read_ratio: 0.75,
+                local_write_bytes_per_second: 2.0,
+                local_write_ratio: 0.5,
+                remote_read_bytes_per_second: 3.0,
+                remote_write_bytes_per_second: 4.0,
+                scope: crate::metrics::uncore::hsx::HsxUncoreScope { package_id: 0 },
+            }],
+        })
+    }
+
+    fn haswell_exporter() -> PrometheusExporter {
+        PrometheusExporter::new(SamplerReader::new_for_test(
+            crate::runtime::sampler::SamplerMetadata {
+                measure_interval: std::time::Duration::from_millis(1),
+                info: haswell_info_metadata(),
+            },
+            crate::metrics::MetricsState::default(),
+        ))
+    }
+
+    fn lines_containing<'a>(metrics: &'a str, name: &str) -> Vec<&'a str> {
+        metrics.lines().filter(|line| line.contains(name)).collect()
+    }
+
+    #[test]
+    fn renders_the_hsx_ha_families_of_the_ha_collector_as_before() {
+        use crate::metrics::MetricUpdate;
+
+        let exporter = haswell_exporter();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Imc(Box::new(hsx_imc_metrics())), 1));
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Ha(Box::new(hsx_ha_metrics())), 1));
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert_eq!(
+            lines_containing(&metrics, "ocellus_haswell_"),
+            [HSX_IMC_LINES.as_slice(), HSX_HA_LINES.as_slice()].concat()
+        );
+        assert!(metrics.contains(r#"ocellus_samples_total{collector="imc"} 1"#));
+        assert!(metrics.contains(r#"ocellus_samples_total{collector="ha"} 1"#));
+        assert!(metrics.contains(r#"ocellus_sample_window_end_timestamp_seconds{collector="ha"}"#));
+        assert!(metrics.contains(r#"ha_supported="true""#));
+    }
+
+    #[test]
+    fn renders_the_hsx_imc_families_without_ha() {
+        use crate::metrics::MetricUpdate;
+
+        let exporter = haswell_exporter();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Imc(Box::new(hsx_imc_metrics())), 1));
+        let metrics = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert_eq!(
+            lines_containing(&metrics, "ocellus_haswell_"),
+            HSX_IMC_LINES
+        );
+        assert!(!metrics.contains(r#"collector="ha""#));
     }
 
     fn skx_irp_metrics() -> crate::metrics::irp::IrpMetrics {

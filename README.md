@@ -94,6 +94,15 @@ Collectors sample from one whole multiple of the measure interval (in Unix
 time) to the next, so the samples of all box types cover the same intervals
 to within a few milliseconds.
 
+Temporal groups take turns within each sample, and each sample starts one
+group later than the one before: the sample that ends k measure intervals
+after the Unix epoch starts with group k mod n, the same for every collector.
+A rate is unbiased over a window of a whole multiple of n samples, where n is
+the box type's temporal group count (fixed and spatial configs count as 1);
+comparing box types takes a whole multiple of the lcm of their counts. Single
+samples show a sawtooth where a group meets a source locked to a phase of the
+interval.
+
 ## RDT memory bandwidth on Skylake-SP and Cascade Lake
 
 `ocellus_rdt_memory_bandwidth_bytes_per_second` exports resctrl's MBM counts

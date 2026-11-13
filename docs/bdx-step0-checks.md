@@ -58,3 +58,11 @@ it.
    HA REQUESTS.INVITOE_LOCAL (0x01/0x10) and HA SNOOP_RESP.RSPI (0x21/0x01)
    are about 1 per IO miss, and whether CAS RD rises by 1 per miss
    (a directory read).
+10. **IRP counters.** Ocellus reads the HSX/BDX IRP counters at a0/a8/b0/b8,
+    as Linux has since commit 41a134a5830a; Intel's guides list a0/b0/b8/c0.
+    With Ocellus stopped, put clockticks (event 0x00) on all four IRP
+    counters through perf: four equal counts confirm the offsets. Then put
+    one DMA traffic event (0x13/0x10 PCIItoM or 0x16/0x02 inbound writes) on
+    all four counters under NIC receive: equal counts mean one IRP set and
+    the current four-counter use is right; two different pairs mean counters
+    0-1 and 2-3 belong to separate sets, which the collector must sum.

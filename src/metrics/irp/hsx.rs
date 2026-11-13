@@ -17,10 +17,13 @@ use crate::metrics::uncore::hsx::{
 
 const IRP_COUNTER_COUNT: usize = 4;
 const IRP_COUNTER_WIDTH: u32 = 48;
+// Not a0/b0/b8/c0 as Intel 331051 table 2-144 and 334291 list (the IvyTown
+// layout): Linux commit 41a134a5830a moved Haswell-EP to a0/a8/b0/b8 after
+// hardware testing, and Broadwell-EP reuses those offsets.
 const IRP0_COUNTER0_OFFSET: u64 = 0xa0;
-const IRP0_COUNTER1_OFFSET: u64 = 0xb0;
-const IRP1_COUNTER0_OFFSET: u64 = 0xb8;
-const IRP1_COUNTER1_OFFSET: u64 = 0xc0;
+const IRP0_COUNTER1_OFFSET: u64 = 0xa8;
+const IRP1_COUNTER0_OFFSET: u64 = 0xb0;
+const IRP1_COUNTER1_OFFSET: u64 = 0xb8;
 const IRP_CONTROL_OFFSETS: [u64; IRP_COUNTER_COUNT] = [0xd8, 0xdc, 0xe0, 0xe4];
 const IRP_COUNTER_OFFSETS: [u64; IRP_COUNTER_COUNT] = [
     IRP0_COUNTER0_OFFSET,
@@ -797,7 +800,48 @@ mod tests {
     fn uses_hsx_irp_pci_address_map() {
         assert_eq!(IRP_UNIT_CONTROL_OFFSET, 0xf4);
         assert_eq!(IRP_CONTROL_OFFSETS, [0xd8, 0xdc, 0xe0, 0xe4]);
-        assert_eq!(IRP_COUNTER_OFFSETS, [0xa0, 0xb0, 0xb8, 0xc0]);
+        assert_eq!(IRP_COUNTER_OFFSETS, [0xa0, 0xa8, 0xb0, 0xb8]);
+    }
+
+    #[test]
+    fn places_hsx_irp_events_on_control_counter_pairs() {
+        let placements = HSX_IRP_EVENT_GROUPS
+            .iter()
+            .map(|group| {
+                group
+                    .events
+                    .iter()
+                    .zip(IRP_CONTROL_OFFSETS.into_iter().zip(IRP_COUNTER_OFFSETS))
+                    .filter(|(event, _)| event.kind != HsxIrpEventKind::Disabled)
+                    .map(|(event, (control, counter))| (event.kind, control, counter))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            placements,
+            [
+                vec![
+                    (HsxIrpEventKind::PcieReadCurrent, 0xd8, 0xa0),
+                    (HsxIrpEventKind::CoreRead, 0xdc, 0xa8),
+                    (HsxIrpEventKind::DemandRead, 0xe0, 0xb0),
+                    (HsxIrpEventKind::ReadForOwnership, 0xe4, 0xb8),
+                ],
+                vec![
+                    (HsxIrpEventKind::PciItoM, 0xd8, 0xa0),
+                    (HsxIrpEventKind::PciDcaHint, 0xdc, 0xa8),
+                    (HsxIrpEventKind::WbMtoI, 0xe0, 0xb0),
+                    (HsxIrpEventKind::ClFlush, 0xe4, 0xb8),
+                ],
+                vec![
+                    (HsxIrpEventKind::TotalIrpOccupancy, 0xd8, 0xa0),
+                    (HsxIrpEventKind::PcieInboundReads, 0xdc, 0xa8),
+                    (HsxIrpEventKind::PcieInboundWrites, 0xe0, 0xb0),
+                    (HsxIrpEventKind::LostFwd, 0xe4, 0xb8),
+                ],
+                vec![(HsxIrpEventKind::Clockticks, 0xd8, 0xa0)],
+            ]
+        );
     }
 
     fn assert_event(kind: HsxIrpEventKind, event: u8, umask: u8) {

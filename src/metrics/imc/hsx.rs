@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -6,12 +6,20 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metrics::common::BYTES_PER_CACHE_LINE;
 use crate::metrics::uncore::hsx::{
-    self, HsxUncoreScope, HsxUncoreSpec, HsxUncoreUnit, average_u64, events_per_second,
-    measurement_round_count, scale_to_enabled,
+    self, HsxConfigBox, HsxUncoreScope, HsxUncoreSpec, HsxUncoreUnit, average_u64,
+    events_per_second, measurement_round_count, scale_to_enabled,
 };
+use crate::pmu_config::types::{BoxType, CountAccumulator, PmuConfig, UncoreCounts};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
+
+const IMC_CONFIG_BOX: HsxConfigBox = HsxConfigBox {
+    box_type: BoxType::Imc,
+    name: "IMC",
+    unit: "channel",
+    fixed: true,
+};
 
 const IMC_EVENT_GROUPS: [HsxImcEventGroup; 2] = [
     HsxImcEventGroup {
@@ -106,7 +114,53 @@ impl HsxImcMetrics {
 #[derive(Debug)]
 pub struct HsxImcCollector {
     channels: Vec<HsxImcChannel>,
+    config: Option<CountAccumulator>,
     next_group: usize,
+}
+
+impl HsxImcCollector {
+    /// The IMC channels of each package that PMU configs can program.
+    /// Unit id: the channel's index in the model's IMC channel table, 0..=7 from D20:F0 to D24:F1.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        hsx::unit_map(self.channels.iter().map(HsxImcChannel::config_unit))
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        // The default sample resets every channel, which clears its controls,
+        // and programs its group and DCLK, on every slice.
+        let Some(config) = config else {
+            self.config = None;
+            return Ok(());
+        };
+        IMC_CONFIG_BOX.check_config(&config.program, &self.config_units())?;
+        self.config = Some(CountAccumulator::new(config));
+
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`. Its counts are cumulative since
+    /// the config was set.
+    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "no PMU config is set for HSX IMC".to_string())?;
+        let units = self
+            .channels
+            .iter()
+            .map(|channel| (channel.config_unit(), &channel.unit))
+            .collect::<Vec<_>>();
+
+        IMC_CONFIG_BOX
+            .sample_config(&units, accumulator, interval)
+            .await
+    }
 }
 
 impl HsxImcCollector {
@@ -114,6 +168,7 @@ impl HsxImcCollector {
         let model = architecture.intel_server_model();
         Ok(Self {
             channels: discover_channels(model)?,
+            config: None,
             next_group: 0,
         })
     }
@@ -316,16 +371,29 @@ impl HsxImcScopeLabels {
 
 #[derive(Debug)]
 struct HsxImcChannel {
+    /// Index in the model's IMC channel table, kept when other channels
+    /// are absent.
+    id: u16,
     scope: HsxUncoreScope,
     unit: HsxUncoreUnit,
 }
 
 impl HsxImcChannel {
-    fn new(location: metal::pci::PciLocation, scope: HsxUncoreScope) -> Result<Self, String> {
+    fn new(
+        id: u16,
+        location: metal::pci::PciLocation,
+        scope: HsxUncoreScope,
+    ) -> Result<Self, String> {
         Ok(Self {
+            id,
             scope,
             unit: HsxUncoreUnit::new(location)?,
         })
+    }
+
+    /// The channel's package and unit id in PMU configs.
+    fn config_unit(&self) -> (u16, u16) {
+        (self.scope.package_id as u16, self.id)
     }
 
     fn program(&self, group: HsxImcEventGroup) -> Result<(), String> {
@@ -506,12 +574,10 @@ fn discover_channels(model: IntelServerCpuModel) -> Result<Vec<HsxImcChannel>, S
     let mut channels = Vec::new();
 
     for bus_scope in bus_scopes {
-        for channel in spec.imc_channels {
-            if let Ok(location) =
-                metal::pci::find_intel_device_matching_spec_on_bus(*channel, bus_scope.bus)
-            {
-                channels.push(HsxImcChannel::new(location, bus_scope.scope)?);
-            }
+        for (id, location) in hsx::present_units(spec.imc_channels, |channel| {
+            metal::pci::find_intel_device_matching_spec_on_bus(channel, bus_scope.bus).ok()
+        }) {
+            channels.push(HsxImcChannel::new(id, location, bus_scope.scope)?);
         }
     }
 
@@ -617,6 +683,8 @@ fn scaled_count(measurement: &HsxImcEventMeasurement) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::uncore::hsx::config_fixtures::*;
+    use crate::pmu_config::types::{ChaFilters, CountUnit, CounterSlot, Grouping};
 
     #[test]
     fn computes_hsx_imc_metrics() {
@@ -739,9 +807,296 @@ mod tests {
         slices.into_iter().map(|slice| slice.group).collect()
     }
 
+    #[test]
+    fn programs_two_general_counters_and_dclk_on_channel_3() {
+        let program = config_program(
+            BoxType::Imc,
+            Grouping::Fixed,
+            vec![config_group(
+                0,
+                vec![
+                    config_counter(CounterSlot::General(0), 0x40_0304),
+                    config_counter(CounterSlot::General(3), 0x40_0c04),
+                    config_counter(CounterSlot::Fixed, 0x40_0000),
+                ],
+                BTreeMap::from([(1, BTreeSet::from([3]))]),
+            )],
+        );
+        let ids = [(0, 0), (0, 3), (1, 0), (1, 1), (1, 3)];
+        let slices = hsx::config_schedule(&program, Duration::from_secs(1));
+
+        assert_eq!(
+            hsx::slice_units(&ids, &program, &slices[0]).unwrap(),
+            vec![(4, 0)]
+        );
+        assert_eq!(
+            IMC_CONFIG_BOX.unit_writes(&program.groups[0]).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0x42_0304),
+                (0xdc, 0),
+                (0xe0, 0),
+                (0xe4, 0x42_0c04),
+                (0xf0, 0x48_0000),
+            ]
+        );
+    }
+
+    #[test]
+    fn clears_dclk_control_of_groups_without_fixed() {
+        let group = config_group(
+            0,
+            vec![config_counter(CounterSlot::General(1), 0x40_0304)],
+            BTreeMap::from([(0, BTreeSet::from([0]))]),
+        );
+
+        assert_eq!(
+            IMC_CONFIG_BOX.unit_writes(&group).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0),
+                (0xdc, 0x42_0304),
+                (0xe0, 0),
+                (0xe4, 0),
+                (0xf0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn numbers_channels_by_their_index_in_the_channel_table() {
+        // D21:F0, the third channel of the table, is absent.
+        let present =
+            hsx::present_units(&metal::arch::hsx::pci::BROADWELL_IMC_CHANNELS, |channel| {
+                (channel.device != 21 || channel.function != 0).then_some(metal::pci::PciLocation {
+                    bus: 0x7f,
+                    device: channel.device,
+                    function: channel.function,
+                    group: 0,
+                })
+            });
+        assert_eq!(
+            present
+                .iter()
+                .map(|(id, location)| (*id, location.device, location.function))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, 20, 0),
+                (1, 20, 1),
+                (3, 21, 1),
+                (4, 23, 0),
+                (5, 23, 1),
+                (6, 24, 0),
+                (7, 24, 1),
+            ]
+        );
+
+        let mut collector = test_collector();
+        collector.channels = present
+            .iter()
+            .map(|&(id, _)| test_channel(1, id, &[0; 0x100]))
+            .collect();
+        assert_eq!(
+            collector.config_units(),
+            BTreeMap::from([(1, BTreeSet::from([0, 1, 3, 4, 5, 6, 7]))])
+        );
+    }
+
+    #[test]
+    fn rejects_configs_imc_channels_cannot_count() {
+        let host = BTreeMap::from([(0, BTreeSet::from([0, 1, 3])), (1, (0..8).collect())]);
+        let valid = || {
+            config_program(
+                BoxType::Imc,
+                Grouping::Fixed,
+                vec![config_group(
+                    0,
+                    vec![
+                        config_counter(CounterSlot::General(3), 0x40_0304),
+                        config_counter(CounterSlot::Fixed, 0x40_0000),
+                    ],
+                    BTreeMap::from([(0, BTreeSet::from([0, 3])), (1, BTreeSet::from([7]))]),
+                )],
+            )
+        };
+        IMC_CONFIG_BOX.check_config(&valid(), &host).unwrap();
+
+        let mut ha = valid();
+        ha.box_type = BoxType::Ha;
+        let mut package = valid();
+        package.groups[0].units.insert(2, BTreeSet::from([0]));
+        let mut channel = valid();
+        channel.groups[0].units.insert(0, BTreeSet::from([2]));
+        let mut slot = valid();
+        slot.groups[0]
+            .counters
+            .push(config_counter(CounterSlot::General(4), 0x40_0304));
+        let mut control = valid();
+        control.groups[0].counters[0].control = 1 << 32;
+        let mut filters = valid();
+        filters.groups[0].filters = Some(ChaFilters {
+            filter0: 0,
+            filter1: 0,
+        });
+
+        for (program, error) in [
+            (ha, "Haswell-EP/Broadwell-EP IMC cannot count a ha config"),
+            (
+                package,
+                "IMC config group 0 runs on package 2, which has no IMC channels on this host",
+            ),
+            (
+                channel,
+                "IMC config group 0 runs on channel 2 of package 0, which this host does not have",
+            ),
+            (
+                slot,
+                "IMC config group 0: Haswell-EP/Broadwell-EP IMC channels have no counter slot 4",
+            ),
+            (
+                control,
+                "IMC config group 0 slot 3 control 0x100000000 does not fit in 32 bits",
+            ),
+            (
+                filters,
+                "IMC config group 0 has filters, which IMC channels do not have",
+            ),
+        ] {
+            assert_eq!(
+                IMC_CONFIG_BOX.check_config(&program, &host),
+                Err(error.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn counts_a_config_on_its_channels_only() {
+        let mut collector = test_collector();
+        collector.channels = vec![
+            test_channel(1, 0, &test_config_space()),
+            test_channel(1, 3, &test_config_space()),
+        ];
+        collector
+            .set_config(Some(config(dclk_and_cas_program())))
+            .unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        for (cas, dclk) in [(5, 1_000), (10, 2_000)] {
+            let counts = runtime
+                .block_on(collector.sample_config(Duration::from_millis(1)))
+                .unwrap();
+            assert_eq!(
+                count_values(&counts),
+                vec![
+                    (1, CountUnit::Box(3), CounterSlot::General(0), cas),
+                    (1, CountUnit::Box(3), CounterSlot::Fixed, dclk),
+                ]
+            );
+            assert!(counts.running[0].seconds >= 0.001);
+        }
+
+        let registers = |channel: &HsxImcChannel| {
+            [0xf4, 0xd8, 0xdc, 0xe0, 0xe4, 0xf0]
+                .map(|offset| channel.unit.read_dword(offset).unwrap())
+        };
+        // Channel 3 ends frozen, with the group's controls; channel 0 is in
+        // no group and keeps what it had.
+        assert_eq!(
+            registers(&collector.channels[1]),
+            [0x3_0100, 0x42_0304, 0, 0, 0, 0x48_0000]
+        );
+        assert_eq!(
+            registers(&collector.channels[0]),
+            [0, 0, 0x40_0001, 0x40_0001, 0x40_0001, 0]
+        );
+    }
+
+    #[test]
+    fn restarts_counts_when_the_config_changes() {
+        let mut collector = test_collector();
+        collector.channels = vec![test_channel(1, 3, &test_config_space())];
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let sample = |collector: &mut HsxImcCollector| {
+            runtime
+                .block_on(collector.sample_config(Duration::from_millis(1)))
+                .unwrap()
+        };
+        let cas = |counts: &UncoreCounts| count_values(counts)[0].3;
+
+        collector
+            .set_config(Some(config(dclk_and_cas_program())))
+            .unwrap();
+        sample(&mut collector);
+        assert_eq!(cas(&sample(&mut collector)), 10);
+
+        // An invalid config leaves the current one and its counts alone.
+        let mut elsewhere = dclk_and_cas_program();
+        elsewhere.groups[0].units = BTreeMap::from([(1, BTreeSet::from([2]))]);
+        assert!(collector.set_config(Some(config(elsewhere))).is_err());
+        assert_eq!(cas(&sample(&mut collector)), 15);
+
+        // Setting a config, even the same one again, restarts its counts.
+        collector
+            .set_config(Some(config(dclk_and_cas_program())))
+            .unwrap();
+        let restarted = collector.config.as_ref().unwrap().counts();
+        assert!(count_values(&restarted).iter().all(|count| count.3 == 0));
+        assert!(
+            restarted
+                .running
+                .iter()
+                .all(|running| running.seconds == 0.0)
+        );
+        assert_eq!(cas(&sample(&mut collector)), 5);
+
+        collector.set_config(None).unwrap();
+        assert!(!collector.has_config());
+        assert_eq!(
+            runtime.block_on(collector.sample_config(Duration::from_millis(1))),
+            Err("no PMU config is set for HSX IMC".to_string())
+        );
+    }
+
+    /// CAS reads on counter 0 and DCLK, on channel 3 of package 1.
+    fn dclk_and_cas_program() -> crate::pmu_config::types::ProgrammedBoxType {
+        config_program(
+            BoxType::Imc,
+            Grouping::Fixed,
+            vec![config_group(
+                0,
+                vec![
+                    config_counter(CounterSlot::General(0), 0x40_0304),
+                    config_counter(CounterSlot::Fixed, 0x40_0000),
+                ],
+                BTreeMap::from([(1, BTreeSet::from([3]))]),
+            )],
+        )
+    }
+
+    /// A channel's config space whose counter 0 holds 5 above bit 48 junk,
+    /// DCLK 1000, and controls 1-3 a stale event.
+    fn test_config_space() -> [u8; 0x100] {
+        let mut config_space = [0_u8; 0x100];
+        config_space[0xa0..0xa8].copy_from_slice(&((0xabcd_u64 << 48) | 5).to_le_bytes());
+        config_space[0xd0..0xd8].copy_from_slice(&1_000_u64.to_le_bytes());
+        for offset in [0xdc, 0xe0, 0xe4] {
+            config_space[offset..offset + 4].copy_from_slice(&0x40_0001_u32.to_le_bytes());
+        }
+        config_space
+    }
+
+    fn test_channel(package_id: u32, id: u16, config_space: &[u8]) -> HsxImcChannel {
+        HsxImcChannel {
+            id,
+            scope: HsxUncoreScope { package_id },
+            unit: HsxUncoreUnit::from_config_space(config_space),
+        }
+    }
+
     fn test_collector() -> HsxImcCollector {
         HsxImcCollector {
             channels: Vec::new(),
+            config: None,
             next_group: 0,
         }
     }

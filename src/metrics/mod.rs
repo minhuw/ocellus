@@ -358,14 +358,21 @@ impl MetricsRegistry {
 
     /// Drops the default metrics of configured box types from rendered
     /// metrics. A box type's default families are those named
-    /// `ocellus_<box type>_`.
+    /// `ocellus_<box type>_`, or `ocellus_haswell_<box type>_` for the
+    /// Haswell-EP/Broadwell-EP IMC and HA.
     pub fn without_configured_defaults(&self, metrics: String) -> String {
         let prefixes = self
             .configured
             .lock()
             .unwrap()
             .iter()
-            .map(|box_type| format!("ocellus_{}_", box_type.label()))
+            .flat_map(|box_type| {
+                let label = box_type.label();
+                [
+                    format!("ocellus_{label}_"),
+                    format!("ocellus_haswell_{label}_"),
+                ]
+            })
             .collect::<Vec<_>>();
         if prefixes.is_empty() {
             return metrics;

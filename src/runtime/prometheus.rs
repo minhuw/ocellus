@@ -2611,6 +2611,42 @@ mod tests {
         assert!(!metrics.contains(r#"collector="ha""#));
     }
 
+    #[test]
+    fn leaves_out_the_hsx_imc_defaults_while_an_imc_config_runs() {
+        use crate::metrics::MetricUpdate;
+        use crate::pmu_config::types::BoxType;
+
+        let exporter = haswell_exporter();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let render = || runtime.block_on(exporter.render_metrics()).unwrap();
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Imc(Box::new(hsx_imc_metrics())), 1));
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Ha(Box::new(hsx_ha_metrics())), 1));
+
+        exporter.metrics.config_changed(BoxType::Imc);
+        exporter
+            .metrics
+            .update(sampled(uncore_update(BoxType::Imc, 1, 1_000, 42), 2));
+        let configured = render();
+        assert_eq!(
+            lines_containing(&configured, "ocellus_haswell_"),
+            HSX_HA_LINES
+        );
+        assert!(configured.contains(r#"ocellus_uncore_config_id{box_type="imc"} 1"#));
+
+        exporter.metrics.config_changed(BoxType::Imc);
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Imc(Box::new(hsx_imc_metrics())), 3));
+        assert_eq!(
+            lines_containing(&render(), "ocellus_haswell_"),
+            [HSX_IMC_LINES.as_slice(), HSX_HA_LINES.as_slice()].concat()
+        );
+    }
+
     fn skx_irp_metrics() -> crate::metrics::irp::IrpMetrics {
         crate::metrics::irp::IrpMetrics::Skx(crate::metrics::irp::skx::SkxIrpMetrics {
             scopes: vec![crate::metrics::irp::skx::IrpScopeMetrics {

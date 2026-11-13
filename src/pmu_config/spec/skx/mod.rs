@@ -10,8 +10,9 @@ use crate::metrics::cha::skx::{
     CHA_FILTER1_OPCODE1_SHIFT, CHA_FILTER1_REMOTE_BIT,
 };
 use crate::pmu_config::spec::{
-    EventRequest, Filter0Request, Filter1Request, GroupProgram, GroupRequest, LocalityRequest,
-    Number, Token, join,
+    Alias, BoxSpec, Encoding, EventRequest, Filter0Request, Filter1Request, GroupProgram,
+    GroupRequest, LocalityRequest, Number, Param, Token, check_counter, check_event_count,
+    event_encoding, join, register_field,
 };
 use crate::pmu_config::types::{BoxType, ChaFilters, CounterSlot, EventLabels, ProgrammedCounter};
 
@@ -20,75 +21,39 @@ const FILTER_REGISTER_MAX: u64 = 0xffff_ffff;
 const IDI_OPCODE_MAX: u64 = 0x3ff;
 const IIO_FC_MASK_MAX: u8 = 0x07;
 const LLC_LOOKUP_EVENT: u8 = 0x34;
+const MODEL: &str = "Skylake-SP";
 
-/// A box type as Skylake-SP implements it.
-struct SkxBox {
-    /// Box name in messages.
-    name: &'static str,
-    general_counters: usize,
-    /// Event code → mask of the general counters it counts on.
-    event_counters: &'static [(u8, u8)],
-    aliases: &'static [Alias],
-}
-
-const CHA: SkxBox = SkxBox {
+const CHA: BoxSpec = BoxSpec {
+    model: MODEL,
     name: "CHA",
     general_counters: 4,
     event_counters: &counters::CHA,
     aliases: CHA_ALIASES,
 };
 
-const IIO: SkxBox = SkxBox {
+const IIO: BoxSpec = BoxSpec {
+    model: MODEL,
     name: "IIO",
     general_counters: 4,
     event_counters: &counters::IIO,
     aliases: IIO_ALIASES,
 };
 
-const IRP: SkxBox = SkxBox {
+const IRP: BoxSpec = BoxSpec {
+    model: MODEL,
     name: "IRP",
     general_counters: 2,
     event_counters: &counters::IRP,
     aliases: IRP_ALIASES,
 };
 
-const IMC: SkxBox = SkxBox {
+const IMC: BoxSpec = BoxSpec {
+    model: MODEL,
     name: "IMC",
     general_counters: 4,
     event_counters: &counters::IMC,
     aliases: IMC_ALIASES,
 };
-
-/// An event by name. Its umask is `umask` or'd with the bits of each
-/// parameter's value.
-struct Alias {
-    name: &'static str,
-    event: u8,
-    umask: u8,
-    params: &'static [Param],
-    /// IIO defaults, which the request may override.
-    ch_mask: u8,
-    fc_mask: u8,
-}
-
-impl Alias {
-    const fn new(name: &'static str, event: u8, umask: u8, params: &'static [Param]) -> Self {
-        Self {
-            name,
-            event,
-            umask,
-            params,
-            ch_mask: 0,
-            fc_mask: 0,
-        }
-    }
-}
-
-/// An alias parameter: its request field and the umask bits of its values.
-struct Param {
-    field: &'static str,
-    values: &'static [(&'static str, u8)],
-}
 
 // Encodings from Intel perfmon SKX/events/skylakex_uncore*.json (see
 // `counters`); the comments name the events.
@@ -309,15 +274,6 @@ const IDI_OPCODES: [(&str, u16); 23] = [
     ("Lock", 0x27f),
 ];
 
-/// The register fields of one counter's event.
-struct Encoding {
-    alias: &'static str,
-    event: u8,
-    umask: u8,
-    ch_mask: u8,
-    fc_mask: u8,
-}
-
 pub(super) fn program_group(
     box_type: BoxType,
     group: &GroupRequest,
@@ -330,14 +286,7 @@ pub(super) fn program_group(
         BoxType::Imc => &IMC,
         BoxType::Ha => return Err(format!("{path}: Skylake-SP has no ha boxes")),
     };
-    if group.events.len() > skx_box.general_counters {
-        return Err(format!(
-            "{path}.events: Skylake-SP {} boxes have {} general counters, got {} events",
-            skx_box.name,
-            skx_box.general_counters,
-            group.events.len()
-        ));
-    }
+    check_event_count(skx_box, group, path)?;
     let filters = if box_type == BoxType::Cha {
         Some(ChaFilters {
             filter0: filter0(group.filter0.as_ref(), path)?,
@@ -389,11 +338,14 @@ pub(super) fn program_group(
 }
 
 fn encoding(
-    skx_box: &SkxBox,
+    skx_box: &BoxSpec,
     box_type: BoxType,
     event: &EventRequest,
     path: &str,
 ) -> Result<Encoding, String> {
+    if event.tid_en {
+        return Err(format!("{path}.tid_en: not supported on {MODEL}"));
+    }
     if box_type != BoxType::Iio {
         for (field, given) in [
             ("ch_mask", event.ch_mask.is_some()),
@@ -405,14 +357,7 @@ fn encoding(
         }
     }
 
-    let mut encoding = match (&event.alias, &event.event) {
-        (Some(alias), None) => alias_encoding(skx_box, alias, event, path)?,
-        (None, Some(code)) => raw_encoding(code, event, path)?,
-        (Some(_), Some(_)) => {
-            return Err(format!("{path}: takes an alias or an event, not both"));
-        }
-        (None, None) => return Err(format!("{path}: needs an alias or an event")),
-    };
+    let mut encoding = event_encoding(skx_box, event, path)?;
     if let Some(ch_mask) = &event.ch_mask {
         encoding.ch_mask = register_field(ch_mask, u8::MAX, &format!("{path}.ch_mask"))?;
     }
@@ -421,120 +366,6 @@ fn encoding(
     }
 
     Ok(encoding)
-}
-
-fn alias_encoding(
-    skx_box: &SkxBox,
-    name: &str,
-    event: &EventRequest,
-    path: &str,
-) -> Result<Encoding, String> {
-    let alias = skx_box
-        .aliases
-        .iter()
-        .find(|alias| alias.name == name)
-        .ok_or_else(|| {
-            format!(
-                "{path}.alias: unknown Skylake-SP {} alias \"{name}\" (aliases: {})",
-                skx_box.name,
-                join(skx_box.aliases.iter().map(|alias| alias.name))
-            )
-        })?;
-    if event.umask.is_some() {
-        return Err(format!("{path}.umask: alias {name} sets its own umask"));
-    }
-
-    let mut umask = alias.umask;
-    for (field, value) in event.params() {
-        let param = alias.params.iter().find(|param| param.field == field);
-        match (param, value) {
-            (None, None) => {}
-            (None, Some(_)) => return Err(format!("{path}.{field}: {name} takes no {field}")),
-            (Some(param), None) => {
-                return Err(format!(
-                    "{path}: {name} needs a {field} ({})",
-                    join(param.values.iter().map(|(value, _)| value))
-                ));
-            }
-            (Some(param), Some(value)) => {
-                umask |= param
-                    .values
-                    .iter()
-                    .find(|(name, _)| *name == value)
-                    .map(|(_, bits)| *bits)
-                    .ok_or_else(|| {
-                        format!(
-                            "{path}.{field}: {name} {field} must be one of {}, got \"{value}\"",
-                            join(param.values.iter().map(|(value, _)| value))
-                        )
-                    })?;
-            }
-        }
-    }
-
-    Ok(Encoding {
-        alias: alias.name,
-        event: alias.event,
-        umask,
-        ch_mask: alias.ch_mask,
-        fc_mask: alias.fc_mask,
-    })
-}
-
-fn raw_encoding(code: &Number, event: &EventRequest, path: &str) -> Result<Encoding, String> {
-    if let Some((field, _)) = event
-        .params()
-        .into_iter()
-        .find(|(_, value)| value.is_some())
-    {
-        return Err(format!("{path}.{field}: only aliases take a {field}"));
-    }
-    let umask = match &event.umask {
-        Some(umask) => register_field(umask, u8::MAX, &format!("{path}.umask"))?,
-        None => 0,
-    };
-
-    Ok(Encoding {
-        alias: "raw",
-        event: register_field(code, u8::MAX, &format!("{path}.event"))?,
-        umask,
-        ch_mask: 0,
-        fc_mask: 0,
-    })
-}
-
-fn register_field(value: &Number, max: u8, path: &str) -> Result<u8, String> {
-    u8::try_from(value.0)
-        .ok()
-        .filter(|field| *field <= max)
-        .ok_or_else(|| format!("{path}: must be at most {max:#04x}, got {:#x}", value.0))
-}
-
-fn check_counter(
-    skx_box: &SkxBox,
-    encoding: &Encoding,
-    slot: usize,
-    path: &str,
-) -> Result<(), String> {
-    let counters = skx_box
-        .event_counters
-        .binary_search_by_key(&encoding.event, |(event, _)| *event)
-        .map(|index| skx_box.event_counters[index].1)
-        .map_err(|_| {
-            format!(
-                "{path}: Intel lists no Skylake-SP {} event {:#04x}",
-                skx_box.name, encoding.event
-            )
-        })?;
-    if counters & (1 << slot) == 0 {
-        return Err(format!(
-            "{path}: event {:#04x} counts only on counters {}",
-            encoding.event,
-            join((0..8).filter(|counter| counters & (1 << counter) != 0))
-        ));
-    }
-
-    Ok(())
 }
 
 fn check_cha_filters(encoding: &Encoding, filters: ChaFilters, path: &str) -> Result<(), String> {
@@ -562,6 +393,9 @@ fn filter0(request: Option<&Filter0Request>, path: &str) -> Result<u64, String> 
         return Ok(0);
     };
     let path = format!("{path}.filter0");
+    if request.tid.is_some() {
+        return Err(format!("{path}.tid: not supported on {MODEL}"));
+    }
     let states = match (&request.states, &request.raw) {
         (None, Some(raw)) => return raw_filter(raw, &format!("{path}.raw")),
         (Some(states), None) => states,
@@ -597,6 +431,15 @@ fn filter1(request: Option<&Filter1Request>, path: &str) -> Result<u64, String> 
         return Ok(filter1_value(LocalityRequest::All, &[]));
     };
     let path = format!("{path}.filter1");
+    for (field, given) in [
+        ("nid", request.nid.is_some()),
+        ("nc", request.nc),
+        ("isoc", request.isoc),
+    ] {
+        if given {
+            return Err(format!("{path}.{field}: not supported on {MODEL}"));
+        }
+    }
     if let Some(raw) = &request.raw {
         if request.opcodes.is_some() || request.locality.is_some() {
             return Err(format!("{path}: raw excludes opcodes and locality"));

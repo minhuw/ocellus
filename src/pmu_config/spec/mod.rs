@@ -1,6 +1,7 @@
 //! PMU config requests and their validation into the programming of each
 //! box type.
 
+mod hsx;
 mod skx;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,6 +34,7 @@ impl PmuConfigRequest {
             (BoxType::Iio, pmus.iio.is_some()),
             (BoxType::Irp, pmus.irp.is_some()),
             (BoxType::Imc, pmus.imc.is_some()),
+            (BoxType::Ha, pmus.ha.is_some()),
         ]
         .into_iter()
         .filter_map(|(box_type, named)| named.then_some(box_type))
@@ -56,6 +58,7 @@ struct PmuRequests {
     iio: Option<BoxRequest>,
     irp: Option<BoxRequest>,
     imc: Option<BoxRequest>,
+    ha: Option<BoxRequest>,
 }
 
 impl PmuRequests {
@@ -65,6 +68,7 @@ impl PmuRequests {
             (BoxType::Iio, self.iio),
             (BoxType::Irp, self.irp),
             (BoxType::Imc, self.imc),
+            (BoxType::Ha, self.ha),
         ]
         .into_iter()
         .filter_map(|(box_type, request)| Some((box_type, request?)))
@@ -119,6 +123,8 @@ struct GroupRequest {
 #[serde(deny_unknown_fields)]
 struct Filter0Request {
     states: Option<Vec<String>>,
+    /// Thread id the group's `tid_en` events match.
+    tid: Option<Number>,
     raw: Option<Number>,
 }
 
@@ -128,6 +134,14 @@ struct Filter1Request {
     /// Opcode names or raw opcode values.
     opcodes: Option<Vec<Token>>,
     locality: Option<LocalityRequest>,
+    /// Target node id.
+    nid: Option<Number>,
+    /// Matches non-coherent requests.
+    #[serde(default)]
+    nc: bool,
+    /// Matches isochronous requests.
+    #[serde(default)]
+    isoc: bool,
     raw: Option<Number>,
 }
 
@@ -153,16 +167,25 @@ struct EventRequest {
     result: Option<String>,
     op: Option<String>,
     state: Option<String>,
+    kind: Option<String>,
+    home: Option<String>,
+    ring: Option<String>,
+    /// Counts only requests of the group's filter0 `tid`.
+    #[serde(default)]
+    tid_en: bool,
 }
 
 impl EventRequest {
     /// The alias parameters by field name.
-    fn params(&self) -> [(&'static str, Option<&str>); 4] {
+    fn params(&self) -> [(&'static str, Option<&str>); 7] {
         [
             ("source", self.source.as_deref()),
             ("result", self.result.as_deref()),
             ("op", self.op.as_deref()),
             ("state", self.state.as_deref()),
+            ("kind", self.kind.as_deref()),
+            ("home", self.home.as_deref()),
+            ("ring", self.ring.as_deref()),
         ]
     }
 }
@@ -239,6 +262,58 @@ struct GroupProgram {
 /// Programs one group of a box type; errors name the group's JSON path.
 type ProgramGroup = fn(BoxType, &GroupRequest, &str) -> Result<GroupProgram, String>;
 
+/// A box type as a CPU model implements it.
+struct BoxSpec {
+    /// Model name in messages.
+    model: &'static str,
+    /// Box name in messages.
+    name: &'static str,
+    general_counters: usize,
+    /// Event code → mask of the general counters it counts on.
+    event_counters: &'static [(u8, u8)],
+    aliases: &'static [Alias],
+}
+
+/// An event by name. Its umask is `umask` or'd with the bits of each
+/// parameter's value.
+struct Alias {
+    name: &'static str,
+    event: u8,
+    umask: u8,
+    params: &'static [Param],
+    /// IIO defaults, which the request may override.
+    ch_mask: u8,
+    fc_mask: u8,
+}
+
+impl Alias {
+    const fn new(name: &'static str, event: u8, umask: u8, params: &'static [Param]) -> Self {
+        Self {
+            name,
+            event,
+            umask,
+            params,
+            ch_mask: 0,
+            fc_mask: 0,
+        }
+    }
+}
+
+/// An alias parameter: its request field and the umask bits of its values.
+struct Param {
+    field: &'static str,
+    values: &'static [(&'static str, u8)],
+}
+
+/// The register fields of one counter's event.
+struct Encoding {
+    alias: &'static str,
+    event: u8,
+    umask: u8,
+    ch_mask: u8,
+    fc_mask: u8,
+}
+
 pub fn validate(
     request: PmuConfigRequest,
     topology: &PmuTopology,
@@ -246,6 +321,7 @@ pub fn validate(
 ) -> Result<Vec<ProgrammedConfig>, String> {
     let program_group: ProgramGroup = match model {
         IntelServerCpuModel::SkylakeXeon => skx::program_group,
+        IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => hsx::program_group,
         _ => return Err(format!("PMU configs are not supported on {model:?}")),
     };
 
@@ -501,6 +577,149 @@ fn config_id(program: &ProgrammedBoxType) -> u64 {
         (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
     });
     hash & (ID_LIMIT - 1)
+}
+
+fn check_event_count(box_spec: &BoxSpec, group: &GroupRequest, path: &str) -> Result<(), String> {
+    if group.events.len() > box_spec.general_counters {
+        return Err(format!(
+            "{path}.events: {} {} boxes have {} general counters, got {} events",
+            box_spec.model,
+            box_spec.name,
+            box_spec.general_counters,
+            group.events.len()
+        ));
+    }
+
+    Ok(())
+}
+
+/// The event of an alias or of raw register fields.
+fn event_encoding(
+    box_spec: &BoxSpec,
+    event: &EventRequest,
+    path: &str,
+) -> Result<Encoding, String> {
+    match (&event.alias, &event.event) {
+        (Some(alias), None) => alias_encoding(box_spec, alias, event, path),
+        (None, Some(code)) => raw_encoding(code, event, path),
+        (Some(_), Some(_)) => Err(format!("{path}: takes an alias or an event, not both")),
+        (None, None) => Err(format!("{path}: needs an alias or an event")),
+    }
+}
+
+fn alias_encoding(
+    box_spec: &BoxSpec,
+    name: &str,
+    event: &EventRequest,
+    path: &str,
+) -> Result<Encoding, String> {
+    let alias = box_spec
+        .aliases
+        .iter()
+        .find(|alias| alias.name == name)
+        .ok_or_else(|| {
+            format!(
+                "{path}.alias: unknown {} {} alias \"{name}\" (aliases: {})",
+                box_spec.model,
+                box_spec.name,
+                join(box_spec.aliases.iter().map(|alias| alias.name))
+            )
+        })?;
+    if event.umask.is_some() {
+        return Err(format!("{path}.umask: alias {name} sets its own umask"));
+    }
+
+    let mut umask = alias.umask;
+    for (field, value) in event.params() {
+        let param = alias.params.iter().find(|param| param.field == field);
+        match (param, value) {
+            (None, None) => {}
+            (None, Some(_)) => return Err(format!("{path}.{field}: {name} takes no {field}")),
+            (Some(param), None) => {
+                return Err(format!(
+                    "{path}: {name} needs a {field} ({})",
+                    join(param.values.iter().map(|(value, _)| value))
+                ));
+            }
+            (Some(param), Some(value)) => {
+                umask |= param
+                    .values
+                    .iter()
+                    .find(|(name, _)| *name == value)
+                    .map(|(_, bits)| *bits)
+                    .ok_or_else(|| {
+                        format!(
+                            "{path}.{field}: {name} {field} must be one of {}, got \"{value}\"",
+                            join(param.values.iter().map(|(value, _)| value))
+                        )
+                    })?;
+            }
+        }
+    }
+
+    Ok(Encoding {
+        alias: alias.name,
+        event: alias.event,
+        umask,
+        ch_mask: alias.ch_mask,
+        fc_mask: alias.fc_mask,
+    })
+}
+
+fn raw_encoding(code: &Number, event: &EventRequest, path: &str) -> Result<Encoding, String> {
+    if let Some((field, _)) = event
+        .params()
+        .into_iter()
+        .find(|(_, value)| value.is_some())
+    {
+        return Err(format!("{path}.{field}: only aliases take a {field}"));
+    }
+    let umask = match &event.umask {
+        Some(umask) => register_field(umask, u8::MAX, &format!("{path}.umask"))?,
+        None => 0,
+    };
+
+    Ok(Encoding {
+        alias: "raw",
+        event: register_field(code, u8::MAX, &format!("{path}.event"))?,
+        umask,
+        ch_mask: 0,
+        fc_mask: 0,
+    })
+}
+
+fn register_field(value: &Number, max: u8, path: &str) -> Result<u8, String> {
+    u8::try_from(value.0)
+        .ok()
+        .filter(|field| *field <= max)
+        .ok_or_else(|| format!("{path}: must be at most {max:#04x}, got {:#x}", value.0))
+}
+
+fn check_counter(
+    box_spec: &BoxSpec,
+    encoding: &Encoding,
+    slot: usize,
+    path: &str,
+) -> Result<(), String> {
+    let counters = box_spec
+        .event_counters
+        .binary_search_by_key(&encoding.event, |(event, _)| *event)
+        .map(|index| box_spec.event_counters[index].1)
+        .map_err(|_| {
+            format!(
+                "{path}: Intel lists no {} {} event {:#04x}",
+                box_spec.model, box_spec.name, encoding.event
+            )
+        })?;
+    if counters & (1 << slot) == 0 {
+        return Err(format!(
+            "{path}: event {:#04x} counts only on counters {}",
+            encoding.event,
+            join((0..8).filter(|counter| counters & (1 << counter) != 0))
+        ));
+    }
+
+    Ok(())
 }
 
 fn put_len(bytes: &mut Vec<u8>, len: usize) {
@@ -1187,6 +1406,65 @@ mod tests {
                 "{request}\nexpected: {expected}\n     got: {error}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_haswell_fields_on_skylake() {
+        let cha = |group: Value| pmu("cha", group);
+        let cases = [
+            (
+                cha(json!({"filter0": {"tid": "0x3e"}, "events": [{"alias": "clockticks"}]})),
+                "pmus.cha.groups[0].filter0.tid: not supported on Skylake-SP",
+            ),
+            (
+                cha(json!({"events": [{"alias": "clockticks", "tid_en": true}]})),
+                "pmus.cha.groups[0].events[0].tid_en: not supported on Skylake-SP",
+            ),
+            (
+                pmu(
+                    "imc",
+                    json!({"events": [{"alias": "cas_count", "op": "rd", "tid_en": true}]}),
+                ),
+                "pmus.imc.groups[0].events[0].tid_en: not supported on Skylake-SP",
+            ),
+            (
+                cha(json!({"filter1": {"nid": 1}, "events": [{"alias": "clockticks"}]})),
+                "pmus.cha.groups[0].filter1.nid: not supported on Skylake-SP",
+            ),
+            (
+                cha(json!({"filter1": {"nc": true}, "events": [{"alias": "clockticks"}]})),
+                "pmus.cha.groups[0].filter1.nc: not supported on Skylake-SP",
+            ),
+            (
+                cha(json!({"filter1": {"isoc": true}, "events": [{"alias": "clockticks"}]})),
+                "pmus.cha.groups[0].filter1.isoc: not supported on Skylake-SP",
+            ),
+            (
+                cha(json!({"events": [{"alias": "clockticks", "kind": "opcode"}]})),
+                "pmus.cha.groups[0].events[0].kind: clockticks takes no kind",
+            ),
+            (
+                pmu("ha", clockticks()),
+                "pmus.ha: this host has no ha boxes",
+            ),
+        ];
+        for (request, expected) in cases {
+            let error = validate_json(request.clone()).unwrap_err();
+            assert!(
+                error.starts_with(expected),
+                "{request}\nexpected: {expected}\n     got: {error}"
+            );
+        }
+
+        let mut topology = topology();
+        topology
+            .units
+            .insert(BoxType::Ha, BTreeMap::from([(0, BTreeSet::from([0]))]));
+        let request = parse(pmu("ha", clockticks())).unwrap();
+        assert_eq!(
+            validate(request, &topology, IntelServerCpuModel::SkylakeXeon).unwrap_err(),
+            "pmus.ha.groups[0]: Skylake-SP has no ha boxes"
+        );
     }
 
     #[test]

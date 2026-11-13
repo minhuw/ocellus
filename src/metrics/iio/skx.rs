@@ -273,9 +273,13 @@ impl SkxIioCollector {
         Ok(())
     }
 
-    /// Samples the set config for `interval`. Its counts are cumulative since
-    /// the config was set.
-    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
         if interval.is_zero() {
             return Err("IIO measure interval must be non-zero".to_string());
         }
@@ -285,7 +289,7 @@ impl SkxIioCollector {
             .ok_or_else(|| "IIO has no PMU config to sample".to_string())?;
         let program = accumulator.config().program.clone();
 
-        for slice in config_schedule(&program, interval) {
+        for slice in config_schedule(&program, interval, cycle) {
             let units = config_targets(&program, &slice)
                 .into_iter()
                 .map(|target| Ok((config_unit(&self.packages, target)?, target)))
@@ -1217,8 +1221,13 @@ pub(crate) fn config_counter_control(group: &ProgrammedGroup, counter_index: usi
 }
 
 /// The slices of one sample: all groups at once for the whole interval, or
-/// for temporal grouping each group in turn, in rounds.
-pub(crate) fn config_schedule(program: &ProgrammedBoxType, interval: Duration) -> Vec<ConfigSlice> {
+/// for temporal grouping each group in turn, in rounds, every round from
+/// group `cycle` mod the group count, wrapping around.
+pub(crate) fn config_schedule(
+    program: &ProgrammedBoxType,
+    interval: Duration,
+    cycle: u64,
+) -> Vec<ConfigSlice> {
     let group_count = program.groups.len();
     match program.grouping {
         Grouping::Fixed | Grouping::Spatial => vec![ConfigSlice {
@@ -1229,12 +1238,13 @@ pub(crate) fn config_schedule(program: &ProgrammedBoxType, interval: Duration) -
             let round_count = measurement_round_count(interval, group_count);
             let slice_count = group_count * round_count;
             let duration = interval.div_f64(slice_count as f64);
+            let start = (cycle % group_count as u64) as usize;
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
-                .map(|group| ConfigSlice {
+                .map(|position| ConfigSlice {
                     duration,
-                    groups: vec![group],
+                    groups: vec![(start + position) % group_count],
                 })
                 .collect()
         }
@@ -1570,7 +1580,7 @@ mod tests {
             vec![test_group(0, &[(0, CONTROL)], &[0, 1], &[0, 2])],
         );
         assert_eq!(
-            config_schedule(&fixed.program, interval),
+            config_schedule(&fixed.program, interval, 0),
             vec![slice(1_000, &[0])]
         );
 
@@ -1583,7 +1593,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            config_schedule(&spatial.program, interval),
+            config_schedule(&spatial.program, interval, 0),
             vec![slice(1_000, &[0, 1])]
         );
 
@@ -1596,7 +1606,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            config_schedule(&temporal.program, interval),
+            config_schedule(&temporal.program, interval, 0),
             [0, 1]
                 .repeat(5)
                 .into_iter()
@@ -1604,9 +1614,31 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            config_schedule(&temporal.program, Duration::from_millis(50)),
+            config_schedule(&temporal.program, Duration::from_millis(50), 0),
             vec![slice(25, &[0]), slice(25, &[1])]
         );
+    }
+
+    fn scheduled_slices(
+        program: &ProgrammedBoxType,
+        interval: Duration,
+        cycle: u64,
+    ) -> Vec<crate::metrics::testing::ScheduledSlice> {
+        config_schedule(program, interval, cycle)
+            .into_iter()
+            .map(|slice| (slice.duration, slice.groups))
+            .collect()
+    }
+
+    // IRP shares this schedule.
+    #[test]
+    fn precesses_temporal_config_groups_by_cycle() {
+        crate::metrics::testing::assert_precessing_schedule(BoxType::Iio, scheduled_slices);
+    }
+
+    #[test]
+    fn reads_phase_locked_sources_without_bias_over_a_cycle_of_samples() {
+        crate::metrics::testing::assert_unbiased_by_precession(BoxType::Iio, scheduled_slices);
     }
 
     #[test]
@@ -1843,7 +1875,7 @@ mod tests {
         let mut collector = test_collector();
 
         assert_eq!(
-            runtime.block_on(collector.sample_config(Duration::from_millis(1))),
+            runtime.block_on(collector.sample_config(Duration::from_millis(1), 0)),
             Err("IIO has no PMU config to sample".to_string())
         );
     }

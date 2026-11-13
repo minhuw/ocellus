@@ -7,8 +7,9 @@ use tokio::sync::mpsc;
 
 use crate::metrics::{ConfigurableCollector, MetricUpdate};
 use crate::pmu_config::types::{
-    Aggregate, BoxType, ChaFilters, CountUnit, CounterSlot, GroupRunning, Grouping, PmuConfig,
-    ProgrammedBoxType, ProgrammedCounter, ProgrammedGroup, UncoreCounts, UnitCount,
+    Aggregate, BoxType, ChaFilters, CountAccumulator, CountUnit, CounterSlot, EventLabels,
+    GroupRunning, Grouping, PmuConfig, ProgrammedBoxType, ProgrammedCounter, ProgrammedGroup,
+    UncoreCounts, UnitCount,
 };
 
 /// A config of two counters in one group on units 0-2 and 4 of package 0,
@@ -72,6 +73,225 @@ pub fn uncore_counts(config: PmuConfig, value: u64) -> UncoreCounts {
             group: 0,
             seconds: 0.5,
         }],
+    }
+}
+
+/// A slice of a config sample: its duration and the positions of its groups
+/// in the config.
+pub type ScheduledSlice = (Duration, Vec<usize>);
+
+/// A per-box config of `group_count` groups of one counter, each on units 0
+/// and 1 of packages 0 and 1.
+fn schedule_program(box_type: BoxType, grouping: Grouping, group_count: u8) -> ProgrammedBoxType {
+    ProgrammedBoxType {
+        box_type,
+        grouping,
+        aggregate: Aggregate::Box,
+        groups: (0..group_count)
+            .map(|index| ProgrammedGroup {
+                index,
+                counters: vec![ProgrammedCounter {
+                    slot: CounterSlot::General(0),
+                    control: 0x40_0035,
+                    labels: EventLabels::new(),
+                }],
+                filters: None,
+                units: (0..2)
+                    .map(|package| (package, BTreeSet::from([0, 1])))
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+/// Asserts the slices `schedule` gives for a cycle: fixed and spatial groups
+/// count together for the whole interval, and temporal groups take turns in
+/// rounds, each round from group `cycle` mod their count.
+pub fn assert_precessing_schedule(
+    box_type: BoxType,
+    schedule: impl Fn(&ProgrammedBoxType, Duration, u64) -> Vec<ScheduledSlice>,
+) {
+    let second = Duration::from_secs(1);
+    let program = |grouping, group_count| schedule_program(box_type, grouping, group_count);
+    let slices = |dwell: Duration, groups: &[usize]| {
+        groups
+            .iter()
+            .map(|&group| (dwell, vec![group]))
+            .collect::<Vec<_>>()
+    };
+
+    for cycle in [0, 1, 7, u64::MAX] {
+        assert_eq!(
+            schedule(&program(Grouping::Fixed, 1), second, cycle),
+            vec![(second, vec![0])]
+        );
+        assert_eq!(
+            schedule(&program(Grouping::Spatial, 3), second, cycle),
+            vec![(second, vec![0, 1, 2])]
+        );
+        assert_eq!(
+            schedule(&program(Grouping::Temporal, 1), second, cycle),
+            slices(Duration::from_millis(100), &[0; 10])
+        );
+    }
+
+    let three = program(Grouping::Temporal, 3);
+    for (cycle, groups) in [
+        (0, [0, 1, 2]),
+        (1, [1, 2, 0]),
+        (2, [2, 0, 1]),
+        (3, [0, 1, 2]),
+        (1_763_000_005, [1, 2, 0]),
+    ] {
+        assert_eq!(
+            schedule(&three, Duration::from_millis(300), cycle),
+            slices(Duration::from_millis(100), &groups),
+            "cycle {cycle}"
+        );
+    }
+
+    // Two rounds of eight.
+    let eight = program(Grouping::Temporal, 8);
+    for cycle in [5, 13] {
+        assert_eq!(
+            schedule(&eight, second, cycle),
+            slices(
+                Duration::from_micros(62_500),
+                &[5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4]
+            ),
+            "cycle {cycle}"
+        );
+    }
+
+    let eleven = program(Grouping::Temporal, 11);
+    for (cycle, groups) in [
+        (0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        (10, [10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        (11, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        (u64::MAX, [4, 5, 6, 7, 8, 9, 10, 0, 1, 2, 3]),
+    ] {
+        assert_eq!(
+            schedule(&eleven, second, cycle),
+            slices(second.div_f64(11.0), &groups),
+            "cycle {cycle}"
+        );
+    }
+}
+
+/// The rate of a source that [`phase_locked_rates`] simulates outside its
+/// burst, per second.
+const BASE_RATE: f64 = 1e9;
+/// The count a phase-locked source adds once every sample.
+const BURST: u64 = 300_000_000;
+/// Where in every sample the burst lands, as a fraction of the interval.
+const BURST_PHASE: f64 = 0.37;
+
+/// Each group's rate, its count over its running seconds summed over the
+/// samples of `cycles`, of a source that counts `BASE_RATE` plus `BURST` at
+/// `BURST_PHASE` of every sample, on the slices `schedule` gives.
+fn phase_locked_rates(
+    program: &ProgrammedBoxType,
+    interval: Duration,
+    cycles: impl IntoIterator<Item = u64>,
+    schedule: &impl Fn(&ProgrammedBoxType, Duration, u64) -> Vec<ScheduledSlice>,
+) -> BTreeMap<u8, f64> {
+    let mut accumulator = CountAccumulator::new(PmuConfig {
+        config_id: 1,
+        started_at: UNIX_EPOCH,
+        program: program.clone(),
+    });
+    let burst_at = interval.mul_f64(BURST_PHASE);
+
+    for cycle in cycles {
+        let mut start = Duration::ZERO;
+        for (duration, positions) in schedule(program, interval, cycle) {
+            let mut count = (BASE_RATE * duration.as_secs_f64()).round() as u64;
+            if (start..start + duration).contains(&burst_at) {
+                count += BURST;
+            }
+            for position in positions {
+                let group = &program.groups[position];
+                for (&package, units) in &group.units {
+                    accumulator
+                        .add_running(package, group.index, duration)
+                        .unwrap();
+                    for &unit in units {
+                        for counter in &group.counters {
+                            accumulator
+                                .add_count(package, unit, group.index, counter.slot, count)
+                                .unwrap();
+                        }
+                    }
+                }
+            }
+            start += duration;
+        }
+    }
+
+    let counts = accumulator.counts();
+    let mut rates = BTreeMap::new();
+    for count in &counts.counts {
+        let running = counts
+            .running
+            .iter()
+            .find(|running| (running.package, running.group) == (count.package, count.group))
+            .unwrap();
+        let rate = count.value as f64 / running.seconds;
+        let previous = rates.insert(count.group, rate);
+        assert!(
+            previous.is_none_or(|previous| previous == rate),
+            "the boxes of group {} disagree",
+            count.group
+        );
+    }
+
+    rates
+}
+
+/// Asserts that the temporal slices `schedule` gives read a source that
+/// bursts at a fixed phase of every sample without bias: over n consecutive
+/// cycles each of n groups reads the base rate plus one burst per interval,
+/// where n samples of one cycle would give one group all n bursts.
+pub fn assert_unbiased_by_precession(
+    box_type: BoxType,
+    schedule: impl Fn(&ProgrammedBoxType, Duration, u64) -> Vec<ScheduledSlice>,
+) {
+    const FIRST_CYCLE: u64 = 1_763_000_000;
+    let close = |rate: f64, expected: f64| (rate - expected).abs() <= expected * 1e-6;
+
+    for (interval, group_count) in [
+        (Duration::from_secs(1), 3),
+        (Duration::from_secs(1), 8),
+        (Duration::from_secs(1), 11),
+        (Duration::from_millis(250), 3),
+    ] {
+        let program = schedule_program(box_type, Grouping::Temporal, group_count);
+        let n = u64::from(group_count);
+        let burst_rate = BURST as f64 / interval.as_secs_f64();
+
+        let rates = phase_locked_rates(&program, interval, FIRST_CYCLE..FIRST_CYCLE + n, &schedule);
+        assert_eq!(rates.len(), usize::from(group_count));
+        for (group, rate) in rates {
+            assert!(
+                close(rate, BASE_RATE + burst_rate),
+                "{group_count} groups over {interval:?}: group {group} reads {rate}"
+            );
+        }
+
+        let rates = phase_locked_rates(
+            &program,
+            interval,
+            std::iter::repeat_n(0, usize::from(group_count)),
+            &schedule,
+        );
+        let (biased, unbiased): (Vec<f64>, Vec<f64>) = rates
+            .into_values()
+            .partition(|&rate| close(rate, BASE_RATE + n as f64 * burst_rate));
+        assert_eq!(biased.len(), 1, "{group_count} groups over {interval:?}");
+        assert!(
+            unbiased.iter().all(|&rate| close(rate, BASE_RATE)),
+            "{group_count} groups over {interval:?}: {unbiased:?}"
+        );
     }
 }
 
@@ -152,7 +372,11 @@ impl ConfigurableCollector for FakeCollector {
         Ok(())
     }
 
-    async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+    async fn sample_config(
+        &mut self,
+        interval: Duration,
+        _cycle: u64,
+    ) -> Result<UncoreCounts, String> {
         self.sleep("config sample", interval).await;
         let (config, samples) = self
             .config

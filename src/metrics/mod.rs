@@ -499,11 +499,13 @@ pub(crate) trait ConfigurableCollector: Send {
     /// groups for `None`. Counts restart from 0.
     fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String>;
 
-    /// Samples the set config for `interval`. Its counts are cumulative since
-    /// the config was set.
+    /// Samples the set config for `interval`, up to the boundary of index
+    /// `cycle`, which sets the group temporal groups start from. Its counts
+    /// are cumulative since the config was set.
     fn sample_config(
         &mut self,
         interval: Duration,
+        cycle: u64,
     ) -> impl Future<Output = Result<UncoreCounts, String>> + Send;
 }
 
@@ -522,6 +524,7 @@ pub(crate) async fn run_configurable_collector<C: ConfigurableCollector>(
     loop {
         let started_at = SystemTime::now();
         let duration = sample::until_next_boundary(started_at, interval);
+        let cycle = sample::cycle_index(started_at + duration, interval);
         let sample = tokio::select! {
             biased;
             request = requests.next() => {
@@ -538,7 +541,7 @@ pub(crate) async fn run_configurable_collector<C: ConfigurableCollector>(
                 let _ = ack.send(result);
                 continue;
             }
-            sample = sample_configurable(&mut collector, duration) => sample,
+            sample = sample_configurable(&mut collector, duration, cycle) => sample,
         };
 
         match sample {
@@ -562,9 +565,10 @@ pub(crate) async fn run_configurable_collector<C: ConfigurableCollector>(
 async fn sample_configurable<C: ConfigurableCollector>(
     collector: &mut C,
     interval: Duration,
+    cycle: u64,
 ) -> Result<MetricUpdate, String> {
     if collector.has_config() {
-        let counts = collector.sample_config(interval).await?;
+        let counts = collector.sample_config(interval, cycle).await?;
         Ok(MetricUpdate::Uncore(Box::new(counts)))
     } else {
         collector.sample_update(interval).await

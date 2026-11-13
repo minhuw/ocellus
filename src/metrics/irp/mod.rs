@@ -139,9 +139,13 @@ impl ConfigurableCollector for IrpCollector {
         }
     }
 
-    async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+    async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
         match self {
-            Self::Skx(collector) => collector.sample_config(interval).await,
+            Self::Skx(collector) => collector.sample_config(interval, cycle).await,
             collector => Err(format!(
                 "PMU configs are not supported on {}",
                 collector.architecture()

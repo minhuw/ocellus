@@ -118,9 +118,13 @@ impl HsxHaCollector {
         Ok(())
     }
 
-    /// Samples the set config for `interval`. Its counts are cumulative since
-    /// the config was set.
-    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
         let accumulator = self
             .config
             .as_mut()
@@ -132,7 +136,7 @@ impl HsxHaCollector {
             .collect::<Vec<_>>();
 
         HA_CONFIG_BOX
-            .sample_config(&units, accumulator, interval)
+            .sample_config(&units, accumulator, interval, cycle)
             .await
     }
 }
@@ -612,7 +616,7 @@ mod tests {
     fn programs_three_counters_on_unit_1() {
         let program = snoop_program();
         let ids = [(0, 0), (0, 1), (1, 0), (1, 1)];
-        let slices = hsx::config_schedule(&program, Duration::from_secs(1));
+        let slices = hsx::config_schedule(&program, Duration::from_secs(1), 0);
 
         assert_eq!(
             hsx::slice_units(&ids, &program, &slices[0]).unwrap(),
@@ -735,7 +739,7 @@ mod tests {
         collector.set_config(Some(config(snoop_program()))).unwrap();
         for factor in [1, 2] {
             let counts = runtime
-                .block_on(collector.sample_config(Duration::from_millis(1)))
+                .block_on(collector.sample_config(Duration::from_millis(1), 0))
                 .unwrap();
             assert_eq!(
                 count_values(&counts),
@@ -765,7 +769,7 @@ mod tests {
         let restarted = collector.config.as_ref().unwrap().counts();
         assert!(count_values(&restarted).iter().all(|count| count.3 == 0));
         let counts = runtime
-            .block_on(collector.sample_config(Duration::from_millis(1)))
+            .block_on(collector.sample_config(Duration::from_millis(1), 0))
             .unwrap();
         assert_eq!(count_values(&counts)[0].3, 7);
 

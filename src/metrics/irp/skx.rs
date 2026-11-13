@@ -268,9 +268,13 @@ impl SkxIrpCollector {
         Ok(())
     }
 
-    /// Samples the set config for `interval`. Its counts are cumulative since
-    /// the config was set.
-    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
         if interval.is_zero() {
             return Err("IRP measure interval must be non-zero".to_string());
         }
@@ -280,7 +284,7 @@ impl SkxIrpCollector {
             .ok_or_else(|| "IRP has no PMU config to sample".to_string())?;
         let program = accumulator.config().program.clone();
 
-        for slice in config_schedule(&program, interval) {
+        for slice in config_schedule(&program, interval, cycle) {
             let units = config_targets(&program, &slice)
                 .into_iter()
                 .map(|target| Ok((config_unit(&self.packages, target)?, target)))
@@ -1080,7 +1084,7 @@ mod tests {
             vec![test_group(0, &[(0, CONTROL), (1, CONTROL)], &[0], &[0, 5])],
         );
         assert_eq!(
-            config_schedule(&fixed.program, interval),
+            config_schedule(&fixed.program, interval, 0),
             vec![slice(1_500, &[0])]
         );
 
@@ -1094,7 +1098,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            config_schedule(&spatial.program, interval),
+            config_schedule(&spatial.program, interval, 0),
             vec![slice(1_500, &[0, 1, 2])]
         );
 
@@ -1105,7 +1109,7 @@ mod tests {
         }
         // At most 100 ms per slice: 5 rounds of the 3 groups.
         assert_eq!(
-            config_schedule(&temporal.program, interval),
+            config_schedule(&temporal.program, interval, 0),
             [0, 1, 2]
                 .repeat(5)
                 .into_iter()
@@ -1322,7 +1326,7 @@ mod tests {
         let mut collector = test_collector();
 
         assert_eq!(
-            runtime.block_on(collector.sample_config(Duration::from_millis(1))),
+            runtime.block_on(collector.sample_config(Duration::from_millis(1), 0)),
             Err("IRP has no PMU config to sample".to_string())
         );
     }

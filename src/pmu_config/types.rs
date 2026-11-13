@@ -39,7 +39,8 @@ pub enum Grouping {
     Fixed,
     /// Groups count at the same time, each on its own disjoint set of units.
     Spatial,
-    /// Groups take turns on every selected box, switching at every sample.
+    /// Groups take turns on every selected box within every sample, the
+    /// first one a group later each sample.
     Temporal,
 }
 

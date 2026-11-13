@@ -368,13 +368,15 @@ impl HsxConfigBox {
     }
 
     /// Samples the config of `accumulator` for `interval` on `units`, each
-    /// with its package and unit id, and returns its counts so far. Units in
-    /// none of the config's groups stay untouched.
+    /// with its package and unit id, and returns its counts so far; `cycle`
+    /// sets the group temporal groups start from. Units in none of the
+    /// config's groups stay untouched.
     pub async fn sample_config(
         self,
         units: &[((u16, u16), &HsxUncoreUnit)],
         accumulator: &mut CountAccumulator,
         interval: Duration,
+        cycle: u64,
     ) -> Result<UncoreCounts, String> {
         if interval.is_zero() {
             return Err(format!(
@@ -386,7 +388,7 @@ impl HsxConfigBox {
         let ids = units.iter().map(|&(id, _)| id).collect::<Vec<_>>();
         let program = accumulator.config().program.clone();
 
-        for slice in config_schedule(&program, interval) {
+        for slice in config_schedule(&program, interval, cycle) {
             let targets = slice_units(&ids, &program, &slice)?;
             for &(unit, group) in &targets {
                 for (offset, value) in self.unit_writes(&program.groups[group])? {
@@ -487,8 +489,13 @@ pub fn unit_map(ids: impl IntoIterator<Item = (u16, u16)>) -> BTreeMap<u16, BTre
 }
 
 /// Fixed and spatial groups count for the whole interval in one slice;
-/// temporal groups take turns in equal slices, in group order every round.
-pub fn config_schedule(program: &ProgrammedBoxType, interval: Duration) -> Vec<ConfigSlice> {
+/// temporal groups take turns in equal slices, every round in group order
+/// from group `cycle` mod their count, wrapping around.
+pub fn config_schedule(
+    program: &ProgrammedBoxType,
+    interval: Duration,
+    cycle: u64,
+) -> Vec<ConfigSlice> {
     let group_count = program.groups.len();
 
     match program.grouping {
@@ -499,12 +506,13 @@ pub fn config_schedule(program: &ProgrammedBoxType, interval: Duration) -> Vec<C
         Grouping::Temporal => {
             let round_count = measurement_round_count(interval, group_count);
             let duration = interval.div_f64((group_count * round_count) as f64);
+            let start = (cycle % group_count as u64) as usize;
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
-                .map(|group| ConfigSlice {
+                .map(|position| ConfigSlice {
                     duration,
-                    groups: vec![group],
+                    groups: vec![(start + position) % group_count],
                 })
                 .collect()
         }
@@ -620,7 +628,7 @@ mod tests {
             Grouping::Fixed,
             vec![config_group(0, general(), units(&[0, 7]))],
         );
-        let slices = config_schedule(&fixed, Duration::from_secs(1));
+        let slices = config_schedule(&fixed, Duration::from_secs(1), 0);
         assert_eq!(
             slices,
             vec![ConfigSlice {
@@ -641,7 +649,7 @@ mod tests {
                 config_group(1, general(), units(&[2])),
             ],
         );
-        let slices = config_schedule(&spatial, Duration::from_secs(1));
+        let slices = config_schedule(&spatial, Duration::from_secs(1), 0);
         assert_eq!(
             slices,
             vec![ConfigSlice {
@@ -662,7 +670,7 @@ mod tests {
                 config_group(1, general(), units(&[5])),
             ],
         );
-        let slices = config_schedule(&temporal, Duration::from_secs(1));
+        let slices = config_schedule(&temporal, Duration::from_secs(1), 0);
         assert_eq!(slices.len(), 10);
         for (position, slice) in slices.iter().enumerate() {
             assert_eq!(
@@ -678,7 +686,7 @@ mod tests {
             vec![(13, 1)]
         );
         assert_eq!(
-            config_schedule(&temporal, Duration::from_millis(100)),
+            config_schedule(&temporal, Duration::from_millis(100), 0),
             vec![
                 ConfigSlice {
                     duration: Duration::from_millis(50),
@@ -690,6 +698,28 @@ mod tests {
                 },
             ]
         );
+    }
+
+    fn scheduled_slices(
+        program: &ProgrammedBoxType,
+        interval: Duration,
+        cycle: u64,
+    ) -> Vec<crate::metrics::testing::ScheduledSlice> {
+        config_schedule(program, interval, cycle)
+            .into_iter()
+            .map(|slice| (slice.duration, slice.groups))
+            .collect()
+    }
+
+    // The HSX IMC and HA collectors share this schedule.
+    #[test]
+    fn precesses_temporal_config_groups_by_cycle() {
+        crate::metrics::testing::assert_precessing_schedule(BoxType::Imc, scheduled_slices);
+    }
+
+    #[test]
+    fn reads_phase_locked_sources_without_bias_over_a_cycle_of_samples() {
+        crate::metrics::testing::assert_unbiased_by_precession(BoxType::Imc, scheduled_slices);
     }
 
     #[test]

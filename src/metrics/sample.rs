@@ -41,6 +41,18 @@ pub fn until_next_boundary(now: SystemTime, interval: Duration) -> Duration {
     Duration::from_nanos(u64::try_from(boundary - now).expect("intervals fit in u64 nanoseconds"))
 }
 
+/// The index of the sample that ends on `boundary`, a whole multiple of
+/// `interval` since the Unix epoch: which multiple it is. Collectors that
+/// sample to the same boundary get the same index.
+pub fn cycle_index(boundary: SystemTime, interval: Duration) -> u64 {
+    let boundary = boundary
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must be after Unix epoch")
+        .as_nanos();
+
+    u64::try_from(boundary / interval.as_nanos()).expect("cycle indices fit in u64")
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 struct SampleLabels {
     collector: String,
@@ -199,6 +211,45 @@ mod tests {
                 .subsec_nanos(),
             0
         );
+    }
+
+    #[test]
+    fn indexes_samples_by_the_boundary_they_end_on() {
+        let at = |milliseconds: u64| UNIX_EPOCH + Duration::from_millis(milliseconds);
+        let cases = [
+            (at(12_000), Duration::from_secs(1), 12),
+            (at(1_763_000_004_000), Duration::from_secs(1), 1_763_000_004),
+            (at(1_250), Duration::from_millis(250), 5),
+            (at(1_763_000_004_000), Duration::from_secs(2), 881_500_002),
+        ];
+
+        for (boundary, interval, expected) in cases {
+            assert_eq!(cycle_index(boundary, interval), expected, "{boundary:?}");
+        }
+    }
+
+    #[test]
+    fn gives_collectors_that_sample_to_one_boundary_the_same_index() {
+        let at = |milliseconds: u64| UNIX_EPOCH + Duration::from_millis(milliseconds);
+        // As the collector loop computes it from when a sample starts.
+        let cycle = |started_at, interval| {
+            cycle_index(
+                started_at + until_next_boundary(started_at, interval),
+                interval,
+            )
+        };
+        let cases = [
+            (Duration::from_secs(1), [10_501, 10_900, 11_003, 11_499], 12),
+            (Duration::from_millis(250), [1_130, 1_200, 1_250, 1_374], 6),
+        ];
+
+        for (interval, starts, expected) in cases {
+            for start in starts {
+                assert_eq!(cycle(at(start), interval), expected, "{start} ms");
+            }
+        }
+        let started_at = at(1_763_000_003_501) + Duration::from_nanos(7);
+        assert_eq!(cycle(started_at, Duration::from_secs(1)), 1_763_000_005);
     }
 
     #[test]

@@ -144,9 +144,13 @@ impl HsxImcCollector {
         Ok(())
     }
 
-    /// Samples the set config for `interval`. Its counts are cumulative since
-    /// the config was set.
-    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
         let accumulator = self
             .config
             .as_mut()
@@ -158,7 +162,7 @@ impl HsxImcCollector {
             .collect::<Vec<_>>();
 
         IMC_CONFIG_BOX
-            .sample_config(&units, accumulator, interval)
+            .sample_config(&units, accumulator, interval, cycle)
             .await
     }
 }
@@ -823,7 +827,7 @@ mod tests {
             )],
         );
         let ids = [(0, 0), (0, 3), (1, 0), (1, 1), (1, 3)];
-        let slices = hsx::config_schedule(&program, Duration::from_secs(1));
+        let slices = hsx::config_schedule(&program, Duration::from_secs(1), 0);
 
         assert_eq!(
             hsx::slice_units(&ids, &program, &slices[0]).unwrap(),
@@ -983,7 +987,7 @@ mod tests {
 
         for (cas, dclk) in [(5, 1_000), (10, 2_000)] {
             let counts = runtime
-                .block_on(collector.sample_config(Duration::from_millis(1)))
+                .block_on(collector.sample_config(Duration::from_millis(1), 0))
                 .unwrap();
             assert_eq!(
                 count_values(&counts),
@@ -1018,7 +1022,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let sample = |collector: &mut HsxImcCollector| {
             runtime
-                .block_on(collector.sample_config(Duration::from_millis(1)))
+                .block_on(collector.sample_config(Duration::from_millis(1), 0))
                 .unwrap()
         };
         let cas = |counts: &UncoreCounts| count_values(counts)[0].3;
@@ -1052,7 +1056,7 @@ mod tests {
         collector.set_config(None).unwrap();
         assert!(!collector.has_config());
         assert_eq!(
-            runtime.block_on(collector.sample_config(Duration::from_millis(1))),
+            runtime.block_on(collector.sample_config(Duration::from_millis(1), 0)),
             Err("no PMU config is set for HSX IMC".to_string())
         );
     }

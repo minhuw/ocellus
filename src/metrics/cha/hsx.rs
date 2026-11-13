@@ -615,9 +615,13 @@ impl HsxChaCollector {
         Ok(())
     }
 
-    /// Samples the set config for `interval`. Its counts are cumulative since
-    /// the config was set.
-    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
         let accumulator = self
             .config
             .as_mut()
@@ -627,7 +631,7 @@ impl HsxChaCollector {
         }
         let program = accumulator.config().program.clone();
 
-        for slice in cbo_config_schedule(&program, interval) {
+        for slice in cbo_config_schedule(&program, interval, cycle) {
             let units = cbo_config_units(&self.packages, &program, &slice)?;
             for unit in &units {
                 unit.cbo.write(&cbo_config_unit_writes(
@@ -1893,8 +1897,13 @@ fn cbo_config_filters(group: &ProgrammedGroup) -> Result<ChaFilters, String> {
 }
 
 /// Fixed and spatial groups count for the whole interval. Temporal groups
-/// take turns in index order, one slice each per round.
-fn cbo_config_schedule(program: &ProgrammedBoxType, interval: Duration) -> Vec<CboConfigSlice> {
+/// take turns, one slice each per round, in index order from group `cycle`
+/// mod their count, wrapping around.
+fn cbo_config_schedule(
+    program: &ProgrammedBoxType,
+    interval: Duration,
+    cycle: u64,
+) -> Vec<CboConfigSlice> {
     let group_count = program.groups.len();
 
     match program.grouping {
@@ -1905,12 +1914,13 @@ fn cbo_config_schedule(program: &ProgrammedBoxType, interval: Duration) -> Vec<C
         Grouping::Temporal => {
             let round_count = measurement_round_count(interval, group_count);
             let duration = interval.div_f64((round_count * group_count) as f64);
+            let start = (cycle % group_count as u64) as usize;
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
-                .map(|group| CboConfigSlice {
+                .map(|position| CboConfigSlice {
                     duration,
-                    groups: vec![group],
+                    groups: vec![(start + position) % group_count],
                 })
                 .collect()
         }
@@ -2614,19 +2624,19 @@ mod tests {
         );
 
         assert_eq!(
-            cbo_config_schedule(&fixed, Duration::from_secs(1)),
+            cbo_config_schedule(&fixed, Duration::from_secs(1), 0),
             vec![slice(1_000, &[0])]
         );
         assert_eq!(
-            cbo_config_schedule(&spatial, Duration::from_secs(1)),
+            cbo_config_schedule(&spatial, Duration::from_secs(1), 0),
             vec![slice(1_000, &[0, 1, 2])]
         );
         assert_eq!(
-            cbo_config_schedule(&temporal, Duration::from_millis(300)),
+            cbo_config_schedule(&temporal, Duration::from_millis(300), 0),
             vec![slice(100, &[0]), slice(100, &[1]), slice(100, &[2])]
         );
         assert_eq!(
-            cbo_config_schedule(&temporal, Duration::from_millis(600)),
+            cbo_config_schedule(&temporal, Duration::from_millis(600), 0),
             vec![
                 slice(100, &[0]),
                 slice(100, &[1]),
@@ -2636,6 +2646,27 @@ mod tests {
                 slice(100, &[2]),
             ]
         );
+    }
+
+    fn scheduled_slices(
+        program: &ProgrammedBoxType,
+        interval: Duration,
+        cycle: u64,
+    ) -> Vec<crate::metrics::testing::ScheduledSlice> {
+        cbo_config_schedule(program, interval, cycle)
+            .into_iter()
+            .map(|slice| (slice.duration, slice.groups))
+            .collect()
+    }
+
+    #[test]
+    fn precesses_temporal_config_groups_by_cycle() {
+        crate::metrics::testing::assert_precessing_schedule(BoxType::Cha, scheduled_slices);
+    }
+
+    #[test]
+    fn reads_phase_locked_sources_without_bias_over_a_cycle_of_samples() {
+        crate::metrics::testing::assert_unbiased_by_precession(BoxType::Cha, scheduled_slices);
     }
 
     #[test]
@@ -2869,7 +2900,7 @@ mod tests {
         );
         let count_one_slice =
             |collector: &mut HsxChaCollector, program: &ProgrammedBoxType, slot: u8| {
-                let slice = cbo_config_schedule(program, Duration::from_secs(1)).remove(0);
+                let slice = cbo_config_schedule(program, Duration::from_secs(1), 0).remove(0);
                 add_cbo_config_slice(
                     collector.config.as_mut().unwrap(),
                     program,
@@ -2931,7 +2962,7 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(
-            runtime.block_on(collector.sample_config(Duration::from_secs(1))),
+            runtime.block_on(collector.sample_config(Duration::from_secs(1), 0)),
             Err("CHA collector has no PMU config to sample".to_string())
         );
     }

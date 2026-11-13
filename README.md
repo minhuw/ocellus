@@ -97,11 +97,11 @@ to within a few milliseconds.
 ## RDT memory bandwidth on Skylake-SP and Cascade Lake
 
 `ocellus_rdt_memory_bandwidth_bytes_per_second` exports resctrl's MBM counts
-unchanged (106,496 B per count on these parts). On a 2-socket Xeon Gold 6230R
+unchanged (106,496 B per count on the host below). On a 2-socket Xeon Gold 6230R
 (Linux 6.8), some runs report phantom bandwidth on many CPUs at once: bursts
 of up to about 360 MB/s per CPU, all counted toward node 0 (package-0 `local`,
 package-1 `remote`), that neither the IMC CAS counters nor the CHA home-request
-counters see. Other runs show none for days. This matches the RMID-dependent
+counters see. Other runs showed none for 40 hours. This matches the RMID-dependent
 MBM inaccuracy Intel documents for these parts (specification update erratum
 SKX99; Cascade Lake RDT reference manual 338822, sections 3.2 and 3.6).
 

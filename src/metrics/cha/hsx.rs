@@ -1647,7 +1647,7 @@ fn counter_control(event: u8, umask: u8, thread_filter: bool) -> u32 {
     pmon::counter_control(event, umask, true) | if thread_filter { CBO_TID_ENABLE_BIT } else { 0 }
 }
 
-const fn hsx_llc_lookup_state_bits(state: ChaCacheState) -> u16 {
+pub(crate) const fn hsx_llc_lookup_state_bits(state: ChaCacheState) -> u16 {
     match state {
         ChaCacheState::I => 0x01,
         ChaCacheState::S => 0x02,

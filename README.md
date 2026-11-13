@@ -52,6 +52,14 @@ curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
 }'
 ```
 
+Haswell-EP and Broadwell-EP take configs for `cha` (the CBo boxes), `imc`
+and `ha` (the home agents). Their TOR events filter by `kind` and `home`
+rather than by source: requests from IO are told apart by thread id, which a
+group sets in `filter0.tid` and which applies only to the events that set
+`"tid_en": true`. Several of these encodings come from Intel sources that
+disagree, so run the checks in `docs/bdx-step0-checks.md` on a new
+Broadwell-EP host before interpreting its counts.
+
 - `PUT /pmu-config` sets the configs of the box types it names and returns
   every other box type to its default groups. Once every affected collector
   has switched it replies `200` with
@@ -71,8 +79,9 @@ A config exports, from its first sample on:
 - `ocellus_uncore_config_id{box_type}` and
   `ocellus_uncore_config_start_timestamp_seconds{box_type}`.
 - `ocellus_uncore_event_info{config_id,box_type,package,group,slot,units,alias,event,umask,...} 1`:
-  what each counter counts, with `filter0`/`filter1` for CHA and
-  `ch_mask`/`fc_mask` for IIO.
+  what each counter counts, with `filter0`/`filter1` for CHA,
+  `ch_mask`/`fc_mask` for IIO, and `tid_en="1"` on Haswell-EP/Broadwell-EP
+  CBo events that set it.
 
 A delta of a box type's counts is valid only between two samples with equal
 `ocellus_uncore_config_id` and equal

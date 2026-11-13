@@ -1,26 +1,25 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
-use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE};
+use crate::metrics::common::BYTES_PER_CACHE_LINE;
 use crate::metrics::uncore::hsx::{
-    self, HsxUncoreScope, HsxUncoreSpec, HsxUncoreUnit, average_u64, events_per_second,
-    scale_to_enabled,
+    self, HsxConfigBox, HsxUncoreScope, HsxUncoreSpec, HsxUncoreUnit, average_u64,
+    events_per_second, measurement_round_count, scale_to_enabled,
 };
+use crate::pmu_config::types::{BoxType, CountAccumulator, PmuConfig, UncoreCounts};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
-const HA_EVENT_GROUPS: [HsxHaEventGroup; 1] = [HsxHaEventGroup {
-    events: [
-        HsxHaEventSpec::new(HsxHaEventKind::LocalRead, 0x01, 0x01),
-        HsxHaEventSpec::new(HsxHaEventKind::RemoteRead, 0x01, 0x02),
-        HsxHaEventSpec::new(HsxHaEventKind::LocalWrite, 0x01, 0x04),
-        HsxHaEventSpec::new(HsxHaEventKind::RemoteWrite, 0x01, 0x08),
-    ],
-}];
+const IMC_CONFIG_BOX: HsxConfigBox = HsxConfigBox {
+    box_type: BoxType::Imc,
+    name: "IMC",
+    unit: "channel",
+    fixed: true,
+};
 
 const IMC_EVENT_GROUPS: [HsxImcEventGroup; 2] = [
     HsxImcEventGroup {
@@ -45,12 +44,6 @@ const IMC_EVENT_GROUPS: [HsxImcEventGroup; 2] = [
 pub struct HsxImcMetricsByScope {
     pub activate_commands_per_second: f64,
     pub frequency_hz: f64,
-    pub ha_local_read_bytes_per_second: f64,
-    pub ha_local_read_ratio: f64,
-    pub ha_local_write_bytes_per_second: f64,
-    pub ha_local_write_ratio: f64,
-    pub ha_remote_read_bytes_per_second: f64,
-    pub ha_remote_write_bytes_per_second: f64,
     pub page_miss_precharge_commands_per_second: f64,
     pub read_cas_commands_per_second: f64,
     pub read_bytes_per_second: f64,
@@ -66,15 +59,9 @@ pub struct HsxImcMetricsByScope {
 impl HsxImcMetricsByScope {
     fn from_measurements(
         scope: HsxUncoreScope,
-        ha_measurements: &BTreeMap<HsxHaEventKind, HsxHaEventMeasurement>,
         imc_measurements: &BTreeMap<HsxImcEventKind, HsxImcEventMeasurement>,
     ) -> Result<Self, String> {
         let activate = required_measurement(imc_measurements, HsxImcEventKind::Activate)?;
-        let ha_local_read = required_ha_measurement(ha_measurements, HsxHaEventKind::LocalRead)?;
-        let ha_remote_read = required_ha_measurement(ha_measurements, HsxHaEventKind::RemoteRead)?;
-        let ha_local_write = required_ha_measurement(ha_measurements, HsxHaEventKind::LocalWrite)?;
-        let ha_remote_write =
-            required_ha_measurement(ha_measurements, HsxHaEventKind::RemoteWrite)?;
         let page_miss_precharge =
             required_measurement(imc_measurements, HsxImcEventKind::PageMissPrecharge)?;
         let read_cas = required_measurement(imc_measurements, HsxImcEventKind::ReadCas)?;
@@ -82,18 +69,10 @@ impl HsxImcMetricsByScope {
         let write_cas = required_measurement(imc_measurements, HsxImcEventKind::WriteCas)?;
         let write_queue = required_measurement(imc_measurements, HsxImcEventKind::WpqNonEmpty)?;
         let write_queue_full = required_measurement(imc_measurements, HsxImcEventKind::WpqFull)?;
-        let ha_read_count = scaled_ha_count(ha_local_read) + scaled_ha_count(ha_remote_read);
-        let ha_write_count = scaled_ha_count(ha_local_write) + scaled_ha_count(ha_remote_write);
 
         Ok(Self {
             activate_commands_per_second: event_rate(activate),
             frequency_hz: frequency_hz(read_cas),
-            ha_local_read_bytes_per_second: ha_bytes_per_second(ha_local_read),
-            ha_local_read_ratio: hsx::ratio(scaled_ha_count(ha_local_read), ha_read_count),
-            ha_local_write_bytes_per_second: ha_bytes_per_second(ha_local_write),
-            ha_local_write_ratio: hsx::ratio(scaled_ha_count(ha_local_write), ha_write_count),
-            ha_remote_read_bytes_per_second: ha_bytes_per_second(ha_remote_read),
-            ha_remote_write_bytes_per_second: ha_bytes_per_second(ha_remote_write),
             page_miss_precharge_commands_per_second: event_rate(page_miss_precharge),
             read_cas_commands_per_second: event_rate(read_cas),
             read_bytes_per_second: bytes_per_second(read_cas),
@@ -114,10 +93,6 @@ pub struct HsxImcMetrics {
 
 impl HsxImcMetrics {
     fn from_measurements(
-        mut ha_measurements: BTreeMap<
-            HsxUncoreScope,
-            BTreeMap<HsxHaEventKind, HsxHaEventMeasurement>,
-        >,
         imc_measurements: BTreeMap<
             HsxUncoreScope,
             BTreeMap<HsxImcEventKind, HsxImcEventMeasurement>,
@@ -126,12 +101,8 @@ impl HsxImcMetrics {
         let mut scopes = Vec::with_capacity(imc_measurements.len());
 
         for (scope, scope_measurements) in imc_measurements {
-            let ha_scope_measurements = ha_measurements
-                .remove(&scope)
-                .ok_or_else(|| format!("HSX HA measurements for {scope:?} are missing"))?;
             scopes.push(HsxImcMetricsByScope::from_measurements(
                 scope,
-                &ha_scope_measurements,
                 &scope_measurements,
             )?);
         }
@@ -143,8 +114,53 @@ impl HsxImcMetrics {
 #[derive(Debug)]
 pub struct HsxImcCollector {
     channels: Vec<HsxImcChannel>,
-    ha_units: Vec<HsxHaUnit>,
+    config: Option<CountAccumulator>,
     next_group: usize,
+}
+
+impl HsxImcCollector {
+    /// The IMC channels of each package that PMU configs can program.
+    /// Unit id: the channel's index in the model's IMC channel table, 0..=7 from D20:F0 to D24:F1.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        hsx::unit_map(self.channels.iter().map(HsxImcChannel::config_unit))
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        // The default sample resets every channel, which clears its controls,
+        // and programs its group and DCLK, on every slice.
+        let Some(config) = config else {
+            self.config = None;
+            return Ok(());
+        };
+        IMC_CONFIG_BOX.check_config(&config.program, &self.config_units())?;
+        self.config = Some(CountAccumulator::new(config));
+
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`. Its counts are cumulative since
+    /// the config was set.
+    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "no PMU config is set for HSX IMC".to_string())?;
+        let units = self
+            .channels
+            .iter()
+            .map(|channel| (channel.config_unit(), &channel.unit))
+            .collect::<Vec<_>>();
+
+        IMC_CONFIG_BOX
+            .sample_config(&units, accumulator, interval)
+            .await
+    }
 }
 
 impl HsxImcCollector {
@@ -152,7 +168,7 @@ impl HsxImcCollector {
         let model = architecture.intel_server_model();
         Ok(Self {
             channels: discover_channels(model)?,
-            ha_units: discover_ha_units(model)?,
+            config: None,
             next_group: 0,
         })
     }
@@ -162,64 +178,38 @@ impl HsxImcCollector {
             return Err("HSX IMC measure interval must be non-zero".to_string());
         }
 
-        let mut ha_measurements = HsxHaMeasurementAccumulator::new();
         let mut imc_measurements = HsxImcMeasurementAccumulator::new();
 
         for slice in self.schedule(interval) {
-            match slice.group {
-                HsxMeasurementGroup::Ha(group) => {
-                    program_ha_units(&self.ha_units, group)?;
+            program_channels(&self.channels, slice.group)?;
 
-                    let started_at = Instant::now();
-                    unfreeze_ha_units(&self.ha_units)?;
-                    tokio::time::sleep(slice.duration).await;
-                    freeze_ha_units(&self.ha_units)?;
+            let started_at = Instant::now();
+            unfreeze_channels(&self.channels)?;
+            tokio::time::sleep(slice.duration).await;
+            freeze_channels(&self.channels)?;
 
-                    read_ha_units(
-                        &self.ha_units,
-                        HsxHaMeasurement {
-                            enabled: interval,
-                            group,
-                            running: started_at.elapsed(),
-                        },
-                        &mut ha_measurements,
-                    )?;
-                }
-                HsxMeasurementGroup::Imc(group) => {
-                    program_channels(&self.channels, group)?;
-
-                    let started_at = Instant::now();
-                    unfreeze_channels(&self.channels)?;
-                    tokio::time::sleep(slice.duration).await;
-                    freeze_channels(&self.channels)?;
-
-                    read_channels(
-                        &self.channels,
-                        HsxImcMeasurement {
-                            enabled: interval,
-                            group,
-                            running: started_at.elapsed(),
-                        },
-                        &mut imc_measurements,
-                    )?;
-                }
-            }
+            read_channels(
+                &self.channels,
+                HsxImcMeasurement {
+                    enabled: interval,
+                    group: slice.group,
+                    running: started_at.elapsed(),
+                },
+                &mut imc_measurements,
+            )?;
         }
 
         self.rotate_group();
 
-        HsxImcMetrics::from_measurements(
-            ha_measurements.into_measurements(),
-            imc_measurements.into_measurements(),
-        )
+        HsxImcMetrics::from_measurements(imc_measurements.into_measurements())
     }
 
     fn rotate_group(&mut self) {
-        self.next_group = (self.next_group + 1) % measurement_groups().len();
+        self.next_group = (self.next_group + 1) % IMC_EVENT_GROUPS.len();
     }
 
     fn schedule(&self, interval: Duration) -> Vec<HsxImcMeasurementSlice> {
-        let groups = measurement_groups();
+        let groups = IMC_EVENT_GROUPS;
         let group_count = groups.len();
         let round_count = measurement_round_count(interval, group_count);
         let slice_count = group_count * round_count;
@@ -244,12 +234,6 @@ impl HsxImcCollector {
 pub struct HsxImcPrometheusMetrics {
     activate_commands_per_second: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
     frequency_hz: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
-    ha_local_read_bytes_per_second: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
-    ha_local_read_ratio: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
-    ha_local_write_bytes_per_second: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
-    ha_local_write_ratio: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
-    ha_remote_read_bytes_per_second: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
-    ha_remote_write_bytes_per_second: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
     page_miss_precharge_commands_per_second: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
     read_cas_commands_per_second: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
     read_bytes_per_second: Family<HsxImcScopeLabels, Gauge<f64, AtomicU64>>,
@@ -266,16 +250,6 @@ impl HsxImcPrometheusMetrics {
             activate_commands_per_second:
                 Family::<HsxImcScopeLabels, Gauge<f64, AtomicU64>>::default(),
             frequency_hz: Family::<HsxImcScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            ha_local_read_bytes_per_second:
-                Family::<HsxImcScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            ha_local_read_ratio: Family::<HsxImcScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            ha_local_write_bytes_per_second:
-                Family::<HsxImcScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            ha_local_write_ratio: Family::<HsxImcScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            ha_remote_read_bytes_per_second:
-                Family::<HsxImcScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            ha_remote_write_bytes_per_second:
-                Family::<HsxImcScopeLabels, Gauge<f64, AtomicU64>>::default(),
             page_miss_precharge_commands_per_second: Family::<
                 HsxImcScopeLabels,
                 Gauge<f64, AtomicU64>,
@@ -341,37 +315,6 @@ impl HsxImcPrometheusMetrics {
             "Haswell IMC write pending queue non-empty cycle ratio",
             metrics.wpq_non_empty_ratio.clone(),
         );
-        registry.register(
-            "ocellus_haswell_ha_local_read_bytes_per_second",
-            "Interval-derived Haswell HA local read request bandwidth in bytes per second",
-            metrics.ha_local_read_bytes_per_second.clone(),
-        );
-        registry.register(
-            "ocellus_haswell_ha_local_read_ratio",
-            "Haswell HA local read request ratio",
-            metrics.ha_local_read_ratio.clone(),
-        );
-        registry.register(
-            "ocellus_haswell_ha_local_write_bytes_per_second",
-            "Interval-derived Haswell HA local write request bandwidth in bytes per second",
-            metrics.ha_local_write_bytes_per_second.clone(),
-        );
-        registry.register(
-            "ocellus_haswell_ha_local_write_ratio",
-            "Haswell HA local write request ratio",
-            metrics.ha_local_write_ratio.clone(),
-        );
-        registry.register(
-            "ocellus_haswell_ha_remote_read_bytes_per_second",
-            "Interval-derived Haswell HA remote read request bandwidth in bytes per second",
-            metrics.ha_remote_read_bytes_per_second.clone(),
-        );
-        registry.register(
-            "ocellus_haswell_ha_remote_write_bytes_per_second",
-            "Interval-derived Haswell HA remote write request bandwidth in bytes per second",
-            metrics.ha_remote_write_bytes_per_second.clone(),
-        );
-
         metrics
     }
 
@@ -385,24 +328,6 @@ impl HsxImcPrometheusMetrics {
             self.frequency_hz
                 .get_or_create(&labels)
                 .set(scope.frequency_hz);
-            self.ha_local_read_bytes_per_second
-                .get_or_create(&labels)
-                .set(scope.ha_local_read_bytes_per_second);
-            self.ha_local_read_ratio
-                .get_or_create(&labels)
-                .set(scope.ha_local_read_ratio);
-            self.ha_local_write_bytes_per_second
-                .get_or_create(&labels)
-                .set(scope.ha_local_write_bytes_per_second);
-            self.ha_local_write_ratio
-                .get_or_create(&labels)
-                .set(scope.ha_local_write_ratio);
-            self.ha_remote_read_bytes_per_second
-                .get_or_create(&labels)
-                .set(scope.ha_remote_read_bytes_per_second);
-            self.ha_remote_write_bytes_per_second
-                .get_or_create(&labels)
-                .set(scope.ha_remote_write_bytes_per_second);
             self.page_miss_precharge_commands_per_second
                 .get_or_create(&labels)
                 .set(scope.page_miss_precharge_commands_per_second);
@@ -446,16 +371,29 @@ impl HsxImcScopeLabels {
 
 #[derive(Debug)]
 struct HsxImcChannel {
+    /// Index in the model's IMC channel table, kept when other channels
+    /// are absent.
+    id: u16,
     scope: HsxUncoreScope,
     unit: HsxUncoreUnit,
 }
 
 impl HsxImcChannel {
-    fn new(location: metal::pci::PciLocation, scope: HsxUncoreScope) -> Result<Self, String> {
+    fn new(
+        id: u16,
+        location: metal::pci::PciLocation,
+        scope: HsxUncoreScope,
+    ) -> Result<Self, String> {
         Ok(Self {
+            id,
             scope,
             unit: HsxUncoreUnit::new(location)?,
         })
+    }
+
+    /// The channel's package and unit id in PMU configs.
+    fn config_unit(&self) -> (u16, u16) {
+        (self.scope.package_id as u16, self.id)
     }
 
     fn program(&self, group: HsxImcEventGroup) -> Result<(), String> {
@@ -490,138 +428,9 @@ struct HsxImcChannelReading {
     ticks: u64,
 }
 
-#[derive(Debug)]
-struct HsxHaUnit {
-    scope: HsxUncoreScope,
-    unit: HsxUncoreUnit,
-}
-
-impl HsxHaUnit {
-    fn new(location: metal::pci::PciLocation, scope: HsxUncoreScope) -> Result<Self, String> {
-        Ok(Self {
-            scope,
-            unit: HsxUncoreUnit::new(location)?,
-        })
-    }
-
-    fn program(&self, group: HsxHaEventGroup) -> Result<(), String> {
-        for (counter_index, event) in group.events.into_iter().enumerate() {
-            self.unit
-                .program_counter(counter_index, event.event, event.umask)?;
-        }
-
-        Ok(())
-    }
-
-    fn read(&self) -> Result<HsxHaUnitReading, String> {
-        Ok(HsxHaUnitReading {
-            counters: [
-                self.unit.read_counter(0)?,
-                self.unit.read_counter(1)?,
-                self.unit.read_counter(2)?,
-                self.unit.read_counter(3)?,
-            ],
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct HsxHaUnitReading {
-    counters: [u64; hsx::COUNTER_COUNT],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct HsxHaEventGroup {
-    events: [HsxHaEventSpec; hsx::COUNTER_COUNT],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct HsxHaEventSpec {
-    event: u8,
-    kind: HsxHaEventKind,
-    umask: u8,
-}
-
-impl HsxHaEventSpec {
-    const fn new(kind: HsxHaEventKind, event: u8, umask: u8) -> Self {
-        Self { event, kind, umask }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum HsxHaEventKind {
-    LocalRead,
-    LocalWrite,
-    RemoteRead,
-    RemoteWrite,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct HsxHaEventMeasurement {
-    enabled: Duration,
-    running: Duration,
-    value: u64,
-}
-
-impl HsxHaEventMeasurement {
-    fn add(&mut self, value: u64, running: Duration) {
-        self.running += running;
-        self.value += value;
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct HsxHaMeasurement {
-    enabled: Duration,
-    group: HsxHaEventGroup,
-    running: Duration,
-}
-
-#[derive(Debug, Default)]
-struct HsxHaMeasurementAccumulator {
-    measurements: BTreeMap<HsxUncoreScope, BTreeMap<HsxHaEventKind, HsxHaEventMeasurement>>,
-}
-
-impl HsxHaMeasurementAccumulator {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn add(
-        &mut self,
-        scope: HsxUncoreScope,
-        kind: HsxHaEventKind,
-        value: u64,
-        measurement: HsxHaMeasurement,
-    ) {
-        self.measurements
-            .entry(scope)
-            .or_default()
-            .entry(kind)
-            .and_modify(|event_measurement| event_measurement.add(value, measurement.running))
-            .or_insert(HsxHaEventMeasurement {
-                enabled: measurement.enabled,
-                running: measurement.running,
-                value,
-            });
-    }
-
-    fn into_measurements(
-        self,
-    ) -> BTreeMap<HsxUncoreScope, BTreeMap<HsxHaEventKind, HsxHaEventMeasurement>> {
-        self.measurements
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct HsxImcEventGroup {
     events: [HsxImcEventSpec; hsx::COUNTER_COUNT],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HsxMeasurementGroup {
-    Ha(HsxHaEventGroup),
-    Imc(HsxImcEventGroup),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -715,7 +524,7 @@ struct HsxImcMeasurement {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct HsxImcMeasurementSlice {
     duration: Duration,
-    group: HsxMeasurementGroup,
+    group: HsxImcEventGroup,
 }
 
 #[derive(Debug, Default)]
@@ -765,12 +574,10 @@ fn discover_channels(model: IntelServerCpuModel) -> Result<Vec<HsxImcChannel>, S
     let mut channels = Vec::new();
 
     for bus_scope in bus_scopes {
-        for channel in spec.imc_channels {
-            if let Ok(location) =
-                metal::pci::find_intel_device_matching_spec_on_bus(*channel, bus_scope.bus)
-            {
-                channels.push(HsxImcChannel::new(location, bus_scope.scope)?);
-            }
+        for (id, location) in hsx::present_units(spec.imc_channels, |channel| {
+            metal::pci::find_intel_device_matching_spec_on_bus(channel, bus_scope.bus).ok()
+        }) {
+            channels.push(HsxImcChannel::new(id, location, bus_scope.scope)?);
         }
     }
 
@@ -781,41 +588,6 @@ fn discover_channels(model: IntelServerCpuModel) -> Result<Vec<HsxImcChannel>, S
     Ok(channels)
 }
 
-fn discover_ha_units(model: IntelServerCpuModel) -> Result<Vec<HsxHaUnit>, String> {
-    let spec = HsxUncoreSpec::from_model(model)
-        .ok_or_else(|| format!("HSX HA collection is not supported for {model:?}"))?;
-    let bus_scopes = hsx::bus_scopes(spec)?;
-    let mut units = Vec::with_capacity(bus_scopes.len() * metal::arch::hsx::pci::HA_UNITS.len());
-
-    for bus_scope in bus_scopes {
-        for (device, function) in metal::arch::hsx::pci::HA_UNITS {
-            if let Ok(location) =
-                metal::pci::find_intel_device_at_address_on_bus(device, function, bus_scope.bus)
-            {
-                units.push(HsxHaUnit::new(location, bus_scope.scope)?);
-            }
-        }
-    }
-
-    if units.is_empty() {
-        return Err(format!("failed to discover any {} HA units", spec.name));
-    }
-
-    Ok(units)
-}
-
-fn program_ha_units(units: &[HsxHaUnit], group: HsxHaEventGroup) -> Result<(), String> {
-    for unit in units {
-        unit.unit.freeze_and_reset()?;
-    }
-
-    for unit in units {
-        unit.program(group)?;
-    }
-
-    Ok(())
-}
-
 fn program_channels(channels: &[HsxImcChannel], group: HsxImcEventGroup) -> Result<(), String> {
     for channel in channels {
         channel.unit.freeze_and_reset()?;
@@ -823,32 +595,6 @@ fn program_channels(channels: &[HsxImcChannel], group: HsxImcEventGroup) -> Resu
 
     for channel in channels {
         channel.program(group)?;
-    }
-
-    Ok(())
-}
-
-fn read_ha_units(
-    units: &[HsxHaUnit],
-    measurement: HsxHaMeasurement,
-    measurements: &mut HsxHaMeasurementAccumulator,
-) -> Result<(), String> {
-    let mut readings = BTreeMap::<HsxUncoreScope, Vec<HsxHaUnitReading>>::new();
-
-    for unit in units {
-        readings.entry(unit.scope).or_default().push(unit.read()?);
-    }
-
-    for (scope, unit_readings) in readings {
-        for counter_index in 0..measurement.group.events.len() {
-            let event = measurement.group.events[counter_index];
-            let value = unit_readings
-                .iter()
-                .map(|reading| reading.counters[counter_index])
-                .sum();
-
-            measurements.add(scope, event.kind, value, measurement);
-        }
     }
 
     Ok(())
@@ -889,25 +635,9 @@ fn read_channels(
     Ok(())
 }
 
-fn freeze_ha_units(units: &[HsxHaUnit]) -> Result<(), String> {
-    for unit in units {
-        unit.unit.freeze()?;
-    }
-
-    Ok(())
-}
-
 fn freeze_channels(channels: &[HsxImcChannel]) -> Result<(), String> {
     for channel in channels {
         channel.unit.freeze()?;
-    }
-
-    Ok(())
-}
-
-fn unfreeze_ha_units(units: &[HsxHaUnit]) -> Result<(), String> {
-    for unit in units {
-        unit.unit.unfreeze()?;
     }
 
     Ok(())
@@ -921,15 +651,6 @@ fn unfreeze_channels(channels: &[HsxImcChannel]) -> Result<(), String> {
     Ok(())
 }
 
-fn required_ha_measurement(
-    measurements: &BTreeMap<HsxHaEventKind, HsxHaEventMeasurement>,
-    kind: HsxHaEventKind,
-) -> Result<&HsxHaEventMeasurement, String> {
-    measurements
-        .get(&kind)
-        .ok_or_else(|| format!("HSX HA measurement {kind:?} is missing"))
-}
-
 fn required_measurement(
     measurements: &BTreeMap<HsxImcEventKind, HsxImcEventMeasurement>,
     kind: HsxImcEventKind,
@@ -937,10 +658,6 @@ fn required_measurement(
     measurements
         .get(&kind)
         .ok_or_else(|| format!("HSX IMC measurement {kind:?} is missing"))
-}
-
-fn ha_bytes_per_second(measurement: &HsxHaEventMeasurement) -> f64 {
-    events_per_second(scaled_ha_count(measurement), measurement.enabled) * BYTES_PER_CACHE_LINE
 }
 
 fn bytes_per_second(measurement: &HsxImcEventMeasurement) -> f64 {
@@ -955,22 +672,6 @@ fn frequency_hz(measurement: &HsxImcEventMeasurement) -> f64 {
     hsx::frequency_hz(measurement.ticks, measurement.running)
 }
 
-fn measurement_round_count(interval: Duration, group_count: usize) -> usize {
-    let interval_nanos = interval.as_nanos();
-    let max_round_nanos = DEFAULT_MAX_SLICE.as_nanos() * group_count as u128;
-    let rounds = interval_nanos.div_ceil(max_round_nanos).max(1);
-
-    usize::try_from(rounds).unwrap_or(usize::MAX)
-}
-
-fn measurement_groups() -> Vec<HsxMeasurementGroup> {
-    HA_EVENT_GROUPS
-        .into_iter()
-        .map(HsxMeasurementGroup::Ha)
-        .chain(IMC_EVENT_GROUPS.into_iter().map(HsxMeasurementGroup::Imc))
-        .collect()
-}
-
 fn queue_cycle_ratio(measurement: &HsxImcEventMeasurement) -> f64 {
     hsx::ratio(measurement.value, measurement.ticks)
 }
@@ -979,48 +680,31 @@ fn scaled_count(measurement: &HsxImcEventMeasurement) -> u64 {
     scale_to_enabled(measurement.value, measurement.enabled, measurement.running)
 }
 
-fn scaled_ha_count(measurement: &HsxHaEventMeasurement) -> u64 {
-    scale_to_enabled(measurement.value, measurement.enabled, measurement.running)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::uncore::hsx::config_fixtures::*;
+    use crate::pmu_config::types::{ChaFilters, CountUnit, CounterSlot, Grouping};
 
     #[test]
     fn computes_hsx_imc_metrics() {
         let scope = test_scope();
-        let metrics = HsxImcMetrics::from_measurements(
-            BTreeMap::from([(
-                scope,
-                BTreeMap::from([
-                    ha_measurement(HsxHaEventKind::LocalRead, 100, 100),
-                    ha_measurement(HsxHaEventKind::RemoteRead, 300, 100),
-                    ha_measurement(HsxHaEventKind::LocalWrite, 200, 100),
-                    ha_measurement(HsxHaEventKind::RemoteWrite, 200, 100),
-                ]),
-            )]),
-            BTreeMap::from([(
-                scope,
-                BTreeMap::from([
-                    measurement(HsxImcEventKind::Activate, 1_000, 1_000, 100),
-                    measurement(HsxImcEventKind::PageMissPrecharge, 700, 1_000, 100),
-                    measurement(HsxImcEventKind::ReadCas, 2_000, 1_000, 100),
-                    measurement(HsxImcEventKind::WriteCas, 3_000, 1_000, 100),
-                    measurement(HsxImcEventKind::RpqNonEmpty, 400, 1_000, 100),
-                    measurement(HsxImcEventKind::WpqNonEmpty, 600, 1_000, 100),
-                    measurement(HsxImcEventKind::WpqFull, 20, 1_000, 100),
-                ]),
-            )]),
-        )
+        let metrics = HsxImcMetrics::from_measurements(BTreeMap::from([(
+            scope,
+            BTreeMap::from([
+                measurement(HsxImcEventKind::Activate, 1_000, 1_000, 100),
+                measurement(HsxImcEventKind::PageMissPrecharge, 700, 1_000, 100),
+                measurement(HsxImcEventKind::ReadCas, 2_000, 1_000, 100),
+                measurement(HsxImcEventKind::WriteCas, 3_000, 1_000, 100),
+                measurement(HsxImcEventKind::RpqNonEmpty, 400, 1_000, 100),
+                measurement(HsxImcEventKind::WpqNonEmpty, 600, 1_000, 100),
+                measurement(HsxImcEventKind::WpqFull, 20, 1_000, 100),
+            ]),
+        )]))
         .unwrap();
 
         let imc = metrics.scopes[0];
 
-        assert_eq!(imc.ha_local_read_bytes_per_second, 64_000.0);
-        assert_eq!(imc.ha_remote_read_bytes_per_second, 192_000.0);
-        assert_eq!(imc.ha_local_read_ratio, 0.25);
-        assert_eq!(imc.ha_local_write_ratio, 0.5);
         assert_eq!(imc.activate_commands_per_second, 10_000.0);
         assert_eq!(imc.page_miss_precharge_commands_per_second, 7_000.0);
         assert_eq!(imc.read_bytes_per_second, 1_280_000.0);
@@ -1065,16 +749,25 @@ mod tests {
         let collector = test_collector();
         let slices = collector.schedule(Duration::from_millis(100));
 
-        assert_eq!(slices.len(), 3);
-        assert_eq!(slices[0].group, HsxMeasurementGroup::Ha(HA_EVENT_GROUPS[0]));
-        assert_eq!(
-            slices[1].group,
-            HsxMeasurementGroup::Imc(IMC_EVENT_GROUPS[0])
+        assert_eq!(slices.len(), 2);
+        assert_eq!(slices[0].group, IMC_EVENT_GROUPS[0]);
+        assert_eq!(slices[1].group, IMC_EVENT_GROUPS[1]);
+        assert!(
+            slices
+                .iter()
+                .all(|slice| slice.duration == Duration::from_millis(50))
         );
-        assert_eq!(
-            slices[2].group,
-            HsxMeasurementGroup::Imc(IMC_EVENT_GROUPS[1])
-        );
+    }
+
+    #[test]
+    fn gives_each_group_half_of_a_long_interval() {
+        let slices = test_collector().schedule(Duration::from_secs(1));
+
+        assert_eq!(slices.len(), 10);
+        for (position, slice) in slices.iter().enumerate() {
+            assert_eq!(slice.duration, Duration::from_millis(100));
+            assert_eq!(slice.group, IMC_EVENT_GROUPS[position % 2]);
+        }
     }
 
     #[test]
@@ -1083,21 +776,13 @@ mod tests {
 
         assert_eq!(
             slice_groups(collector.schedule(Duration::from_millis(100))),
-            vec![
-                HsxMeasurementGroup::Ha(HA_EVENT_GROUPS[0]),
-                HsxMeasurementGroup::Imc(IMC_EVENT_GROUPS[0]),
-                HsxMeasurementGroup::Imc(IMC_EVENT_GROUPS[1]),
-            ]
+            vec![IMC_EVENT_GROUPS[0], IMC_EVENT_GROUPS[1]]
         );
 
         collector.rotate_group();
         assert_eq!(
             slice_groups(collector.schedule(Duration::from_millis(100))),
-            vec![
-                HsxMeasurementGroup::Imc(IMC_EVENT_GROUPS[0]),
-                HsxMeasurementGroup::Imc(IMC_EVENT_GROUPS[1]),
-                HsxMeasurementGroup::Ha(HA_EVENT_GROUPS[0]),
-            ]
+            vec![IMC_EVENT_GROUPS[1], IMC_EVENT_GROUPS[0]]
         );
     }
 
@@ -1118,29 +803,300 @@ mod tests {
         )
     }
 
-    fn ha_measurement(
-        kind: HsxHaEventKind,
-        value: u64,
-        milliseconds: u64,
-    ) -> (HsxHaEventKind, HsxHaEventMeasurement) {
-        (
-            kind,
-            HsxHaEventMeasurement {
-                enabled: Duration::from_millis(milliseconds),
-                running: Duration::from_millis(milliseconds),
-                value,
-            },
+    fn slice_groups(slices: Vec<HsxImcMeasurementSlice>) -> Vec<HsxImcEventGroup> {
+        slices.into_iter().map(|slice| slice.group).collect()
+    }
+
+    #[test]
+    fn programs_two_general_counters_and_dclk_on_channel_3() {
+        let program = config_program(
+            BoxType::Imc,
+            Grouping::Fixed,
+            vec![config_group(
+                0,
+                vec![
+                    config_counter(CounterSlot::General(0), 0x40_0304),
+                    config_counter(CounterSlot::General(3), 0x40_0c04),
+                    config_counter(CounterSlot::Fixed, 0x40_0000),
+                ],
+                BTreeMap::from([(1, BTreeSet::from([3]))]),
+            )],
+        );
+        let ids = [(0, 0), (0, 3), (1, 0), (1, 1), (1, 3)];
+        let slices = hsx::config_schedule(&program, Duration::from_secs(1));
+
+        assert_eq!(
+            hsx::slice_units(&ids, &program, &slices[0]).unwrap(),
+            vec![(4, 0)]
+        );
+        assert_eq!(
+            IMC_CONFIG_BOX.unit_writes(&program.groups[0]).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0x42_0304),
+                (0xdc, 0),
+                (0xe0, 0),
+                (0xe4, 0x42_0c04),
+                (0xf0, 0x48_0000),
+            ]
+        );
+    }
+
+    #[test]
+    fn clears_dclk_control_of_groups_without_fixed() {
+        let group = config_group(
+            0,
+            vec![config_counter(CounterSlot::General(1), 0x40_0304)],
+            BTreeMap::from([(0, BTreeSet::from([0]))]),
+        );
+
+        assert_eq!(
+            IMC_CONFIG_BOX.unit_writes(&group).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0),
+                (0xdc, 0x42_0304),
+                (0xe0, 0),
+                (0xe4, 0),
+                (0xf0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn numbers_channels_by_their_index_in_the_channel_table() {
+        // D21:F0, the third channel of the table, is absent.
+        let present =
+            hsx::present_units(&metal::arch::hsx::pci::BROADWELL_IMC_CHANNELS, |channel| {
+                (channel.device != 21 || channel.function != 0).then_some(metal::pci::PciLocation {
+                    bus: 0x7f,
+                    device: channel.device,
+                    function: channel.function,
+                    group: 0,
+                })
+            });
+        assert_eq!(
+            present
+                .iter()
+                .map(|(id, location)| (*id, location.device, location.function))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, 20, 0),
+                (1, 20, 1),
+                (3, 21, 1),
+                (4, 23, 0),
+                (5, 23, 1),
+                (6, 24, 0),
+                (7, 24, 1),
+            ]
+        );
+
+        let mut collector = test_collector();
+        collector.channels = present
+            .iter()
+            .map(|&(id, _)| test_channel(1, id, &[0; 0x100]))
+            .collect();
+        assert_eq!(
+            collector.config_units(),
+            BTreeMap::from([(1, BTreeSet::from([0, 1, 3, 4, 5, 6, 7]))])
+        );
+    }
+
+    #[test]
+    fn rejects_configs_imc_channels_cannot_count() {
+        let host = BTreeMap::from([(0, BTreeSet::from([0, 1, 3])), (1, (0..8).collect())]);
+        let valid = || {
+            config_program(
+                BoxType::Imc,
+                Grouping::Fixed,
+                vec![config_group(
+                    0,
+                    vec![
+                        config_counter(CounterSlot::General(3), 0x40_0304),
+                        config_counter(CounterSlot::Fixed, 0x40_0000),
+                    ],
+                    BTreeMap::from([(0, BTreeSet::from([0, 3])), (1, BTreeSet::from([7]))]),
+                )],
+            )
+        };
+        IMC_CONFIG_BOX.check_config(&valid(), &host).unwrap();
+
+        let mut ha = valid();
+        ha.box_type = BoxType::Ha;
+        let mut package = valid();
+        package.groups[0].units.insert(2, BTreeSet::from([0]));
+        let mut channel = valid();
+        channel.groups[0].units.insert(0, BTreeSet::from([2]));
+        let mut slot = valid();
+        slot.groups[0]
+            .counters
+            .push(config_counter(CounterSlot::General(4), 0x40_0304));
+        let mut control = valid();
+        control.groups[0].counters[0].control = 1 << 32;
+        let mut filters = valid();
+        filters.groups[0].filters = Some(ChaFilters {
+            filter0: 0,
+            filter1: 0,
+        });
+
+        for (program, error) in [
+            (ha, "Haswell-EP/Broadwell-EP IMC cannot count a ha config"),
+            (
+                package,
+                "IMC config group 0 runs on package 2, which has no IMC channels on this host",
+            ),
+            (
+                channel,
+                "IMC config group 0 runs on channel 2 of package 0, which this host does not have",
+            ),
+            (
+                slot,
+                "IMC config group 0: Haswell-EP/Broadwell-EP IMC channels have no counter slot 4",
+            ),
+            (
+                control,
+                "IMC config group 0 slot 3 control 0x100000000 does not fit in 32 bits",
+            ),
+            (
+                filters,
+                "IMC config group 0 has filters, which IMC channels do not have",
+            ),
+        ] {
+            assert_eq!(
+                IMC_CONFIG_BOX.check_config(&program, &host),
+                Err(error.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn counts_a_config_on_its_channels_only() {
+        let mut collector = test_collector();
+        collector.channels = vec![
+            test_channel(1, 0, &test_config_space()),
+            test_channel(1, 3, &test_config_space()),
+        ];
+        collector
+            .set_config(Some(config(dclk_and_cas_program())))
+            .unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        for (cas, dclk) in [(5, 1_000), (10, 2_000)] {
+            let counts = runtime
+                .block_on(collector.sample_config(Duration::from_millis(1)))
+                .unwrap();
+            assert_eq!(
+                count_values(&counts),
+                vec![
+                    (1, CountUnit::Box(3), CounterSlot::General(0), cas),
+                    (1, CountUnit::Box(3), CounterSlot::Fixed, dclk),
+                ]
+            );
+            assert!(counts.running[0].seconds >= 0.001);
+        }
+
+        let registers = |channel: &HsxImcChannel| {
+            [0xf4, 0xd8, 0xdc, 0xe0, 0xe4, 0xf0]
+                .map(|offset| channel.unit.read_dword(offset).unwrap())
+        };
+        // Channel 3 ends frozen, with the group's controls; channel 0 is in
+        // no group and keeps what it had.
+        assert_eq!(
+            registers(&collector.channels[1]),
+            [0x3_0100, 0x42_0304, 0, 0, 0, 0x48_0000]
+        );
+        assert_eq!(
+            registers(&collector.channels[0]),
+            [0, 0, 0x40_0001, 0x40_0001, 0x40_0001, 0]
+        );
+    }
+
+    #[test]
+    fn restarts_counts_when_the_config_changes() {
+        let mut collector = test_collector();
+        collector.channels = vec![test_channel(1, 3, &test_config_space())];
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let sample = |collector: &mut HsxImcCollector| {
+            runtime
+                .block_on(collector.sample_config(Duration::from_millis(1)))
+                .unwrap()
+        };
+        let cas = |counts: &UncoreCounts| count_values(counts)[0].3;
+
+        collector
+            .set_config(Some(config(dclk_and_cas_program())))
+            .unwrap();
+        sample(&mut collector);
+        assert_eq!(cas(&sample(&mut collector)), 10);
+
+        // An invalid config leaves the current one and its counts alone.
+        let mut elsewhere = dclk_and_cas_program();
+        elsewhere.groups[0].units = BTreeMap::from([(1, BTreeSet::from([2]))]);
+        assert!(collector.set_config(Some(config(elsewhere))).is_err());
+        assert_eq!(cas(&sample(&mut collector)), 15);
+
+        // Setting a config, even the same one again, restarts its counts.
+        collector
+            .set_config(Some(config(dclk_and_cas_program())))
+            .unwrap();
+        let restarted = collector.config.as_ref().unwrap().counts();
+        assert!(count_values(&restarted).iter().all(|count| count.3 == 0));
+        assert!(
+            restarted
+                .running
+                .iter()
+                .all(|running| running.seconds == 0.0)
+        );
+        assert_eq!(cas(&sample(&mut collector)), 5);
+
+        collector.set_config(None).unwrap();
+        assert!(!collector.has_config());
+        assert_eq!(
+            runtime.block_on(collector.sample_config(Duration::from_millis(1))),
+            Err("no PMU config is set for HSX IMC".to_string())
+        );
+    }
+
+    /// CAS reads on counter 0 and DCLK, on channel 3 of package 1.
+    fn dclk_and_cas_program() -> crate::pmu_config::types::ProgrammedBoxType {
+        config_program(
+            BoxType::Imc,
+            Grouping::Fixed,
+            vec![config_group(
+                0,
+                vec![
+                    config_counter(CounterSlot::General(0), 0x40_0304),
+                    config_counter(CounterSlot::Fixed, 0x40_0000),
+                ],
+                BTreeMap::from([(1, BTreeSet::from([3]))]),
+            )],
         )
     }
 
-    fn slice_groups(slices: Vec<HsxImcMeasurementSlice>) -> Vec<HsxMeasurementGroup> {
-        slices.into_iter().map(|slice| slice.group).collect()
+    /// A channel's config space whose counter 0 holds 5 above bit 48 junk,
+    /// DCLK 1000, and controls 1-3 a stale event.
+    fn test_config_space() -> [u8; 0x100] {
+        let mut config_space = [0_u8; 0x100];
+        config_space[0xa0..0xa8].copy_from_slice(&((0xabcd_u64 << 48) | 5).to_le_bytes());
+        config_space[0xd0..0xd8].copy_from_slice(&1_000_u64.to_le_bytes());
+        for offset in [0xdc, 0xe0, 0xe4] {
+            config_space[offset..offset + 4].copy_from_slice(&0x40_0001_u32.to_le_bytes());
+        }
+        config_space
+    }
+
+    fn test_channel(package_id: u32, id: u16, config_space: &[u8]) -> HsxImcChannel {
+        HsxImcChannel {
+            id,
+            scope: HsxUncoreScope { package_id },
+            unit: HsxUncoreUnit::from_config_space(config_space),
+        }
     }
 
     fn test_collector() -> HsxImcCollector {
         HsxImcCollector {
             channels: Vec::new(),
-            ha_units: Vec::new(),
+            config: None,
             next_group: 0,
         }
     }

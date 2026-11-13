@@ -1,5 +1,6 @@
 pub mod cha;
 pub(crate) mod common;
+pub mod ha;
 pub mod iio;
 pub mod imc;
 mod info;
@@ -93,6 +94,8 @@ pub struct MetricsState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cha: Option<cha::ChaMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub ha: Option<ha::HaMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub iio: Option<iio::IioMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub imc: Option<imc::ImcMetrics>,
@@ -119,6 +122,7 @@ impl MetricsState {
     pub fn clear(&mut self, collector: &str) {
         match collector {
             "cha" => self.cha = None,
+            "ha" => self.ha = None,
             "iio" => self.iio = None,
             "imc" => self.imc = None,
             "interconnect" => self.interconnect = None,
@@ -134,6 +138,7 @@ impl MetricsState {
     pub fn apply(&mut self, update: MetricUpdate) {
         match update {
             MetricUpdate::Cha(cha) => self.cha = Some(*cha),
+            MetricUpdate::Ha(ha) => self.ha = Some(*ha),
             MetricUpdate::Iio(iio) => self.iio = Some(*iio),
             MetricUpdate::Imc(imc) => self.imc = Some(*imc),
             MetricUpdate::Interconnect(interconnect) => self.interconnect = Some(*interconnect),
@@ -162,6 +167,7 @@ impl Default for MetricsState {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
             cha: None,
+            ha: None,
             iio: None,
             imc: None,
             interconnect: None,
@@ -182,6 +188,7 @@ pub struct CollectorMetadata {
     pub cha_multiplex_mode: cha::ChaMultiplexMode,
     pub cha_request_locality: cha::ChaRequestLocality,
     pub cha_supported: bool,
+    pub ha_supported: bool,
     pub iio_supported: bool,
     pub imc_supported: bool,
     pub interconnect_supported: bool,
@@ -230,6 +237,7 @@ impl MetricEvent {
 #[derive(Clone, Debug)]
 pub enum MetricUpdate {
     Cha(Box<cha::ChaMetrics>),
+    Ha(Box<ha::HaMetrics>),
     Iio(Box<iio::IioMetrics>),
     Imc(Box<imc::ImcMetrics>),
     Interconnect(Box<interconnect::InterconnectMetrics>),
@@ -246,6 +254,7 @@ impl MetricUpdate {
     pub fn collector(&self) -> &'static str {
         match self {
             Self::Cha(_) => "cha",
+            Self::Ha(_) => "ha",
             Self::Iio(_) => "iio",
             Self::Imc(_) => "imc",
             Self::Interconnect(_) => "interconnect",
@@ -279,6 +288,7 @@ pub struct SampledUpdate {
 #[derive(Debug)]
 pub struct MetricsRegistry {
     cha: Option<cha::ChaPrometheusMetrics>,
+    ha: Option<ha::HaPrometheusMetrics>,
     iio: Option<iio::IioPrometheusMetrics>,
     imc: Option<imc::ImcPrometheusMetrics>,
     interconnect: Option<interconnect::InterconnectPrometheusMetrics>,
@@ -302,6 +312,8 @@ impl MetricsRegistry {
             cha: cha::ChaPrometheusMetrics::register(registry, &metadata),
             iio: iio::IioPrometheusMetrics::register(registry, &metadata),
             imc: imc::ImcPrometheusMetrics::register(registry, &metadata),
+            // After IMC, so the HSX IMC and HA families keep their order.
+            ha: ha::HaPrometheusMetrics::register(registry, &metadata),
             interconnect: interconnect::InterconnectPrometheusMetrics::register(
                 registry, &metadata,
             ),
@@ -346,14 +358,21 @@ impl MetricsRegistry {
 
     /// Drops the default metrics of configured box types from rendered
     /// metrics. A box type's default families are those named
-    /// `ocellus_<box type>_`.
+    /// `ocellus_<box type>_`, or `ocellus_haswell_<box type>_` for the
+    /// Haswell-EP/Broadwell-EP IMC and HA.
     pub fn without_configured_defaults(&self, metrics: String) -> String {
         let prefixes = self
             .configured
             .lock()
             .unwrap()
             .iter()
-            .map(|box_type| format!("ocellus_{}_", box_type.label()))
+            .flat_map(|box_type| {
+                let label = box_type.label();
+                [
+                    format!("ocellus_{label}_"),
+                    format!("ocellus_haswell_{label}_"),
+                ]
+            })
             .collect::<Vec<_>>();
         if prefixes.is_empty() {
             return metrics;
@@ -381,6 +400,10 @@ impl MetricsRegistry {
             MetricUpdate::Cha(cha) => {
                 self.default_sampled(BoxType::Cha);
                 expect_registered(&self.cha, "CHA").update(*cha)
+            }
+            MetricUpdate::Ha(ha) => {
+                self.default_sampled(BoxType::Ha);
+                expect_registered(&self.ha, "HA").update(*ha)
             }
             MetricUpdate::Iio(iio) => {
                 self.default_sampled(BoxType::Iio);
@@ -421,6 +444,9 @@ impl MetricsRegistry {
     pub fn update_state(&self, state: MetricsState) {
         if let Some(cha) = state.cha {
             expect_registered(&self.cha, "CHA").update(cha);
+        }
+        if let Some(ha) = state.ha {
+            expect_registered(&self.ha, "HA").update(ha);
         }
         if let Some(iio) = state.iio {
             expect_registered(&self.iio, "IIO").update(iio);

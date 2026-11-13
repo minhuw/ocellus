@@ -94,6 +94,29 @@ Collectors sample from one whole multiple of the measure interval (in Unix
 time) to the next, so the samples of all box types cover the same intervals
 to within a few milliseconds.
 
+## RDT memory bandwidth on Skylake-SP and Cascade Lake
+
+`ocellus_rdt_memory_bandwidth_bytes_per_second` exports resctrl's MBM counts
+unchanged (106,496 B per count on these parts). On a 2-socket Xeon Gold 6230R
+(Linux 6.8), some runs report phantom bandwidth on many CPUs at once: bursts
+of up to about 360 MB/s per CPU, all counted toward node 0 (package-0 `local`,
+package-1 `remote`), that neither the IMC CAS counters nor the CHA home-request
+counters see. Other runs show none for days. This matches the RMID-dependent
+MBM inaccuracy Intel documents for these parts (specification update erratum
+SKX99; Cascade Lake RDT reference manual 338822, sections 3.2 and 3.6).
+
+Treat per-CPU MBM on Skylake-SP and Cascade Lake as valid only alongside an
+IMC or CHA cross-check. One detection method, per CPU series over windows of
+about 16 minutes:
+
+1. A burst second is a sample of at least 50 MB/s.
+2. A window with at least 10 burst seconds in at least 3 bursts is a
+   candidate.
+3. Regress the destination node's IMC read plus write bandwidth (the CPU's
+   own package for `local`, the other package for `remote`) on the series
+   over the window. Real traffic shows up in the IMC; a slope below 0.5 even
+   at three standard errors above the estimate marks the window as phantom.
+
 ## Releases
 
 Tagged releases publish a statically linked Linux x86_64 binary:

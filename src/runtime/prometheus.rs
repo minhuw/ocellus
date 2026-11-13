@@ -2612,6 +2612,34 @@ mod tests {
     }
 
     #[test]
+    fn leaves_out_the_hsx_ha_defaults_while_an_ha_config_runs() {
+        use crate::metrics::MetricUpdate;
+        use crate::pmu_config::types::BoxType;
+
+        let exporter = haswell_exporter();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Imc(Box::new(hsx_imc_metrics())), 1));
+        exporter
+            .metrics
+            .update(sampled(MetricUpdate::Ha(Box::new(hsx_ha_metrics())), 1));
+
+        exporter.metrics.config_changed(BoxType::Ha);
+        exporter
+            .metrics
+            .update(sampled(uncore_update(BoxType::Ha, 1, 1_000, 42), 2));
+        let configured = runtime.block_on(exporter.render_metrics()).unwrap();
+
+        assert_eq!(
+            lines_containing(&configured, "ocellus_haswell_"),
+            HSX_IMC_LINES
+        );
+        assert!(configured.contains(r#"ocellus_uncore_config_id{box_type="ha"} 1"#));
+        assert!(configured.contains(r#"ocellus_samples_total{collector="ha"} 2"#));
+    }
+
+    #[test]
     fn leaves_out_the_hsx_imc_defaults_while_an_imc_config_runs() {
         use crate::metrics::MetricUpdate;
         use crate::pmu_config::types::BoxType;

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -6,12 +6,20 @@ use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metrics::common::BYTES_PER_CACHE_LINE;
 use crate::metrics::uncore::hsx::{
-    self, HsxUncoreScope, HsxUncoreSpec, HsxUncoreUnit, events_per_second, measurement_round_count,
-    scale_to_enabled,
+    self, HsxConfigBox, HsxUncoreScope, HsxUncoreSpec, HsxUncoreUnit, events_per_second,
+    measurement_round_count, scale_to_enabled,
 };
+use crate::pmu_config::types::{BoxType, CountAccumulator, PmuConfig, UncoreCounts};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
+
+const HA_CONFIG_BOX: HsxConfigBox = HsxConfigBox {
+    box_type: BoxType::Ha,
+    name: "HA",
+    unit: "unit",
+    fixed: false,
+};
 
 const HA_EVENT_GROUPS: [HsxHaEventGroup; 1] = [HsxHaEventGroup {
     events: [
@@ -80,13 +88,60 @@ impl HsxHaMetrics {
 #[derive(Debug)]
 pub struct HsxHaCollector {
     units: Vec<HsxHaUnit>,
+    config: Option<CountAccumulator>,
     next_group: usize,
+}
+
+impl HsxHaCollector {
+    /// The home agents of each package that PMU configs can program.
+    /// Unit id: 0 for D18:F1, 1 for D18:F5.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        hsx::unit_map(self.units.iter().map(HsxHaUnit::config_unit))
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        // The default sample resets and programs every home agent on every
+        // slice.
+        let Some(config) = config else {
+            self.config = None;
+            return Ok(());
+        };
+        HA_CONFIG_BOX.check_config(&config.program, &self.config_units())?;
+        self.config = Some(CountAccumulator::new(config));
+
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`. Its counts are cumulative since
+    /// the config was set.
+    pub async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "no PMU config is set for HSX HA".to_string())?;
+        let units = self
+            .units
+            .iter()
+            .map(|unit| (unit.config_unit(), &unit.unit))
+            .collect::<Vec<_>>();
+
+        HA_CONFIG_BOX
+            .sample_config(&units, accumulator, interval)
+            .await
+    }
 }
 
 impl HsxHaCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         Ok(Self {
             units: discover_units(architecture.intel_server_model())?,
+            config: None,
             next_group: 0,
         })
     }
@@ -247,16 +302,28 @@ impl HsxHaScopeLabels {
 
 #[derive(Debug)]
 struct HsxHaUnit {
+    /// Index in `HA_UNITS`, kept when the other home agent is absent.
+    id: u16,
     scope: HsxUncoreScope,
     unit: HsxUncoreUnit,
 }
 
 impl HsxHaUnit {
-    fn new(location: metal::pci::PciLocation, scope: HsxUncoreScope) -> Result<Self, String> {
+    fn new(
+        id: u16,
+        location: metal::pci::PciLocation,
+        scope: HsxUncoreScope,
+    ) -> Result<Self, String> {
         Ok(Self {
+            id,
             scope,
             unit: HsxUncoreUnit::new(location)?,
         })
+    }
+
+    /// The home agent's package and unit id in PMU configs.
+    fn config_unit(&self) -> (u16, u16) {
+        (self.scope.package_id as u16, self.id)
     }
 
     fn program(&self, group: HsxHaEventGroup) -> Result<(), String> {
@@ -381,12 +448,13 @@ fn discover_units(model: IntelServerCpuModel) -> Result<Vec<HsxHaUnit>, String> 
     let mut units = Vec::with_capacity(bus_scopes.len() * metal::arch::hsx::pci::HA_UNITS.len());
 
     for bus_scope in bus_scopes {
-        for (device, function) in metal::arch::hsx::pci::HA_UNITS {
-            if let Ok(location) =
+        for (id, location) in
+            hsx::present_units(&metal::arch::hsx::pci::HA_UNITS, |(device, function)| {
                 metal::pci::find_intel_device_at_address_on_bus(device, function, bus_scope.bus)
-            {
-                units.push(HsxHaUnit::new(location, bus_scope.scope)?);
-            }
+                    .ok()
+            })
+        {
+            units.push(HsxHaUnit::new(id, location, bus_scope.scope)?);
         }
     }
 
@@ -471,6 +539,8 @@ fn scaled_count(measurement: &HsxHaEventMeasurement) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::uncore::hsx::config_fixtures::*;
+    use crate::pmu_config::types::{ChaFilters, CountUnit, CounterSlot, Grouping};
 
     #[test]
     fn computes_hsx_ha_metrics() {
@@ -538,6 +608,197 @@ mod tests {
         );
     }
 
+    #[test]
+    fn programs_three_counters_on_unit_1() {
+        let program = snoop_program();
+        let ids = [(0, 0), (0, 1), (1, 0), (1, 1)];
+        let slices = hsx::config_schedule(&program, Duration::from_secs(1));
+
+        assert_eq!(
+            hsx::slice_units(&ids, &program, &slices[0]).unwrap(),
+            vec![(1, 0)]
+        );
+        assert_eq!(
+            HA_CONFIG_BOX.unit_writes(&program.groups[0]).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0x42_0121),
+                (0xdc, 0x42_0221),
+                (0xe0, 0),
+                (0xe4, 0x42_1001),
+            ]
+        );
+    }
+
+    #[test]
+    fn numbers_home_agents_by_function() {
+        // D18:F1 is absent.
+        let present = hsx::present_units(&metal::arch::hsx::pci::HA_UNITS, |(device, function)| {
+            (function != 1).then_some(metal::pci::PciLocation {
+                bus: 0x7f,
+                device,
+                function,
+                group: 0,
+            })
+        });
+        assert_eq!(
+            present
+                .iter()
+                .map(|(id, location)| (*id, location.device, location.function))
+                .collect::<Vec<_>>(),
+            vec![(1, 18, 5)]
+        );
+
+        let mut collector = test_collector();
+        collector.units = vec![
+            test_unit(0, 0, &[0; 0x100]),
+            test_unit(0, 1, &[0; 0x100]),
+            test_unit(1, 1, &[0; 0x100]),
+        ];
+        assert_eq!(
+            collector.config_units(),
+            BTreeMap::from([(0, BTreeSet::from([0, 1])), (1, BTreeSet::from([1]))])
+        );
+    }
+
+    #[test]
+    fn rejects_configs_home_agents_cannot_count() {
+        let host = BTreeMap::from([(0, BTreeSet::from([0, 1])), (1, BTreeSet::from([1]))]);
+        HA_CONFIG_BOX.check_config(&snoop_program(), &host).unwrap();
+
+        let mut imc = snoop_program();
+        imc.box_type = BoxType::Imc;
+        let mut package = snoop_program();
+        package.groups[0].units.insert(2, BTreeSet::from([0]));
+        let mut unit = snoop_program();
+        unit.groups[0].units.insert(1, BTreeSet::from([0]));
+        let mut fixed = snoop_program();
+        fixed.groups[0]
+            .counters
+            .push(config_counter(CounterSlot::Fixed, 0x40_0000));
+        let mut slot = snoop_program();
+        slot.groups[0]
+            .counters
+            .push(config_counter(CounterSlot::General(4), 0x40_0121));
+        let mut filters = snoop_program();
+        filters.groups[0].filters = Some(ChaFilters {
+            filter0: 0,
+            filter1: 0,
+        });
+
+        for (program, error) in [
+            (imc, "Haswell-EP/Broadwell-EP HA cannot count a imc config"),
+            (
+                package,
+                "HA config group 0 runs on package 2, which has no HA units on this host",
+            ),
+            (
+                unit,
+                "HA config group 0 runs on unit 0 of package 1, which this host does not have",
+            ),
+            (
+                fixed,
+                "HA config group 0: Haswell-EP/Broadwell-EP HA units have no counter slot fixed",
+            ),
+            (
+                slot,
+                "HA config group 0: Haswell-EP/Broadwell-EP HA units have no counter slot 4",
+            ),
+            (
+                filters,
+                "HA config group 0 has filters, which HA units do not have",
+            ),
+        ] {
+            assert_eq!(
+                HA_CONFIG_BOX.check_config(&program, &host),
+                Err(error.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn counts_a_config_on_its_home_agents_and_restarts_when_it_changes() {
+        let mut config_space = [0_u8; 0x100];
+        for (offset, value) in [(0xa0, 7_u64), (0xa8, 9), (0xb8, (0xff << 48) | 11)] {
+            config_space[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        for offset in [0xe0, 0xf0] {
+            config_space[offset..offset + 4].copy_from_slice(&0x40_0001_u32.to_le_bytes());
+        }
+        let mut collector = test_collector();
+        collector.units = vec![
+            test_unit(0, 0, &config_space),
+            test_unit(0, 1, &config_space),
+        ];
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        collector.set_config(Some(config(snoop_program()))).unwrap();
+        for factor in [1, 2] {
+            let counts = runtime
+                .block_on(collector.sample_config(Duration::from_millis(1)))
+                .unwrap();
+            assert_eq!(
+                count_values(&counts),
+                vec![
+                    (0, CountUnit::Box(1), CounterSlot::General(0), 7 * factor),
+                    (0, CountUnit::Box(1), CounterSlot::General(1), 9 * factor),
+                    (0, CountUnit::Box(1), CounterSlot::General(3), 11 * factor),
+                ]
+            );
+        }
+
+        let registers = |unit: &HsxHaUnit| {
+            [0xf4, 0xd8, 0xdc, 0xe0, 0xe4, 0xf0].map(|offset| unit.unit.read_dword(offset).unwrap())
+        };
+        // Unit 1 ends frozen with the group's controls and its F0 untouched;
+        // unit 0 is in no group.
+        assert_eq!(
+            registers(&collector.units[1]),
+            [0x3_0100, 0x42_0121, 0x42_0221, 0, 0x42_1001, 0x40_0001]
+        );
+        assert_eq!(
+            registers(&collector.units[0]),
+            [0, 0, 0, 0x40_0001, 0, 0x40_0001]
+        );
+
+        collector.set_config(Some(config(snoop_program()))).unwrap();
+        let restarted = collector.config.as_ref().unwrap().counts();
+        assert!(count_values(&restarted).iter().all(|count| count.3 == 0));
+        let counts = runtime
+            .block_on(collector.sample_config(Duration::from_millis(1)))
+            .unwrap();
+        assert_eq!(count_values(&counts)[0].3, 7);
+
+        collector.set_config(None).unwrap();
+        assert!(!collector.has_config());
+    }
+
+    /// Snoop responses RspI and RspS, and local InvItoE requests, on home
+    /// agent 1 of package 0.
+    fn snoop_program() -> crate::pmu_config::types::ProgrammedBoxType {
+        config_program(
+            BoxType::Ha,
+            Grouping::Fixed,
+            vec![config_group(
+                0,
+                vec![
+                    config_counter(CounterSlot::General(0), 0x40_0121),
+                    config_counter(CounterSlot::General(1), 0x40_0221),
+                    config_counter(CounterSlot::General(3), 0x40_1001),
+                ],
+                BTreeMap::from([(0, BTreeSet::from([1]))]),
+            )],
+        )
+    }
+
+    fn test_unit(package_id: u32, id: u16, config_space: &[u8]) -> HsxHaUnit {
+        HsxHaUnit {
+            id,
+            scope: HsxUncoreScope { package_id },
+            unit: HsxUncoreUnit::from_config_space(config_space),
+        }
+    }
+
     fn measurement(
         kind: HsxHaEventKind,
         value: u64,
@@ -556,6 +817,7 @@ mod tests {
     fn test_collector() -> HsxHaCollector {
         HsxHaCollector {
             units: Vec::new(),
+            config: None,
             next_group: 0,
         }
     }

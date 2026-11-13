@@ -58,22 +58,27 @@ impl ConfigurableCollector for HaCollector {
     }
 
     fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
-        BTreeMap::new()
-    }
-
-    fn has_config(&self) -> bool {
-        false
-    }
-
-    fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
-        match config {
-            None => Ok(()),
-            Some(_) => Err("PMU configs are not supported on home agents".to_string()),
+        match self {
+            Self::Hsx(collector) => collector.config_units(),
         }
     }
 
-    async fn sample_config(&mut self, _interval: Duration) -> Result<UncoreCounts, String> {
-        Err("PMU configs are not supported on home agents".to_string())
+    fn has_config(&self) -> bool {
+        match self {
+            Self::Hsx(collector) => collector.has_config(),
+        }
+    }
+
+    fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        match self {
+            Self::Hsx(collector) => collector.set_config(config),
+        }
+    }
+
+    async fn sample_config(&mut self, interval: Duration) -> Result<UncoreCounts, String> {
+        match self {
+            Self::Hsx(collector) => collector.sample_config(interval).await,
+        }
     }
 }
 

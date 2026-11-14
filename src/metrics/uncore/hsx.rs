@@ -165,7 +165,7 @@ pub fn average_u64(values: impl Iterator<Item = u64>) -> u64 {
         sum += value;
     }
 
-    if count == 0 { 0 } else { sum / count }
+    sum.checked_div(count).unwrap_or(0)
 }
 
 pub fn bus_scopes(spec: HsxUncoreSpec) -> Result<Vec<HsxSocketBusScope>, String> {

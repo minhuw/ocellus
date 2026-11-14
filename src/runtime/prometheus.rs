@@ -2324,7 +2324,7 @@ mod tests {
         }
     }
 
-    fn server_cha_metric_fields() -> (
+    type ServerChaMetricFields = (
         Vec<crate::metrics::cha::ChaHaRequestMetrics>,
         Vec<crate::metrics::cha::ChaLlcLookupMetrics>,
         Vec<crate::metrics::cha::ChaRequestQueueMetrics>,
@@ -2332,7 +2332,9 @@ mod tests {
         Vec<crate::metrics::cha::ChaSfEvictionMetrics>,
         Vec<crate::metrics::cha::ChaTransactionResultMetrics>,
         Vec<crate::metrics::cha::ChaTransactionMetrics>,
-    ) {
+    );
+
+    fn server_cha_metric_fields() -> ServerChaMetricFields {
         let scope = crate::metrics::uncore::skx::UncoreScope {
             die_group_id: None,
             die_id: None,

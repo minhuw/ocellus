@@ -814,13 +814,13 @@ fn initialize_snc_rmid_sharing(domains: &[RdtDomain]) -> Result<Vec<RdtSavedMsr>
         });
 
         let sharing_mode = rmid_snc_sharing_mode_value(current);
-        if sharing_mode != current {
-            if let Err(error) = msr.write(MSR_RMID_SNC_CONFIG, sharing_mode) {
-                restore_snc_configs_if_resctrl_unmounted(&saved_configs);
-                return Err(format!(
-                    "failed to enable RDT SNC RMID sharing mode for package {package_id}: {error}"
-                ));
-            }
+        if sharing_mode != current
+            && let Err(error) = msr.write(MSR_RMID_SNC_CONFIG, sharing_mode)
+        {
+            restore_snc_configs_if_resctrl_unmounted(&saved_configs);
+            return Err(format!(
+                "failed to enable RDT SNC RMID sharing mode for package {package_id}: {error}"
+            ));
         }
     }
 
@@ -3704,6 +3704,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn test_topology_with_core(
         cpu: u32,
         package_id: u32,

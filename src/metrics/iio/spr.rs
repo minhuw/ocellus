@@ -137,6 +137,7 @@ pub struct SprIioStack {
 }
 
 impl SprIioStack {
+    #[allow(clippy::too_many_arguments)]
     const fn new(
         id: usize,
         label: &'static str,

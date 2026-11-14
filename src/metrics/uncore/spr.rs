@@ -87,10 +87,7 @@ pub fn discover_uncore_boxes(box_type: u16) -> Result<Vec<UncoreDiscoverySocketB
         };
 
         let mut offset = 0x100;
-        loop {
-            let Ok(first_word) = device.read_u64(offset) else {
-                break;
-            };
+        while let Ok(first_word) = device.read_u64(offset) {
             if first_word == 0 {
                 break;
             }

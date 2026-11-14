@@ -39,8 +39,8 @@ pub enum Grouping {
     Fixed,
     /// Groups count at the same time, each on its own disjoint set of units.
     Spatial,
-    /// Groups take turns on every selected box within every sample, the
-    /// first one a group later each sample.
+    /// Groups take turns on every selected box within every sample, from the
+    /// group [`temporal_first_group`] gives.
     Temporal,
 }
 
@@ -117,6 +117,38 @@ pub struct ProgrammedBoxType {
     pub groups: Vec<ProgrammedGroup>,
 }
 
+impl ProgrammedBoxType {
+    /// The `group` of the temporal group that counts first in the sample of
+    /// index `cycle`; `None` for fixed and spatial groups, which count at once.
+    pub fn first_group(&self, cycle: u64) -> Option<u8> {
+        (self.grouping == Grouping::Temporal)
+            .then(|| self.groups[temporal_first_group(cycle, self.groups.len())].index)
+    }
+}
+
+/// The position of the group that counts first in the sample of index
+/// `cycle` (`metrics::sample::cycle_index`), of `group_count` temporal
+/// groups. Cycles split into blocks of n = `group_count` from cycle 0; the
+/// sample `cycle` of block k = `cycle` / n starts at group (`cycle` + r_k)
+/// mod n, where r_k = SplitMix64(k) mod n. Within a block every group counts
+/// at every slice position once, and across blocks a fixed instant moves
+/// between positions pseudo-randomly.
+pub fn temporal_first_group(cycle: u64, group_count: usize) -> usize {
+    let n = group_count as u64;
+    let offset = splitmix64(cycle / n) % n;
+
+    ((cycle % n + offset) % n) as usize
+}
+
+/// The SplitMix64 finalizer.
+fn splitmix64(mut x: u64) -> u64 {
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
 /// The boxes of this host a config can program: for each box type and
 /// package, the unit ids (CHA id, IIO/IRP stack, IMC channel).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -175,6 +207,10 @@ pub struct UncoreCounts {
     pub config: PmuConfig,
     pub counts: Vec<UnitCount>,
     pub running: Vec<GroupRunning>,
+    /// The `group` that counted first in this sample, for temporal groups;
+    /// the collector loop sets it from the sample's cycle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_group: Option<u8>,
 }
 
 /// Accumulates the per-slice counts and running time of one config.
@@ -291,6 +327,7 @@ impl CountAccumulator {
                     seconds: running.as_secs_f64(),
                 })
                 .collect(),
+            first_group: None,
         }
     }
 }
@@ -378,6 +415,57 @@ mod tests {
             assert_eq!(counts.running.len(), 2);
             assert_eq!(counts.running[0].seconds, 1.0);
             assert_eq!(counts.running[1].seconds, 0.0);
+        }
+    }
+
+    #[test]
+    fn mixes_block_indices_with_the_splitmix64_finalizer() {
+        // The first outputs of SplitMix64 seeded with 0.
+        let mut state = 0_u64;
+        for expected in [
+            0xe220_a839_7b1d_cdaf,
+            0x6e78_9e6a_a1b9_65f4,
+            0x06c4_5d18_8009_454f,
+        ] {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            assert_eq!(splitmix64(state), expected);
+        }
+    }
+
+    #[test]
+    fn starts_temporal_groups_at_the_same_group_for_the_same_cycle() {
+        for (cycle, group_count, expected) in [
+            (0, 3, 0),
+            (3, 3, 1),
+            (1_763_000_005, 3, 1),
+            (13, 8, 2),
+            (11, 11, 2),
+            (u64::MAX, 11, 1),
+            (1_763_000_067, 12, 0),
+            (1_763_000_068, 12, 1),
+            (5, 1, 0),
+        ] {
+            assert_eq!(
+                temporal_first_group(cycle, group_count),
+                expected,
+                "{group_count} groups, cycle {cycle}"
+            );
+        }
+
+        let mut program = config(Aggregate::Box).program;
+        program.groups = (0..3)
+            .map(|index| ProgrammedGroup {
+                index,
+                ..program.groups[0].clone()
+            })
+            .collect();
+        for (grouping, expected) in [
+            (Grouping::Fixed, None),
+            (Grouping::Spatial, None),
+            (Grouping::Temporal, Some(1)),
+        ] {
+            program.grouping = grouping;
+            assert_eq!(program.first_group(1_763_000_005), expected, "{grouping:?}");
         }
     }
 

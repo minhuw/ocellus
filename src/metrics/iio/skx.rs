@@ -17,7 +17,7 @@ use crate::metrics::uncore::skx::{
 };
 use crate::pmu_config::types::{
     BoxType, CountAccumulator, CounterSlot, Grouping, PmuConfig, ProgrammedBoxType,
-    ProgrammedGroup, UncoreCounts,
+    ProgrammedGroup, UncoreCounts, temporal_first_group,
 };
 
 const IIO_COUNTER_COUNT: usize = 4;
@@ -1222,7 +1222,7 @@ pub(crate) fn config_counter_control(group: &ProgrammedGroup, counter_index: usi
 
 /// The slices of one sample: all groups at once for the whole interval, or
 /// for temporal grouping each group in turn, in rounds, every round from
-/// group `cycle` mod the group count, wrapping around.
+/// the group `temporal_first_group` gives for `cycle`, wrapping around.
 pub(crate) fn config_schedule(
     program: &ProgrammedBoxType,
     interval: Duration,
@@ -1238,7 +1238,7 @@ pub(crate) fn config_schedule(
             let round_count = measurement_round_count(interval, group_count);
             let slice_count = group_count * round_count;
             let duration = interval.div_f64(slice_count as f64);
-            let start = (cycle % group_count as u64) as usize;
+            let start = temporal_first_group(cycle, group_count);
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
@@ -1632,13 +1632,13 @@ mod tests {
 
     // IRP shares this schedule.
     #[test]
-    fn precesses_temporal_config_groups_by_cycle() {
-        crate::metrics::testing::assert_precessing_schedule(BoxType::Iio, scheduled_slices);
+    fn starts_temporal_config_groups_by_block() {
+        crate::metrics::testing::assert_block_schedule(BoxType::Iio, scheduled_slices);
     }
 
     #[test]
-    fn reads_phase_locked_sources_without_bias_over_a_cycle_of_samples() {
-        crate::metrics::testing::assert_unbiased_by_precession(BoxType::Iio, scheduled_slices);
+    fn reads_phase_locked_sources_without_bias_over_whole_blocks() {
+        crate::metrics::testing::assert_unbiased_over_blocks(BoxType::Iio, scheduled_slices);
     }
 
     #[test]

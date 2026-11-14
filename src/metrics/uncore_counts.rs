@@ -44,6 +44,7 @@ pub struct UncoreCountPrometheusMetrics {
     count: Family<CountLabels, Counter>,
     event_info: Family<EventInfoLabels, Gauge>,
     running_seconds: Family<RunningLabels, Counter<f64, AtomicU64>>,
+    schedule_first_group: Family<BoxTypeLabels, Gauge>,
     /// The series of each box type's config, so that a config change
     /// removes exactly them.
     exported: Mutex<BTreeMap<BoxType, ExportedConfig>>,
@@ -66,6 +67,7 @@ impl UncoreCountPrometheusMetrics {
             count: Family::default(),
             event_info: Family::default(),
             running_seconds: Family::default(),
+            schedule_first_group: Family::default(),
             exported: Mutex::default(),
         };
 
@@ -88,6 +90,11 @@ impl UncoreCountPrometheusMetrics {
             "ocellus_uncore_config_start_timestamp_seconds",
             "Unix time the box type's PMU config was set and its counts started from 0",
             metrics.config_start_timestamp_seconds.clone(),
+        );
+        registry.register(
+            "ocellus_uncore_schedule_first_group",
+            "Temporal PMU config group that counted first in the box type's latest sample; slice p of each round ran group (first + p) mod the group count",
+            metrics.schedule_first_group.clone(),
         );
         registry.register(
             "ocellus_uncore_event_info",
@@ -113,6 +120,13 @@ impl UncoreCountPrometheusMetrics {
         let series = exported
             .entry(box_type)
             .or_insert_with(|| self.export_config(config));
+        if let Some(group) = counts.first_group {
+            self.schedule_first_group
+                .get_or_create(&BoxTypeLabels {
+                    box_type: box_type.label(),
+                })
+                .set(i64::from(group));
+        }
 
         for count in &counts.counts {
             let labels = CountLabels {
@@ -187,6 +201,7 @@ impl UncoreCountPrometheusMetrics {
         };
         self.config_id.remove(&labels);
         self.config_start_timestamp_seconds.remove(&labels);
+        self.schedule_first_group.remove(&labels);
         for labels in &series.counts {
             self.count.remove(labels);
         }

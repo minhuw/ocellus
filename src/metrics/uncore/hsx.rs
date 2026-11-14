@@ -9,7 +9,7 @@ use crate::metal::topology::{CpuTopology, TopologyLevelKind};
 use crate::metrics::common::DEFAULT_MAX_SLICE;
 use crate::pmu_config::types::{
     BoxType, CountAccumulator, CounterSlot, Grouping, ProgrammedBoxType, ProgrammedGroup,
-    UncoreCounts,
+    UncoreCounts, temporal_first_group,
 };
 
 pub const COUNTER_COUNT: usize = 4;
@@ -490,7 +490,7 @@ pub fn unit_map(ids: impl IntoIterator<Item = (u16, u16)>) -> BTreeMap<u16, BTre
 
 /// Fixed and spatial groups count for the whole interval in one slice;
 /// temporal groups take turns in equal slices, every round in group order
-/// from group `cycle` mod their count, wrapping around.
+/// from the group `temporal_first_group` gives for `cycle`, wrapping around.
 pub fn config_schedule(
     program: &ProgrammedBoxType,
     interval: Duration,
@@ -506,7 +506,7 @@ pub fn config_schedule(
         Grouping::Temporal => {
             let round_count = measurement_round_count(interval, group_count);
             let duration = interval.div_f64((group_count * round_count) as f64);
-            let start = (cycle % group_count as u64) as usize;
+            let start = temporal_first_group(cycle, group_count);
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
@@ -713,13 +713,13 @@ mod tests {
 
     // The HSX IMC and HA collectors share this schedule.
     #[test]
-    fn precesses_temporal_config_groups_by_cycle() {
-        crate::metrics::testing::assert_precessing_schedule(BoxType::Imc, scheduled_slices);
+    fn starts_temporal_config_groups_by_block() {
+        crate::metrics::testing::assert_block_schedule(BoxType::Imc, scheduled_slices);
     }
 
     #[test]
-    fn reads_phase_locked_sources_without_bias_over_a_cycle_of_samples() {
-        crate::metrics::testing::assert_unbiased_by_precession(BoxType::Imc, scheduled_slices);
+    fn reads_phase_locked_sources_without_bias_over_whole_blocks() {
+        crate::metrics::testing::assert_unbiased_over_blocks(BoxType::Imc, scheduled_slices);
     }
 
     #[test]

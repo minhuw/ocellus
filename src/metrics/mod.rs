@@ -568,7 +568,8 @@ async fn sample_configurable<C: ConfigurableCollector>(
     cycle: u64,
 ) -> Result<MetricUpdate, String> {
     if collector.has_config() {
-        let counts = collector.sample_config(interval, cycle).await?;
+        let mut counts = collector.sample_config(interval, cycle).await?;
+        counts.first_group = counts.config.program.first_group(cycle);
         Ok(MetricUpdate::Uncore(Box::new(counts)))
     } else {
         collector.sample_update(interval).await
@@ -734,6 +735,55 @@ mod tests {
                     panic!("expected a config sample, got {update:?}");
                 };
                 assert_eq!(*counts, testing::uncore_counts(config.clone(), value));
+            }
+        });
+    }
+
+    #[test]
+    fn sets_the_first_group_of_each_temporal_sample_from_its_cycle() {
+        use crate::pmu_config::types::{Grouping, ProgrammedGroup};
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            let interval = Duration::from_millis(1);
+            let (collector, _log) = testing::FakeCollector::new(tsc_update());
+            let (control, mut events) = spawn_fake_collector(collector, interval);
+            let mut config = testing::pmu_config(BoxType::Cha, 7, 0);
+            config.program.grouping = Grouping::Temporal;
+            config.program.groups = (0..3)
+                .map(|index| ProgrammedGroup {
+                    index,
+                    ..config.program.groups[0].clone()
+                })
+                .collect();
+
+            control.set(vec![config.clone()]).await.unwrap();
+            loop {
+                match events.recv().await.unwrap() {
+                    MetricEvent::Update(update, _) if update.collector() == "tsc" => {}
+                    MetricEvent::ConfigChanged(BoxType::Cha) => break,
+                    event => panic!("unexpected event {event:?}"),
+                }
+            }
+            for _ in 0..5 {
+                let Some(MetricEvent::Update(update, window)) = events.recv().await else {
+                    panic!("expected a sample");
+                };
+                let MetricUpdate::Uncore(counts) = *update else {
+                    panic!("expected a config sample, got {update:?}");
+                };
+                // As the collector loop computes it from when the sample started.
+                let cycle = sample::cycle_index(
+                    window.start + sample::until_next_boundary(window.start, interval),
+                    interval,
+                );
+                let slices = uncore::hsx::config_schedule(&config.program, interval, cycle);
+                assert_eq!(
+                    counts.first_group,
+                    Some(config.program.groups[slices[0].groups[0]].index),
+                    "cycle {cycle}"
+                );
             }
         });
     }

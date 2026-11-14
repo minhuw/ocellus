@@ -32,7 +32,7 @@ use crate::metrics::uncore::skx::{
 };
 use crate::pmu_config::types::{
     BoxType, ChaFilters, CountAccumulator, CounterSlot, Grouping, PmuConfig, ProgrammedBoxType,
-    ProgrammedGroup, UncoreCounts,
+    ProgrammedGroup, UncoreCounts, temporal_first_group,
 };
 
 const SKX_CHA_EVENT_GROUP_COUNT: usize = 37;
@@ -2607,8 +2607,8 @@ fn cha_config_filters(group: &ProgrammedGroup) -> Result<ChaFilters, String> {
 }
 
 /// Fixed and spatial groups count for the whole interval. Temporal groups
-/// take turns, one slice each per round, in index order from group `cycle`
-/// mod their count, wrapping around.
+/// take turns, one slice each per round, in index order from the group
+/// `temporal_first_group` gives for `cycle`, wrapping around.
 fn cha_config_schedule(
     program: &ProgrammedBoxType,
     interval: Duration,
@@ -2624,7 +2624,7 @@ fn cha_config_schedule(
         Grouping::Temporal => {
             let round_count = measurement_round_count(interval, group_count);
             let duration = interval.div_f64((round_count * group_count) as f64);
-            let start = (cycle % group_count as u64) as usize;
+            let start = temporal_first_group(cycle, group_count);
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
@@ -3584,13 +3584,13 @@ mod tests {
     }
 
     #[test]
-    fn precesses_temporal_config_groups_by_cycle() {
-        crate::metrics::testing::assert_precessing_schedule(BoxType::Cha, scheduled_slices);
+    fn starts_temporal_config_groups_by_block() {
+        crate::metrics::testing::assert_block_schedule(BoxType::Cha, scheduled_slices);
     }
 
     #[test]
-    fn reads_phase_locked_sources_without_bias_over_a_cycle_of_samples() {
-        crate::metrics::testing::assert_unbiased_by_precession(BoxType::Cha, scheduled_slices);
+    fn reads_phase_locked_sources_without_bias_over_whole_blocks() {
+        crate::metrics::testing::assert_unbiased_over_blocks(BoxType::Cha, scheduled_slices);
     }
 
     #[test]

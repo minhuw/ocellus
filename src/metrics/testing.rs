@@ -73,6 +73,7 @@ pub fn uncore_counts(config: PmuConfig, value: u64) -> UncoreCounts {
             group: 0,
             seconds: 0.5,
         }],
+        first_group: None,
     }
 }
 
@@ -106,8 +107,9 @@ fn schedule_program(box_type: BoxType, grouping: Grouping, group_count: u8) -> P
 
 /// Asserts the slices `schedule` gives for a cycle: fixed and spatial groups
 /// count together for the whole interval, and temporal groups take turns in
-/// rounds, each round from group `cycle` mod their count.
-pub fn assert_precessing_schedule(
+/// rounds, each round from the config's `first_group`, so that every block of
+/// n cycles from a multiple of n gives each group each slice position once.
+pub fn assert_block_schedule(
     box_type: BoxType,
     schedule: impl Fn(&ProgrammedBoxType, Duration, u64) -> Vec<ScheduledSlice>,
 ) {
@@ -140,7 +142,9 @@ pub fn assert_precessing_schedule(
         (0, [0, 1, 2]),
         (1, [1, 2, 0]),
         (2, [2, 0, 1]),
-        (3, [0, 1, 2]),
+        (3, [1, 2, 0]),
+        (4, [2, 0, 1]),
+        (5, [0, 1, 2]),
         (1_763_000_005, [1, 2, 0]),
     ] {
         assert_eq!(
@@ -152,13 +156,13 @@ pub fn assert_precessing_schedule(
 
     // Two rounds of eight.
     let eight = program(Grouping::Temporal, 8);
-    for cycle in [5, 13] {
+    for (cycle, groups) in [
+        (5, [5, 6, 7, 0, 1, 2, 3, 4]),
+        (13, [2, 3, 4, 5, 6, 7, 0, 1]),
+    ] {
         assert_eq!(
             schedule(&eight, second, cycle),
-            slices(
-                Duration::from_micros(62_500),
-                &[5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4]
-            ),
+            slices(Duration::from_micros(62_500), &groups.repeat(2)),
             "cycle {cycle}"
         );
     }
@@ -167,8 +171,8 @@ pub fn assert_precessing_schedule(
     for (cycle, groups) in [
         (0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
         (10, [10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-        (11, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-        (u64::MAX, [4, 5, 6, 7, 8, 9, 10, 0, 1, 2, 3]),
+        (11, [2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 1]),
+        (u64::MAX, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0]),
     ] {
         assert_eq!(
             schedule(&eleven, second, cycle),
@@ -176,6 +180,53 @@ pub fn assert_precessing_schedule(
             "cycle {cycle}"
         );
     }
+
+    for group_count in [1, 2, 12, 14] {
+        let temporal = program(Grouping::Temporal, group_count);
+        let n = usize::from(group_count);
+        let first_block = 1_763_000_000 / n as u64;
+        for block in std::iter::once(0).chain(first_block..first_block + 1_000) {
+            // The slice positions each group counted at in the block.
+            let mut positions = vec![Vec::new(); n];
+            for cycle in block * n as u64..(block + 1) * n as u64 {
+                let slices = schedule(&temporal, second, cycle);
+                assert_eq!(slices.len() % n, 0, "cycle {cycle}");
+                for (slot, (_, groups)) in slices.iter().enumerate() {
+                    assert_eq!(groups, &slices[slot % n].1, "cycle {cycle}");
+                }
+                assert_eq!(
+                    temporal.first_group(cycle),
+                    Some(temporal.groups[slices[0].1[0]].index),
+                    "cycle {cycle}"
+                );
+                for (position, (_, groups)) in slices[..n].iter().enumerate() {
+                    positions[groups[0]].push(position);
+                }
+            }
+            for (group, mut positions) in positions.into_iter().enumerate() {
+                positions.sort_unstable();
+                assert_eq!(
+                    positions,
+                    (0..n).collect::<Vec<_>>(),
+                    "{n} groups, block {block}, group {group}"
+                );
+            }
+        }
+    }
+
+    // A source at second 27 of every 120. Starting at cycle mod 12, group 0
+    // met it at one slice position every time.
+    let twelve = program(Grouping::Temporal, 12);
+    let positions = (0..100)
+        .map(|period| {
+            let cycle = 1_763_000_067 + 120 * period;
+            schedule(&twelve, second, cycle)
+                .iter()
+                .position(|(_, groups)| groups == &[0])
+                .unwrap()
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(positions.len(), 12, "{positions:?}");
 }
 
 /// The rate of a source that [`phase_locked_rates`] simulates outside its
@@ -249,27 +300,30 @@ fn phase_locked_rates(
 }
 
 /// Asserts that the temporal slices `schedule` gives read a source that
-/// bursts at a fixed phase of every sample without bias: over n consecutive
-/// cycles each of n groups reads the base rate plus one burst per interval,
-/// where n samples of one cycle would give one group all n bursts.
-pub fn assert_unbiased_by_precession(
+/// bursts at a fixed phase of every sample without bias: over whole blocks
+/// of n cycles from a multiple of n each of n groups reads the base rate plus
+/// one burst per interval, where n samples of one cycle would give one group
+/// all n bursts.
+pub fn assert_unbiased_over_blocks(
     box_type: BoxType,
     schedule: impl Fn(&ProgrammedBoxType, Duration, u64) -> Vec<ScheduledSlice>,
 ) {
     const FIRST_CYCLE: u64 = 1_763_000_000;
     let close = |rate: f64, expected: f64| (rate - expected).abs() <= expected * 1e-6;
 
-    for (interval, group_count) in [
-        (Duration::from_secs(1), 3),
-        (Duration::from_secs(1), 8),
-        (Duration::from_secs(1), 11),
-        (Duration::from_millis(250), 3),
+    for (interval, group_count, blocks) in [
+        (Duration::from_secs(1), 3, 1),
+        (Duration::from_secs(1), 8, 1),
+        (Duration::from_secs(1), 11, 1),
+        (Duration::from_secs(1), 12, 5),
+        (Duration::from_millis(250), 3, 2),
     ] {
         let program = schedule_program(box_type, Grouping::Temporal, group_count);
         let n = u64::from(group_count);
         let burst_rate = BURST as f64 / interval.as_secs_f64();
 
-        let rates = phase_locked_rates(&program, interval, FIRST_CYCLE..FIRST_CYCLE + n, &schedule);
+        let start = FIRST_CYCLE / n * n;
+        let rates = phase_locked_rates(&program, interval, start..start + blocks * n, &schedule);
         assert_eq!(rates.len(), usize::from(group_count));
         for (group, rate) in rates {
             assert!(

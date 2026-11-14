@@ -2849,6 +2849,54 @@ mod tests {
     }
 
     #[test]
+    fn renders_the_first_group_of_each_temporal_config_sample() {
+        use crate::pmu_config::types::{BoxType, Grouping};
+
+        let exporter = skylake_exporter();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let render = || runtime.block_on(exporter.render_metrics()).unwrap();
+        let temporal_update = |first_group| {
+            let mut config = crate::metrics::testing::pmu_config(BoxType::Cha, 1, 1_000);
+            config.program.grouping = Grouping::Temporal;
+            let mut counts = crate::metrics::testing::uncore_counts(config, 42);
+            counts.first_group = Some(first_group);
+            crate::metrics::MetricUpdate::Uncore(Box::new(counts))
+        };
+        let first_group_lines = |metrics: &str| {
+            metrics
+                .lines()
+                .filter(|line| line.contains("ocellus_uncore_schedule_first_group"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+
+        exporter.metrics.update(sampled(temporal_update(2), 1));
+        assert_eq!(
+            first_group_lines(&render()),
+            [
+                "# HELP ocellus_uncore_schedule_first_group Temporal PMU config group that counted first in the box type's latest sample; slice p of each round ran group (first + p) mod the group count.",
+                "# TYPE ocellus_uncore_schedule_first_group gauge",
+                r#"ocellus_uncore_schedule_first_group{box_type="cha"} 2"#,
+            ]
+        );
+        // Every sample sets it.
+        exporter.metrics.update(sampled(temporal_update(0), 2));
+        assert_eq!(
+            first_group_lines(&render())[2],
+            r#"ocellus_uncore_schedule_first_group{box_type="cha"} 0"#
+        );
+
+        // Fixed configs have none.
+        exporter
+            .metrics
+            .update(sampled(uncore_update(BoxType::Iio, 7, 1_000, 5), 1));
+        assert_eq!(first_group_lines(&render()).len(), 3);
+
+        exporter.metrics.config_changed(BoxType::Cha);
+        assert!(first_group_lines(&render()).is_empty());
+    }
+
+    #[test]
     fn leaves_out_default_metrics_while_a_config_runs() {
         use crate::metrics::MetricUpdate;
         use crate::pmu_config::types::BoxType;

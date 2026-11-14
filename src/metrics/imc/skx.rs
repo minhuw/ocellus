@@ -15,7 +15,7 @@ use crate::metrics::EventProfile;
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE, topology_label};
 use crate::pmu_config::types::{
     BoxType, CountAccumulator, CounterSlot, Grouping, PmuConfig, ProgrammedBoxType,
-    ProgrammedGroup, UncoreCounts,
+    ProgrammedGroup, UncoreCounts, temporal_first_group,
 };
 
 const IMC_COUNTER_WIDTH: u32 = 48;
@@ -983,7 +983,7 @@ fn channel_writes(group: &ProgrammedGroup) -> Result<Vec<(u64, u32)>, String> {
 
 /// Fixed and spatial groups count for the whole interval in one slice;
 /// temporal groups take turns in equal slices, every round in group order
-/// from group `cycle` mod their count, wrapping around.
+/// from the group `temporal_first_group` gives for `cycle`, wrapping around.
 fn config_schedule(
     program: &ProgrammedBoxType,
     interval: Duration,
@@ -999,7 +999,7 @@ fn config_schedule(
         Grouping::Temporal => {
             let round_count = measurement_round_count(interval, group_count);
             let duration = interval.div_f64((group_count * round_count) as f64);
-            let start = (cycle % group_count as u64) as usize;
+            let start = temporal_first_group(cycle, group_count);
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
@@ -1563,13 +1563,13 @@ mod tests {
     }
 
     #[test]
-    fn precesses_temporal_config_groups_by_cycle() {
-        crate::metrics::testing::assert_precessing_schedule(BoxType::Imc, scheduled_slices);
+    fn starts_temporal_config_groups_by_block() {
+        crate::metrics::testing::assert_block_schedule(BoxType::Imc, scheduled_slices);
     }
 
     #[test]
-    fn reads_phase_locked_sources_without_bias_over_a_cycle_of_samples() {
-        crate::metrics::testing::assert_unbiased_by_precession(BoxType::Imc, scheduled_slices);
+    fn reads_phase_locked_sources_without_bias_over_whole_blocks() {
+        crate::metrics::testing::assert_unbiased_over_blocks(BoxType::Imc, scheduled_slices);
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::fmt;
 use crate::arch::IntelServerCpuModel;
 use crate::pmu_config::types::{
     Aggregate, BoxType, ChaFilters, CounterSlot, Grouping, PmuTopology, ProgrammedBoxType,
-    ProgrammedCounter, ProgrammedGroup,
+    ProgrammedCounter, ProgrammedGroup, TemporalStart,
 };
 
 /// Config ids stay below 2^53, exact as sample values.
@@ -80,6 +80,8 @@ impl PmuRequests {
 struct BoxRequest {
     #[serde(default)]
     grouping: GroupingRequest,
+    /// Temporal grouping only; default: precession.
+    temporal_start: Option<TemporalStartRequest>,
     #[serde(default)]
     aggregate: AggregateRequest,
     /// Default: every package of the host.
@@ -94,6 +96,13 @@ enum GroupingRequest {
     Fixed,
     Spatial,
     Temporal,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum TemporalStartRequest {
+    Precession,
+    Random,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
@@ -358,6 +367,11 @@ fn program_box_type(
         GroupingRequest::Spatial => Grouping::Spatial,
         GroupingRequest::Temporal => Grouping::Temporal,
     };
+    if request.temporal_start.is_some() && grouping != Grouping::Temporal {
+        return Err(format!(
+            "{path}.temporal_start: only temporal grouping takes a temporal start"
+        ));
+    }
     let group_count = request.groups.len();
     match grouping {
         Grouping::Fixed if group_count != 1 => {
@@ -406,6 +420,10 @@ fn program_box_type(
     Ok(ProgrammedBoxType {
         box_type,
         grouping,
+        temporal_start: match request.temporal_start {
+            None | Some(TemporalStartRequest::Precession) => TemporalStart::Precession,
+            Some(TemporalStartRequest::Random) => TemporalStart::Random,
+        },
         aggregate: match request.aggregate {
             AggregateRequest::Sum => Aggregate::Sum,
             AggregateRequest::Box => Aggregate::Box,
@@ -535,10 +553,12 @@ fn config_id(program: &ProgrammedBoxType) -> u64 {
     let mut bytes = Vec::new();
     put_len(&mut bytes, program.box_type.label().len());
     bytes.extend(program.box_type.label().as_bytes());
-    bytes.push(match program.grouping {
-        Grouping::Fixed => 0,
-        Grouping::Spatial => 1,
-        Grouping::Temporal => 2,
+    // Precession keeps the ids configs had before `temporal_start`.
+    bytes.push(match (program.grouping, program.temporal_start) {
+        (Grouping::Fixed, _) => 0,
+        (Grouping::Spatial, _) => 1,
+        (Grouping::Temporal, TemporalStart::Precession) => 2,
+        (Grouping::Temporal, TemporalStart::Random) => 3,
     });
     bytes.push(match program.aggregate {
         Aggregate::Box => 0,
@@ -1169,6 +1189,19 @@ mod tests {
                 "pmus.irp.groups[1].units: temporal groups must run on the units of groups[0]",
             ),
             (
+                request(json!({"cha": {"temporal_start": "random", "groups": [clockticks()]}})),
+                "pmus.cha.temporal_start: only temporal grouping takes a temporal start",
+            ),
+            (
+                request(
+                    json!({"cha": {"grouping": "spatial", "temporal_start": "precession", "groups": [
+                        {"units": [0, 1], "events": [{"alias": "clockticks"}]},
+                        {"units": [2, 3], "events": [{"alias": "clockticks"}]}
+                    ]}}),
+                ),
+                "pmus.cha.temporal_start: only temporal grouping takes a temporal start",
+            ),
+            (
                 request(json!({"cha": {"packages": [2], "groups": [clockticks()]}})),
                 "pmus.cha.packages[0]: package 2 does not exist (packages: 0, 1)",
             ),
@@ -1540,6 +1573,12 @@ mod tests {
                 "unknown variant `rotating`",
             ),
             (
+                request(
+                    json!({"cha": {"grouping": "temporal", "temporal_start": "block", "groups": []}}),
+                ),
+                "unknown variant `block`",
+            ),
+            (
                 pmu("cha", json!({"events": [], "counters": 4})),
                 "unknown field `counters`",
             ),
@@ -1619,5 +1658,35 @@ mod tests {
         let mut aggregate = cha("0x34");
         aggregate["aggregate"] = json!("box");
         assert_ne!(config_id(json!({"cha": aggregate}), BoxType::Cha), base);
+    }
+
+    #[test]
+    fn config_id_stays_under_precession_and_tracks_the_temporal_start() {
+        let fixed = json!({"groups": [{"events": [{"event": "0x35", "umask": "0x34"}]}]});
+        let temporal = |start: Option<&str>| {
+            let mut cha = json!({"grouping": "temporal", "groups": [
+                {"events": [{"event": "0x35", "umask": "0x34"}]},
+                {"events": [{"event": "0x35", "umask": "0x31"}]}
+            ]});
+            if let Some(start) = start {
+                cha["temporal_start"] = json!(start);
+            }
+            configs(request(json!({"cha": cha}))).unwrap().remove(0)
+        };
+        let precession = temporal(None);
+
+        // The ids these configs had on ec96f8e, before `temporal_start`.
+        assert_eq!(
+            configs(request(json!({"cha": fixed}))).unwrap()[0].config_id,
+            3_656_996_506_036_403
+        );
+        assert_eq!(precession.config_id, 4_404_632_672_943_649);
+        assert_eq!(precession.program.temporal_start, TemporalStart::Precession);
+        assert_eq!(temporal(Some("precession")), precession);
+
+        let random = temporal(Some("random"));
+        assert_eq!(random.program.temporal_start, TemporalStart::Random);
+        assert_ne!(random.config_id, precession.config_id);
+        assert!(random.config_id < ID_LIMIT);
     }
 }

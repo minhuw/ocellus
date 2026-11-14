@@ -44,6 +44,27 @@ pub enum Grouping {
     Temporal,
 }
 
+/// Which group each sample of temporal groups starts with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
+pub enum TemporalStart {
+    /// The sample of index `cycle` starts at group `cycle` mod n, one group
+    /// later than the sample before, so any n consecutive samples give every
+    /// group every slice position once. The default.
+    Precession,
+    /// Cycles split into blocks of n from cycle 0; the sample `cycle` of
+    /// block k = `cycle` / n starts at group (`cycle` + r_k) mod n, where r_k
+    /// = SplitMix64(k) mod n. Within a block every group counts at every
+    /// slice position once, and across blocks a fixed instant moves between
+    /// positions pseudo-randomly.
+    Random,
+}
+
+impl TemporalStart {
+    fn is_precession(&self) -> bool {
+        *self == Self::Precession
+    }
+}
+
 /// What one exported count series covers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum Aggregate {
@@ -113,6 +134,10 @@ pub struct ProgrammedGroup {
 pub struct ProgrammedBoxType {
     pub box_type: BoxType,
     pub grouping: Grouping,
+    /// Precession for fixed and spatial groups. The JSON state leaves out
+    /// precession, as it did before the field.
+    #[serde(skip_serializing_if = "TemporalStart::is_precession")]
+    pub temporal_start: TemporalStart,
     pub aggregate: Aggregate,
     pub groups: Vec<ProgrammedGroup>,
 }
@@ -121,21 +146,21 @@ impl ProgrammedBoxType {
     /// The `group` of the temporal group that counts first in the sample of
     /// index `cycle`; `None` for fixed and spatial groups, which count at once.
     pub fn first_group(&self, cycle: u64) -> Option<u8> {
-        (self.grouping == Grouping::Temporal)
-            .then(|| self.groups[temporal_first_group(cycle, self.groups.len())].index)
+        (self.grouping == Grouping::Temporal).then(|| {
+            self.groups[temporal_first_group(self.temporal_start, cycle, self.groups.len())].index
+        })
     }
 }
 
 /// The position of the group that counts first in the sample of index
 /// `cycle` (`metrics::sample::cycle_index`), of `group_count` temporal
-/// groups. Cycles split into blocks of n = `group_count` from cycle 0; the
-/// sample `cycle` of block k = `cycle` / n starts at group (`cycle` + r_k)
-/// mod n, where r_k = SplitMix64(k) mod n. Within a block every group counts
-/// at every slice position once, and across blocks a fixed instant moves
-/// between positions pseudo-randomly.
-pub fn temporal_first_group(cycle: u64, group_count: usize) -> usize {
+/// groups that start as `start` says.
+pub fn temporal_first_group(start: TemporalStart, cycle: u64, group_count: usize) -> usize {
     let n = group_count as u64;
-    let offset = splitmix64(cycle / n) % n;
+    let offset = match start {
+        TemporalStart::Precession => 0,
+        TemporalStart::Random => splitmix64(cycle / n) % n,
+    };
 
     ((cycle % n + offset) % n) as usize
 }
@@ -348,6 +373,7 @@ mod tests {
             program: ProgrammedBoxType {
                 box_type: BoxType::Cha,
                 grouping: Grouping::Fixed,
+                temporal_start: TemporalStart::Precession,
                 aggregate,
                 groups: vec![ProgrammedGroup {
                     index: 0,
@@ -434,22 +460,27 @@ mod tests {
 
     #[test]
     fn starts_temporal_groups_at_the_same_group_for_the_same_cycle() {
-        for (cycle, group_count, expected) in [
-            (0, 3, 0),
-            (3, 3, 1),
-            (1_763_000_005, 3, 1),
-            (13, 8, 2),
-            (11, 11, 2),
-            (u64::MAX, 11, 1),
-            (1_763_000_067, 12, 0),
-            (1_763_000_068, 12, 1),
-            (5, 1, 0),
+        for (cycle, group_count, precession, random) in [
+            (0, 3, 0, 0),
+            (3, 3, 0, 1),
+            (1_763_000_005, 3, 1, 1),
+            (13, 8, 5, 2),
+            (11, 11, 0, 2),
+            (u64::MAX, 11, 4, 1),
+            (1_763_000_067, 12, 3, 0),
+            (1_763_000_068, 12, 4, 1),
+            (5, 1, 0, 0),
         ] {
-            assert_eq!(
-                temporal_first_group(cycle, group_count),
-                expected,
-                "{group_count} groups, cycle {cycle}"
-            );
+            for (start, expected) in [
+                (TemporalStart::Precession, precession),
+                (TemporalStart::Random, random),
+            ] {
+                assert_eq!(
+                    temporal_first_group(start, cycle, group_count),
+                    expected,
+                    "{start:?}, {group_count} groups, cycle {cycle}"
+                );
+            }
         }
 
         let mut program = config(Aggregate::Box).program;
@@ -459,14 +490,30 @@ mod tests {
                 ..program.groups[0].clone()
             })
             .collect();
-        for (grouping, expected) in [
-            (Grouping::Fixed, None),
-            (Grouping::Spatial, None),
-            (Grouping::Temporal, Some(1)),
+        for (grouping, start, expected) in [
+            (Grouping::Fixed, TemporalStart::Precession, None),
+            (Grouping::Spatial, TemporalStart::Precession, None),
+            (Grouping::Temporal, TemporalStart::Precession, Some(0)),
+            (Grouping::Temporal, TemporalStart::Random, Some(1)),
         ] {
             program.grouping = grouping;
-            assert_eq!(program.first_group(1_763_000_005), expected, "{grouping:?}");
+            program.temporal_start = start;
+            assert_eq!(program.first_group(3), expected, "{grouping:?}, {start:?}");
         }
+    }
+
+    #[test]
+    fn leaves_the_default_temporal_start_out_of_the_json_state() {
+        let mut program = config(Aggregate::Box).program;
+        program.grouping = Grouping::Temporal;
+        let json = serde_json::to_value(&program).unwrap();
+        assert!(json.get("temporal_start").is_none(), "{json}");
+
+        program.temporal_start = TemporalStart::Random;
+        assert_eq!(
+            serde_json::to_value(&program).unwrap()["temporal_start"],
+            "Random"
+        );
     }
 
     #[test]

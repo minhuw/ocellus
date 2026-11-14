@@ -99,30 +99,38 @@ time) to the next, so the samples of all box types cover the same intervals
 to within a few milliseconds.
 
 Temporal groups take turns within each sample, in group order from a first
-group that is the same for every collector. Sample c, the one that ends c
-measure intervals after the Unix epoch (its Unix second at a 1 s interval),
-lies in block k = floor(c / n), where n is the box type's temporal group
-count, and starts with group (c + r_k) mod n, where r_k = SplitMix64(k) mod n
-(the SplitMix64 finalizer on the u64 k). Within a block every group counts at
-every slice position once; across blocks the position of a fixed instant
-moves pseudo-randomly, so a source whose period is a multiple of n does not
-stay in one group's slice. `ocellus_uncore_schedule_first_group{box_type}` is
-the group in slice 0 of a temporal config's latest sample: slice p of each
-round ran group (first + p) mod n.
+group that is the same for every collector. By default
+(`"temporal_start": "precession"`) each sample starts one group later than the
+one before: sample c, the one that ends c measure intervals after the Unix
+epoch (its Unix second at a 1 s interval), starts with group c mod n, where n
+is the box type's temporal group count. Any n consecutive samples give every
+group every slice position once, so a rate is unbiased over any window of a
+whole multiple of n samples; comparing box types takes a whole multiple of the
+lcm of their counts (fixed and spatial configs count as 1). A source whose
+period is a multiple of n stays in one group's slice.
+`ocellus_uncore_schedule_first_group{box_type}` is the group in slice 0 of a
+temporal config's latest sample: slice p of each round ran group (first + p)
+mod n.
 
-Rates are unbiased only over aligned windows. A window must start at a sample
-whose cycle c ≡ 0 mod L_n and cover whole blocks of L_n samples, where L_n is
-the lcm of the temporal group counts in the bundle (fixed and spatial configs
-count as 1). Any n consecutive samples no longer balance the groups: an
-unaligned window covers some group-slot pairs more often than others, so a
-burst of B counts at a fixed phase of each sample biases a group's rate by
-up to ±B/m per second over a window of m blocks of n 1 s samples. No randomized
-schedule can keep every sliding window balanced: if both of two windows of n
-samples that overlap by n - 1 are balanced, the sample that enters repeats
-the one that leaves, so the schedule repeats every n samples, the fixed
-rotation that a source with a period of a multiple of n locks to. Single
-samples still swing where a group meets a source locked to a phase of the
-interval.
+`"temporal_start": "random"`, next to `"grouping": "temporal"`, moves such a
+source between slices and gives the config a different `config_id`. Sample c
+lies in block k = floor(c / n) and starts with group (c + r_k) mod n, where
+r_k = SplitMix64(k) mod n (the SplitMix64 finalizer on the u64 k). Within a
+block every group counts at every slice position once; across blocks the
+position of a fixed instant moves pseudo-randomly. Rates are then unbiased
+only over aligned windows: a window must start at a sample whose cycle
+c ≡ 0 mod L_n and cover whole blocks of L_n samples, where L_n is the lcm of
+the temporal group counts in the bundle. An unaligned window covers some
+group-slot pairs more often than others, so a burst of B counts at a fixed
+phase of each sample biases a group's rate by up to ±B/m per second over a
+window of m blocks of n 1 s samples. No randomized schedule can keep every
+sliding window balanced: if both of two windows of n samples that overlap by
+n - 1 are balanced, the sample that enters repeats the one that leaves, so the
+schedule repeats every n samples, the fixed rotation that a source with a
+period of a multiple of n locks to.
+
+Under either rule single samples swing where a group meets a source locked to
+a phase of the interval.
 
 ## RDT memory bandwidth on Skylake-SP and Cascade Lake
 

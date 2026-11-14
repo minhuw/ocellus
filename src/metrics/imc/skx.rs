@@ -999,7 +999,7 @@ fn config_schedule(
         Grouping::Temporal => {
             let round_count = measurement_round_count(interval, group_count);
             let duration = interval.div_f64((group_count * round_count) as f64);
-            let start = temporal_first_group(cycle, group_count);
+            let start = temporal_first_group(program.temporal_start, cycle, group_count);
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
@@ -1181,7 +1181,7 @@ mod tests {
 
     use super::*;
     use crate::pmu_config::types::{
-        Aggregate, ChaFilters, CountUnit, EventLabels, ProgrammedCounter,
+        Aggregate, ChaFilters, CountUnit, EventLabels, ProgrammedCounter, TemporalStart,
     };
 
     #[test]
@@ -1563,13 +1563,13 @@ mod tests {
     }
 
     #[test]
-    fn starts_temporal_config_groups_by_block() {
-        crate::metrics::testing::assert_block_schedule(BoxType::Imc, scheduled_slices);
+    fn starts_temporal_config_groups_by_their_start_rule() {
+        crate::metrics::testing::assert_temporal_schedule(BoxType::Imc, scheduled_slices);
     }
 
     #[test]
-    fn reads_phase_locked_sources_without_bias_over_whole_blocks() {
-        crate::metrics::testing::assert_unbiased_over_blocks(BoxType::Imc, scheduled_slices);
+    fn reads_phase_locked_sources_without_bias_over_balanced_windows() {
+        crate::metrics::testing::assert_unbiased_over_windows(BoxType::Imc, scheduled_slices);
     }
 
     #[test]
@@ -1830,6 +1830,7 @@ mod tests {
         ProgrammedBoxType {
             box_type: BoxType::Imc,
             grouping,
+            temporal_start: TemporalStart::Precession,
             aggregate: Aggregate::Box,
             groups,
         }

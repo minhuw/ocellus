@@ -933,7 +933,7 @@ mod tests {
     use crate::metrics::iio::skx::{ConfigReading, ConfigSlice};
     use crate::pmu_config::types::{
         Aggregate, ChaFilters, CountUnit, CounterSlot, EventLabels, GroupRunning, Grouping,
-        ProgrammedBoxType, ProgrammedCounter, UnitCount,
+        ProgrammedBoxType, ProgrammedCounter, TemporalStart, UnitCount,
     };
 
     const CONTROL: u64 = 0x50_0001;
@@ -1407,6 +1407,7 @@ mod tests {
             program: ProgrammedBoxType {
                 box_type: BoxType::Irp,
                 grouping,
+                temporal_start: TemporalStart::Precession,
                 aggregate,
                 groups,
             },

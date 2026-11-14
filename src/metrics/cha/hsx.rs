@@ -1914,7 +1914,7 @@ fn cbo_config_schedule(
         Grouping::Temporal => {
             let round_count = measurement_round_count(interval, group_count);
             let duration = interval.div_f64((round_count * group_count) as f64);
-            let start = temporal_first_group(cycle, group_count);
+            let start = temporal_first_group(program.temporal_start, cycle, group_count);
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
@@ -2028,7 +2028,9 @@ fn add_cbo_config_slice(
 mod tests {
     use super::*;
     use crate::metrics::ConfigurableCollector;
-    use crate::pmu_config::types::{Aggregate, CountUnit, EventLabels, ProgrammedCounter};
+    use crate::pmu_config::types::{
+        Aggregate, CountUnit, EventLabels, ProgrammedCounter, TemporalStart,
+    };
 
     #[test]
     fn computes_hsx_cha_metrics() {
@@ -2660,13 +2662,13 @@ mod tests {
     }
 
     #[test]
-    fn starts_temporal_config_groups_by_block() {
-        crate::metrics::testing::assert_block_schedule(BoxType::Cha, scheduled_slices);
+    fn starts_temporal_config_groups_by_their_start_rule() {
+        crate::metrics::testing::assert_temporal_schedule(BoxType::Cha, scheduled_slices);
     }
 
     #[test]
-    fn reads_phase_locked_sources_without_bias_over_whole_blocks() {
-        crate::metrics::testing::assert_unbiased_over_blocks(BoxType::Cha, scheduled_slices);
+    fn reads_phase_locked_sources_without_bias_over_balanced_windows() {
+        crate::metrics::testing::assert_unbiased_over_windows(BoxType::Cha, scheduled_slices);
     }
 
     #[test]
@@ -3029,6 +3031,7 @@ mod tests {
         ProgrammedBoxType {
             box_type: BoxType::Cha,
             grouping,
+            temporal_start: TemporalStart::Precession,
             aggregate,
             groups,
         }

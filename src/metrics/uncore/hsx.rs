@@ -506,7 +506,7 @@ pub fn config_schedule(
         Grouping::Temporal => {
             let round_count = measurement_round_count(interval, group_count);
             let duration = interval.div_f64((group_count * round_count) as f64);
-            let start = temporal_first_group(cycle, group_count);
+            let start = temporal_first_group(program.temporal_start, cycle, group_count);
 
             (0..round_count)
                 .flat_map(|_| 0..group_count)
@@ -713,13 +713,13 @@ mod tests {
 
     // The HSX IMC and HA collectors share this schedule.
     #[test]
-    fn starts_temporal_config_groups_by_block() {
-        crate::metrics::testing::assert_block_schedule(BoxType::Imc, scheduled_slices);
+    fn starts_temporal_config_groups_by_their_start_rule() {
+        crate::metrics::testing::assert_temporal_schedule(BoxType::Imc, scheduled_slices);
     }
 
     #[test]
-    fn reads_phase_locked_sources_without_bias_over_whole_blocks() {
-        crate::metrics::testing::assert_unbiased_over_blocks(BoxType::Imc, scheduled_slices);
+    fn reads_phase_locked_sources_without_bias_over_balanced_windows() {
+        crate::metrics::testing::assert_unbiased_over_windows(BoxType::Imc, scheduled_slices);
     }
 
     #[test]
@@ -918,7 +918,7 @@ pub(crate) mod config_fixtures {
 
     use crate::pmu_config::types::{
         Aggregate, BoxType, CountUnit, CounterSlot, EventLabels, Grouping, PmuConfig,
-        ProgrammedBoxType, ProgrammedCounter, ProgrammedGroup, UncoreCounts,
+        ProgrammedBoxType, ProgrammedCounter, ProgrammedGroup, TemporalStart, UncoreCounts,
     };
 
     pub(crate) fn config_counter(slot: CounterSlot, control: u64) -> ProgrammedCounter {
@@ -951,6 +951,7 @@ pub(crate) mod config_fixtures {
         ProgrammedBoxType {
             box_type,
             grouping,
+            temporal_start: TemporalStart::Precession,
             aggregate: Aggregate::Box,
             groups,
         }

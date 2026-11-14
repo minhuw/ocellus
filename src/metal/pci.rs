@@ -4,6 +4,8 @@ use std::io;
 use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 
+use crate::metal::topology::parse_cpu_list;
+
 const INTEL_VENDOR_ID: u16 = 0x8086;
 const PCI_CONFIG_ROOT: &str = "/proc/bus/pci";
 const PCI_SYSFS_ROOT: &str = "/sys/bus/pci/devices";
@@ -446,34 +448,6 @@ fn pci_sysfs_path(location: PciLocation) -> PathBuf {
     PathBuf::from(PCI_SYSFS_ROOT).join(location.to_string())
 }
 
-fn parse_cpu_list(cpulist: &str) -> Result<Vec<u32>, String> {
-    let mut cpus = Vec::new();
-
-    for item in cpulist.trim().split(',').filter(|item| !item.is_empty()) {
-        match item.split_once('-') {
-            Some((start, end)) => {
-                let start = parse_cpu_id(start)?;
-                let end = parse_cpu_id(end)?;
-                if end < start {
-                    return Err(format!("invalid descending CPU range {item}"));
-                }
-                cpus.extend(start..=end);
-            }
-            None => cpus.push(parse_cpu_id(item)?),
-        }
-    }
-
-    cpus.sort_unstable();
-    cpus.dedup();
-    Ok(cpus)
-}
-
-fn parse_cpu_id(value: &str) -> Result<u32, String> {
-    value
-        .parse()
-        .map_err(|error| format!("invalid CPU id {value:?}: {error}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,12 +521,5 @@ mod tests {
             Some((0x1f, 3))
         );
         assert_eq!(parse_pci_device_file(std::ffi::OsStr::new("devices")), None);
-    }
-
-    #[test]
-    fn parses_cpu_lists() {
-        assert_eq!(parse_cpu_list("0-2,4,6-7\n"), Ok(vec![0, 1, 2, 4, 6, 7]));
-        assert_eq!(parse_cpu_list("\n"), Ok(vec![]));
-        assert!(parse_cpu_list("3-1").is_err());
     }
 }

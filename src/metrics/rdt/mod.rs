@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::msr::Msr;
-use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metal::topology::{CpuTopology, TopologyLevelKind, format_cpu_list, parse_cpu_list};
 use crate::metrics::common::topology_label;
 use crate::metrics::sample::until_next_boundary;
 use crate::metrics::{InfoMetadata, MetricEvent, MetricUpdate};
@@ -2213,69 +2213,6 @@ fn shared_l3_cpu_list(cpu: u32) -> Result<Option<Vec<u32>>, String> {
     }
 }
 
-fn parse_cpu_list(cpulist: &str) -> Result<Vec<u32>, String> {
-    let mut cpus = Vec::new();
-
-    for item in cpulist.trim().split(',').filter(|item| !item.is_empty()) {
-        match item.split_once('-') {
-            Some((start, end)) => {
-                let start = parse_cpu_id(start)?;
-                let end = parse_cpu_id(end)?;
-                if end < start {
-                    return Err(format!("invalid descending CPU range {item}"));
-                }
-                cpus.extend(start..=end);
-            }
-            None => cpus.push(parse_cpu_id(item)?),
-        }
-    }
-
-    cpus.sort_unstable();
-    cpus.dedup();
-    Ok(cpus)
-}
-
-fn format_cpu_list(cpus: &[u32]) -> String {
-    if cpus.is_empty() {
-        return String::new();
-    }
-
-    let mut cpus = cpus.to_vec();
-    cpus.sort_unstable();
-    cpus.dedup();
-
-    let mut ranges = Vec::new();
-    let mut start = cpus[0];
-    let mut previous = cpus[0];
-    for cpu in cpus.into_iter().skip(1) {
-        if cpu == previous + 1 {
-            previous = cpu;
-            continue;
-        }
-
-        ranges.push(format_cpu_range(start, previous));
-        start = cpu;
-        previous = cpu;
-    }
-    ranges.push(format_cpu_range(start, previous));
-
-    ranges.join(",")
-}
-
-fn format_cpu_range(start: u32, end: u32) -> String {
-    if start == end {
-        start.to_string()
-    } else {
-        format!("{start}-{end}")
-    }
-}
-
-fn parse_cpu_id(value: &str) -> Result<u32, String> {
-    value
-        .parse()
-        .map_err(|error| format!("invalid CPU id {value:?}: {error}"))
-}
-
 fn rmid_mask(max_rmid: u32) -> u64 {
     bit_width_mask(rmid_width(max_rmid))
 }
@@ -2475,21 +2412,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(bytes_per_second, 12_800.0);
-    }
-
-    #[test]
-    fn parses_shared_cpu_lists() {
-        assert_eq!(parse_cpu_list("0-2,4,6-7\n"), Ok(vec![0, 1, 2, 4, 6, 7]));
-        assert_eq!(parse_cpu_list("4,2,2,3\n"), Ok(vec![2, 3, 4]));
-        assert_eq!(parse_cpu_list("\n"), Ok(vec![]));
-        assert!(parse_cpu_list("3-1").is_err());
-    }
-
-    #[test]
-    fn formats_cpu_lists() {
-        assert_eq!(format_cpu_list(&[]), "");
-        assert_eq!(format_cpu_list(&[0, 1, 2, 4, 6, 7]), "0-2,4,6-7");
-        assert_eq!(format_cpu_list(&[4, 2, 3, 2]), "2-4");
     }
 
     #[test]

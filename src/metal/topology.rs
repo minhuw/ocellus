@@ -3,6 +3,7 @@ use nix::unistd::Pid;
 
 const CPUID_EXTENDED_TOPOLOGY: u32 = 0x0b;
 const CPUID_EXTENDED_TOPOLOGY_V2: u32 = 0x1f;
+const ONLINE_CPUS_PATH: &str = "/sys/devices/system/cpu/online";
 const TOPOLOGY_TYPE_CORE: u32 = 2;
 const TOPOLOGY_TYPE_DIE: u32 = 5;
 const TOPOLOGY_TYPE_DIE_GROUP: u32 = 6;
@@ -89,37 +90,123 @@ fn pin_to_cpu(cpu: u32) -> Result<(), String> {
         .map_err(|error| format!("failed to set CPU affinity: {error}"))
 }
 
+/// Reads the topology of every online CPU. Fails if any online CPU cannot be
+/// pinned, so that no caller works from a partial CPU list.
 pub fn cpu_topologies() -> Result<Vec<CpuTopology>, String> {
     let _original_affinity = ScopedThreadAffinity::current()?;
-    let mut topologies = Vec::new();
 
-    for cpu in available_cpu_candidates()? {
-        if pin_to_cpu(cpu).is_err() {
+    cpu_topologies_from_online_cpus(&online_cpus()?, pin_to_cpu, current_cpu_topology)
+}
+
+fn cpu_topologies_from_online_cpus(
+    online_cpus: &[u32],
+    mut pin_to_cpu: impl FnMut(u32) -> Result<(), String>,
+    mut cpu_topology: impl FnMut(u32) -> Result<CpuTopology, String>,
+) -> Result<Vec<CpuTopology>, String> {
+    let mut topologies = Vec::new();
+    let mut unpinnable_cpus = Vec::new();
+    let mut first_pin_error = None;
+
+    for &cpu in online_cpus {
+        if let Err(error) = pin_to_cpu(cpu) {
+            unpinnable_cpus.push(cpu);
+            first_pin_error.get_or_insert(error);
             continue;
         }
 
-        topologies.push(current_cpu_topology(cpu)?);
+        topologies.push(cpu_topology(cpu)?);
     }
 
-    if topologies.is_empty() {
-        return Err("failed to discover CPU topology for any CPU".to_string());
+    if let Some(error) = first_pin_error {
+        return Err(format!(
+            "cannot pin to online CPUs {} ({error}); the cgroup cpuset of the ocellus process likely excludes them, and ocellus must run where every online CPU is allowed",
+            format_cpu_list(&unpinnable_cpus)
+        ));
     }
 
     Ok(topologies)
 }
 
-fn available_cpu_candidates() -> Result<Vec<u32>, String> {
-    let mut cpus = Vec::new();
+fn online_cpus() -> Result<Vec<u32>, String> {
+    let cpulist = std::fs::read_to_string(ONLINE_CPUS_PATH)
+        .map_err(|error| format!("failed to read {ONLINE_CPUS_PATH}: {error}"))?;
 
-    for cpu in 0..CpuSet::count() {
-        cpus.push(u32::try_from(cpu).map_err(|error| format!("CPU id is invalid: {error}"))?);
-    }
+    online_cpus_from_cpulist(&cpulist)
+}
+
+fn online_cpus_from_cpulist(cpulist: &str) -> Result<Vec<u32>, String> {
+    let cpus = parse_cpu_list(cpulist).map_err(|error| {
+        format!("failed to parse {ONLINE_CPUS_PATH} value {cpulist:?}: {error}")
+    })?;
 
     if cpus.is_empty() {
-        return Err("system does not expose any CPU affinity slots".to_string());
+        return Err(format!("{ONLINE_CPUS_PATH} lists no CPUs"));
     }
 
     Ok(cpus)
+}
+
+pub fn parse_cpu_list(cpulist: &str) -> Result<Vec<u32>, String> {
+    let mut cpus = Vec::new();
+
+    for item in cpulist.trim().split(',').filter(|item| !item.is_empty()) {
+        match item.split_once('-') {
+            Some((start, end)) => {
+                let start = parse_cpu_id(start)?;
+                let end = parse_cpu_id(end)?;
+                if end < start {
+                    return Err(format!("invalid descending CPU range {item}"));
+                }
+                cpus.extend(start..=end);
+            }
+            None => cpus.push(parse_cpu_id(item)?),
+        }
+    }
+
+    cpus.sort_unstable();
+    cpus.dedup();
+    Ok(cpus)
+}
+
+pub fn format_cpu_list(cpus: &[u32]) -> String {
+    if cpus.is_empty() {
+        return String::new();
+    }
+
+    let mut cpus = cpus.to_vec();
+    cpus.sort_unstable();
+    cpus.dedup();
+
+    let mut ranges = Vec::new();
+    let mut start = cpus[0];
+    let mut previous = cpus[0];
+    for cpu in cpus.into_iter().skip(1) {
+        if cpu == previous + 1 {
+            previous = cpu;
+            continue;
+        }
+
+        ranges.push(format_cpu_range(start, previous));
+        start = cpu;
+        previous = cpu;
+    }
+    ranges.push(format_cpu_range(start, previous));
+
+    ranges.join(",")
+}
+
+fn format_cpu_range(start: u32, end: u32) -> String {
+    if start == end {
+        start.to_string()
+    } else {
+        format!("{start}-{end}")
+    }
+}
+
+fn parse_cpu_id(value: &str) -> Result<u32, String> {
+    value
+        .parse()
+        .map_err(|error| format!("invalid CPU id {value:?}: {error}"))
 }
 
 fn current_cpu_topology(cpu: u32) -> Result<CpuTopology, String> {
@@ -213,8 +300,99 @@ mod tests {
     use super::*;
 
     #[test]
-    fn discovers_cpu_candidates() {
-        assert!(!available_cpu_candidates().unwrap().is_empty());
+    fn parses_online_cpus() {
+        assert_eq!(
+            online_cpus_from_cpulist("0-3,6-7\n"),
+            Ok(vec![0, 1, 2, 3, 6, 7])
+        );
+        assert!(online_cpus_from_cpulist("\n").is_err());
+    }
+
+    #[test]
+    fn reads_topology_of_every_online_cpu() {
+        let topologies =
+            cpu_topologies_from_online_cpus(&[0, 1, 2, 3], |_| Ok(()), test_cpu_topology).unwrap();
+
+        assert_eq!(
+            topologies
+                .iter()
+                .map(|topology| topology.cpu)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn fails_on_online_cpu_that_cannot_be_pinned() {
+        let error = cpu_topologies_from_online_cpus(
+            &[0, 1, 2, 3],
+            |cpu| match cpu {
+                2 => Err("failed to set CPU affinity: EINVAL: Invalid argument".to_string()),
+                _ => Ok(()),
+            },
+            test_cpu_topology,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            "cannot pin to online CPUs 2 (failed to set CPU affinity: EINVAL: Invalid argument); the cgroup cpuset of the ocellus process likely excludes them, and ocellus must run where every online CPU is allowed"
+        );
+    }
+
+    #[test]
+    fn names_every_online_cpu_that_cannot_be_pinned() {
+        let error = cpu_topologies_from_online_cpus(
+            &[0, 1, 2, 3, 4, 5, 6, 7],
+            |cpu| match cpu {
+                4..=7 => Ok(()),
+                _ => Err("failed to set CPU affinity: EINVAL: Invalid argument".to_string()),
+            },
+            test_cpu_topology,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.starts_with("cannot pin to online CPUs 0-3 ("),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn skips_offline_cpus() {
+        let online_cpus = online_cpus_from_cpulist("0-3,6-7\n").unwrap();
+        let topologies = cpu_topologies_from_online_cpus(
+            &online_cpus,
+            |cpu| match cpu {
+                4 | 5 => Err("failed to set CPU affinity: EINVAL: Invalid argument".to_string()),
+                _ => Ok(()),
+            },
+            test_cpu_topology,
+        )
+        .unwrap();
+
+        assert_eq!(
+            topologies
+                .iter()
+                .map(|topology| topology.cpu)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 6, 7]
+        );
+    }
+
+    #[test]
+    fn parses_cpu_lists() {
+        assert_eq!(parse_cpu_list("0-2,4,6-7\n"), Ok(vec![0, 1, 2, 4, 6, 7]));
+        assert_eq!(parse_cpu_list("4,2,2,3\n"), Ok(vec![2, 3, 4]));
+        assert_eq!(parse_cpu_list("\n"), Ok(vec![]));
+        assert!(parse_cpu_list("3-1").is_err());
+    }
+
+    #[test]
+    fn formats_cpu_lists() {
+        assert_eq!(format_cpu_list(&[]), "");
+        assert_eq!(format_cpu_list(&[0, 1, 2, 4, 6, 7]), "0-2,4,6-7");
+        assert_eq!(format_cpu_list(&[4, 2, 3, 2]), "2-4");
     }
 
     #[test]
@@ -260,6 +438,10 @@ mod tests {
             2 => cpuid_result(8, 1, 0x700, 0x100),
             _ => cpuid_result(0, 0, 0, 0),
         }
+    }
+
+    fn test_cpu_topology(cpu: u32) -> Result<CpuTopology, String> {
+        cpu_topology_from_topology_leaf(cpu, || Some(CPUID_TEST_TOPOLOGY))
     }
 
     fn cpuid_result(eax: u32, ebx: u32, ecx: u32, edx: u32) -> raw_cpuid::CpuIdResult {

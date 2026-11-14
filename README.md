@@ -6,6 +6,8 @@
 
 `ocellus` currently reads x86 MSRs, so load the `msr` kernel module and run with root or `CAP_SYS_RAWIO`.
 
+`ocellus` must run where its cgroup cpuset allows every online CPU, for example in a systemd unit without an `AllowedCPUs=` restriction; otherwise it exits at startup.
+
 Local JSONL mode is the default:
 
 ```sh

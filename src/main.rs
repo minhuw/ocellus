@@ -178,6 +178,9 @@ async fn run(config: Config) -> Result<(), String> {
     config
         .event_profile()
         .validate(&architecture, config.cha_multiplex_mode())?;
+    // A collector that fails to start is only skipped, so check here that
+    // every online CPU can be pinned rather than run without some packages.
+    metal::topology::cpu_topologies()?;
 
     let sampler = runtime::sampler::spawn(config.sampler_config(), architecture);
 

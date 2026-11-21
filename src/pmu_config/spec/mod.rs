@@ -3,6 +3,7 @@
 
 mod hsx;
 mod skx;
+mod snb;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -331,6 +332,8 @@ pub fn validate(
     let program_group: ProgramGroup = match model {
         IntelServerCpuModel::SkylakeXeon => skx::program_group,
         IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => hsx::program_group,
+        IntelServerCpuModel::SandyBridgeEp => snb::program_sandy_bridge_group,
+        IntelServerCpuModel::IvyTown => snb::program_ivy_bridge_group,
         _ => return Err(format!("PMU configs are not supported on {model:?}")),
     };
 

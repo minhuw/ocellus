@@ -828,24 +828,25 @@ impl ConfigurableCollector for ChaCollector {
     fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
         match self {
             Self::Hsx(collector) => collector.config_units(),
+            Self::Ivb(collector) | Self::Snb(collector) => collector.config_units(),
             Self::Skx(collector) => collector.config_units(),
-            Self::Icx(_) | Self::Ivb(_) | Self::Snb(_) | Self::Emr(_) | Self::Spr(_) => {
-                BTreeMap::new()
-            }
+            Self::Icx(_) | Self::Emr(_) | Self::Spr(_) => BTreeMap::new(),
         }
     }
 
     fn has_config(&self) -> bool {
         match self {
             Self::Hsx(collector) => collector.has_config(),
+            Self::Ivb(collector) | Self::Snb(collector) => collector.has_config(),
             Self::Skx(collector) => collector.has_config(),
-            Self::Icx(_) | Self::Ivb(_) | Self::Snb(_) | Self::Emr(_) | Self::Spr(_) => false,
+            Self::Icx(_) | Self::Emr(_) | Self::Spr(_) => false,
         }
     }
 
     fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
         match self {
             Self::Hsx(collector) => collector.set_config(config),
+            Self::Ivb(collector) | Self::Snb(collector) => collector.set_config(config),
             Self::Skx(collector) => collector.set_config(config),
             _ if config.is_none() => Ok(()),
             collector => Err(format!(
@@ -862,6 +863,9 @@ impl ConfigurableCollector for ChaCollector {
     ) -> Result<UncoreCounts, String> {
         match self {
             Self::Hsx(collector) => collector.sample_config(interval, cycle).await,
+            Self::Ivb(collector) | Self::Snb(collector) => {
+                collector.sample_config(interval, cycle).await
+            }
             Self::Skx(collector) => collector.sample_config(interval, cycle).await,
             collector => Err(format!(
                 "PMU configs are not supported on {}",

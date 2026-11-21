@@ -39,12 +39,13 @@ sudo ./result/bin/ocellus --daemon --listen 0.0.0.0:8080 --measure-interval-ms 1
 
 ## PMU configs
 
-On Skylake-SP, Cascade Lake, Haswell-EP and Broadwell-EP, daemon mode lets a
-client set uncore event groups at runtime. While a box type (`cha`, `iio`,
-`irp`, `imc`, `ha`) has a config, its collector counts the config's groups
-instead of its default ones, and `/metrics` exports raw counts cumulative since
-the config was set in place of the box type's default `ocellus_<box type>_*`
-(Haswell-EP/Broadwell-EP: `ocellus_haswell_<box type>_*`) metrics.
+On Skylake-SP, Cascade Lake, Sandy Bridge-EP, Ivy Bridge-EP, Haswell-EP and
+Broadwell-EP, daemon mode lets a client set uncore event groups at runtime.
+While a box type (`cha`, `iio`, `irp`, `imc`, `ha`) has a config, its
+collector counts the config's groups instead of its default ones, and
+`/metrics` exports raw counts cumulative since the config was set in place of
+the box type's default `ocellus_<box type>_*` (Haswell-EP/Broadwell-EP:
+`ocellus_haswell_<box type>_*`) metrics.
 
 ```sh
 curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
@@ -78,6 +79,16 @@ traffic or both see all of it. Until item 10 has run, count with
 `"aggregate": "box"` or one set's `units`; with `"aggregate": "sum"` a
 group on both sets counts the box's traffic twice if both sets see all of it.
 
+Sandy Bridge-EP and Ivy Bridge-EP take configs for `cha` (the CBo boxes) in
+the Haswell-EP shape. PCIe requests carry thread id 0x1e, which only the
+Sandy Bridge-EP guide documents. Sandy Bridge-EP's TOR events have no
+`local` or `remote` home and its filters no `nc` or `isoc`. It has one CBo
+filter register: a group's `filter0` fields (`tid`, `states`) and `filter1`
+fields (`opcodes`, `nid`) both fill it, each filter's `raw` gives its own
+fields' bits in place, and `event_info` carries only `filter0`. These
+encodings follow Intel's uncore guides (327043, 329468), the perfmon JSON
+and Linux, and have not been checked on hardware.
+
 - `PUT /pmu-config` sets the configs of the box types it names and returns
   every other box type to its default groups. Once every affected collector
   has switched it replies `200` with
@@ -99,9 +110,9 @@ A config exports, from its first sample on:
 - `ocellus_uncore_schedule_first_group{box_type}`, for temporal configs: the
   group the latest sample started with (see below).
 - `ocellus_uncore_event_info{config_id,box_type,package,group,slot,units,alias,event,umask,...} 1`:
-  what each counter counts, with `filter0`/`filter1` for CHA,
-  `ch_mask`/`fc_mask` for IIO, and `tid_en="1"` on Haswell-EP/Broadwell-EP
-  CBo events that set it.
+  what each counter counts, with `filter0`/`filter1` for CHA (`filter0` only
+  on Sandy Bridge-EP), `ch_mask`/`fc_mask` for IIO, and `tid_en="1"` on the
+  CBo events of Sandy Bridge-EP to Broadwell-EP that set it.
 
 A delta of a box type's counts is valid only between two samples with equal
 `ocellus_uncore_config_id` and equal

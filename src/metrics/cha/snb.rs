@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -17,8 +17,12 @@ use crate::metrics::cha::{
     scale_measurement_value,
 };
 use crate::metrics::common::topology_label;
-use crate::metrics::uncore::hsx::{self, HsxUncoreScope};
+use crate::metrics::uncore::hsx::{self, ConfigReading, ConfigSlice, HsxUncoreScope};
 use crate::metrics::uncore::skx::{UncoreScope, queue_residency_seconds, ratio};
+use crate::pmu_config::types::{
+    BoxType, ChaFilters, CountAccumulator, CounterSlot, PmuConfig, ProgrammedBoxType,
+    ProgrammedGroup, UncoreCounts,
+};
 
 const SNB_CBO_EVENT_GROUP_COUNT: usize = 27;
 pub(crate) const EVENT_GROUP_COUNT: usize = SNB_CBO_EVENT_GROUP_COUNT;
@@ -646,6 +650,9 @@ impl SnbChaTransactionResultLabels {
 #[derive(Debug)]
 pub struct SnbChaCollector {
     architecture: SnbChaArchitecture,
+    /// The PMU config counted instead of the built-in groups, with its counts
+    /// so far.
+    config: Option<CountAccumulator>,
     multiplex_mode: ChaMultiplexMode,
     next_group: usize,
     next_partition_offset: usize,
@@ -663,6 +670,7 @@ impl SnbChaCollector {
 
         Ok(Self {
             architecture,
+            config: None,
             multiplex_mode: ChaMultiplexMode::default(),
             next_group: 0,
             next_partition_offset: 0,
@@ -794,6 +802,112 @@ impl SnbChaCollector {
     }
 }
 
+impl SnbChaCollector {
+    /// The CBo ids of each package that PMU configs can program.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        self.packages
+            .iter()
+            .map(|package| {
+                (
+                    package.scope.package_id as u16,
+                    package.units.iter().map(|unit| unit.id as u16).collect(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    ///
+    /// The default samples need no reset: they reset every CBo and program
+    /// every CBo they read in every slice.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        let Some(config) = config else {
+            self.config = None;
+            return Ok(());
+        };
+
+        let program = &config.program;
+        if program.box_type != BoxType::Cha {
+            return Err(format!(
+                "CHA collector cannot run {} configs",
+                program.box_type.label()
+            ));
+        }
+        let host_units = self.config_units();
+        for group in &program.groups {
+            for (package, units) in &group.units {
+                let host = host_units.get(package).ok_or_else(|| {
+                    format!(
+                        "CHA config group {} runs in package {package}, which this host lacks",
+                        group.index
+                    )
+                })?;
+                if let Some(unit) = units.difference(host).next() {
+                    return Err(format!(
+                        "CHA config group {} runs on CBo {unit}, which package {package} lacks",
+                        group.index
+                    ));
+                }
+            }
+            cbo_config_unit_writes(self.architecture, 0, group)?;
+        }
+
+        self.config = Some(CountAccumulator::new(config));
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "CHA collector has no PMU config to sample".to_string())?;
+        if interval.is_zero() {
+            return Err("Sandy/Ivy Bridge-EP CHA measure interval must be non-zero".to_string());
+        }
+        let program = accumulator.config().program.clone();
+
+        for slice in hsx::config_schedule(&program, interval, cycle) {
+            let units = cbo_config_units(&self.packages, &program, &slice)?;
+            for unit in &units {
+                unit.cbo.write(&cbo_config_unit_writes(
+                    self.architecture,
+                    unit.cbo.id,
+                    &program.groups[unit.group],
+                )?)?;
+            }
+
+            let started_at = Instant::now();
+            for unit in &units {
+                unit.cbo.unfreeze()?;
+            }
+            tokio::time::sleep(slice.duration).await;
+            for unit in &units {
+                unit.cbo.freeze()?;
+            }
+            let running = started_at.elapsed();
+
+            let readings = units
+                .iter()
+                .map(|unit| unit.read(&program.groups[unit.group]))
+                .collect::<Result<Vec<_>, String>>()?;
+            add_cbo_config_slice(accumulator, &program, &slice, &readings, running)?;
+        }
+
+        Ok(accumulator.counts())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SnbChaUnitReading {
     counters: [u64; CHA_COUNTER_COUNT],
@@ -847,6 +961,15 @@ impl SnbChaUnit {
 
     fn unfreeze(self) -> Result<(), String> {
         self.write_unit_control(self.architecture.unit_unfreeze())
+    }
+
+    fn write(self, writes: &[(u64, u64)]) -> Result<(), String> {
+        let msr = Msr::open(self.cpu)?;
+        for &(address, value) in writes {
+            msr.write(address, value)?;
+        }
+
+        Ok(())
     }
 
     fn read_counter(self, counter_index: usize) -> Result<u64, String> {
@@ -1923,7 +2046,7 @@ fn counter_control(event: u8, umask: u8, thread_filter: bool) -> u64 {
         | COUNTER_ENABLE_BIT
 }
 
-const fn snb_llc_lookup_state_bits(state: ChaCacheState) -> u16 {
+pub(crate) const fn snb_llc_lookup_state_bits(state: ChaCacheState) -> u16 {
     match state {
         ChaCacheState::I => 0x01,
         ChaCacheState::S => 0x02,
@@ -1997,9 +2120,180 @@ fn to_skx_scope(scope: HsxUncoreScope) -> UncoreScope {
     }
 }
 
+/// A CBo a config slice programs, with the position of its group.
+#[derive(Clone, Copy, Debug)]
+struct CboConfigUnit {
+    package: u16,
+    cbo: SnbChaUnit,
+    group: usize,
+}
+
+impl CboConfigUnit {
+    fn read(self, group: &ProgrammedGroup) -> Result<ConfigReading, String> {
+        let msr = Msr::open_readonly(self.cbo.cpu)?;
+        let counters = group
+            .counters
+            .iter()
+            .map(|counter| {
+                let index = cbo_config_counter_index(counter.slot)?;
+                Ok((
+                    counter.slot,
+                    msr.read(cbo_counter_offset(self.cbo.id, index))?,
+                ))
+            })
+            .collect::<Result<_, String>>()?;
+
+        Ok(ConfigReading {
+            package: self.package,
+            unit: self.cbo.id as u16,
+            group: group.index,
+            counters,
+        })
+    }
+}
+
+fn cbo_config_counter_index(slot: CounterSlot) -> Result<usize, String> {
+    match slot {
+        CounterSlot::General(index) if usize::from(index) < CHA_COUNTER_COUNT => {
+            Ok(usize::from(index))
+        }
+        _ => Err(format!(
+            "Sandy/Ivy Bridge-EP CBos have no counter slot {}",
+            slot.label()
+        )),
+    }
+}
+
+/// The filters of a config group, which Sandy Bridge-EP holds in its one
+/// filter register: its `filter1` must be 0.
+fn cbo_config_filters(
+    architecture: SnbChaArchitecture,
+    group: &ProgrammedGroup,
+) -> Result<ChaFilters, String> {
+    let filters = group
+        .filters
+        .ok_or_else(|| format!("CHA config group {} has no filters", group.index))?;
+    if !architecture.has_filter1() && filters.filter1 != 0 {
+        return Err(format!(
+            "CHA config group {} sets filter1 {:#x}, but {} CBos have one filter register",
+            group.index,
+            filters.filter1,
+            architecture.name()
+        ));
+    }
+
+    Ok(filters)
+}
+
+/// The CBos the groups of `slice` run on. Other CBos stay untouched.
+fn cbo_config_units(
+    packages: &[SnbChaPackage],
+    program: &ProgrammedBoxType,
+    slice: &ConfigSlice,
+) -> Result<Vec<CboConfigUnit>, String> {
+    let mut units = Vec::new();
+
+    for &group in &slice.groups {
+        for (&package_id, unit_ids) in &program.groups[group].units {
+            let package = packages
+                .iter()
+                .find(|package| package.scope.package_id as u16 == package_id)
+                .ok_or_else(|| format!("CBo package {package_id} does not exist"))?;
+            for &unit_id in unit_ids {
+                let cbo = package
+                    .units
+                    .iter()
+                    .find(|unit| unit.id == usize::from(unit_id))
+                    .copied()
+                    .ok_or_else(|| {
+                        format!("CBo {unit_id} does not exist in package {package_id}")
+                    })?;
+                units.push(CboConfigUnit {
+                    package: package_id,
+                    cbo,
+                    group,
+                });
+            }
+        }
+    }
+
+    Ok(units)
+}
+
+/// The MSR writes, as (address, value), that program `group` on CBo `cbo_id`:
+/// freeze and reset the unit as the default groups do, then set its filters
+/// (FILTER1 on Ivy Bridge-EP only) and its counter controls with the reset
+/// bit. Unused counters get 0.
+fn cbo_config_unit_writes(
+    architecture: SnbChaArchitecture,
+    cbo_id: usize,
+    group: &ProgrammedGroup,
+) -> Result<Vec<(u64, u64)>, String> {
+    let filters = cbo_config_filters(architecture, group)?;
+    let mut controls = [0_u64; CHA_COUNTER_COUNT];
+    for counter in &group.counters {
+        controls[cbo_config_counter_index(counter.slot)?] = counter.control | COUNTER_RESET_BIT;
+    }
+
+    let mut writes = vec![
+        (
+            cbo_unit_control_offset(cbo_id),
+            architecture.unit_freeze_and_reset(),
+        ),
+        (cbo_filter0_offset(cbo_id), filters.filter0),
+    ];
+    if architecture.has_filter1() {
+        writes.push((cbo_filter1_offset(cbo_id), filters.filter1));
+    }
+    writes.extend(
+        controls
+            .into_iter()
+            .enumerate()
+            .map(|(index, control)| (cbo_control_offset(cbo_id, index), control)),
+    );
+
+    Ok(writes)
+}
+
+/// Adds the readings of one slice, masked to the 44-bit counter width, and
+/// gives each group of the slice `running` in every package it runs in.
+fn add_cbo_config_slice(
+    accumulator: &mut CountAccumulator,
+    program: &ProgrammedBoxType,
+    slice: &ConfigSlice,
+    readings: &[ConfigReading],
+    running: Duration,
+) -> Result<(), String> {
+    for &group in &slice.groups {
+        let group = &program.groups[group];
+        for &package in group.units.keys() {
+            accumulator.add_running(package, group.index, running)?;
+        }
+    }
+    for reading in readings {
+        for &(slot, value) in &reading.counters {
+            accumulator.add_count(
+                reading.package,
+                reading.unit,
+                reading.group,
+                slot,
+                mask_counter(value),
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+
     use super::*;
+    use crate::metrics::ConfigurableCollector;
+    use crate::pmu_config::types::{
+        Aggregate, CountUnit, EventLabels, Grouping, PmuTopology, ProgrammedCounter, TemporalStart,
+    };
 
     #[test]
     fn computes_snb_cha_metrics() {
@@ -2451,6 +2745,523 @@ mod tests {
         assert_eq!(slices[0].groups[0], Some(SNB_CBO_EVENT_GROUPS[0]));
     }
 
+    /// Every default group, as a config request by raw event and named
+    /// filter fields, validates to the filters and controls the default
+    /// collector programs, less the reset bit and the overflow enable (bit
+    /// 20, reserved in both guides) it adds, and writes the same registers;
+    /// counters the group leaves unused get 0, not clockticks.
+    #[test]
+    fn config_mode_programs_the_default_groups_alike() {
+        for (architecture, model) in [
+            (SnbChaArchitecture::Snb, IntelServerCpuModel::SandyBridgeEp),
+            (SnbChaArchitecture::Ivb, IntelServerCpuModel::IvyTown),
+        ] {
+            for &group in architecture.event_groups() {
+                let request = default_group_request(group);
+                let programmed = validated_group(model, &request);
+                let values = group.filter.values();
+
+                assert_eq!(
+                    programmed.filters,
+                    Some(ChaFilters {
+                        filter0: values.filter0,
+                        filter1: values.filter1,
+                    }),
+                    "{architecture:?} {request}"
+                );
+                let mut expected = vec![
+                    (
+                        cbo_unit_control_offset(3),
+                        architecture.unit_freeze_and_reset(),
+                    ),
+                    (cbo_filter0_offset(3), values.filter0),
+                ];
+                if architecture.has_filter1() {
+                    expected.push((cbo_filter1_offset(3), values.filter1));
+                }
+                expected.extend(group.events.into_iter().enumerate().map(|(index, event)| {
+                    let control = if event.kind == SnbChaEventKind::Unused {
+                        0
+                    } else {
+                        counter_control(event.event, event.umask, event.thread_filter)
+                            & !COUNTER_OVERFLOW_ENABLE_BIT
+                    };
+                    (cbo_control_offset(3, index), control)
+                }));
+                assert_eq!(
+                    cbo_config_unit_writes(architecture, 3, &programmed).unwrap(),
+                    expected,
+                    "{architecture:?} {request}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn programs_a_tid_filtered_tor_config_group_on_cbo_5_of_each_model() {
+        let mut group = config_group(0, &[5], &[0, 1, 3]);
+        group.counters[0].control = 0x48_0136;
+        group.counters[1].control = 0x48_0135;
+        group.counters[2].control = 0x40_0000;
+        let controls = [
+            (0x0db0, 0x4a_0136),
+            (0x0db1, 0x4a_0135),
+            (0x0db2, 0),
+            (0x0db3, 0x42_0000),
+        ];
+
+        // C5_MSR_PMON_BOX_CTL 0xda4 and C5_MSR_PMON_BOX_FILTER 0xdb4 (Intel
+        // 327043 Table 2-8), with the freeze enable bit 16.
+        group.filters = Some(ChaFilters {
+            filter0: 0xe400_001e,
+            filter1: 0,
+        });
+        let mut expected = vec![(0x0da4, 0x1_0103), (0x0db4, 0xe400_001e)];
+        expected.extend(controls);
+        assert_eq!(
+            cbo_config_unit_writes(SnbChaArchitecture::Snb, 5, &group).unwrap(),
+            expected
+        );
+
+        // C5_MSR_PMON_BOX_FILTER1 0xdba (Intel 329468 Table 2-12).
+        group.filters = Some(ChaFilters {
+            filter0: 0x1e,
+            filter1: 0x1c80_0000,
+        });
+        let mut expected = vec![(0x0da4, 0x103), (0x0db4, 0x1e), (0x0dba, 0x1c80_0000)];
+        expected.extend(controls);
+        assert_eq!(
+            cbo_config_unit_writes(SnbChaArchitecture::Ivb, 5, &group).unwrap(),
+            expected
+        );
+    }
+
+    fn scheduled_slices(
+        program: &ProgrammedBoxType,
+        interval: Duration,
+        cycle: u64,
+    ) -> Vec<crate::metrics::testing::ScheduledSlice> {
+        hsx::config_schedule(program, interval, cycle)
+            .into_iter()
+            .map(|slice| (slice.duration, slice.groups))
+            .collect()
+    }
+
+    #[test]
+    fn starts_temporal_config_groups_by_their_start_rule() {
+        crate::metrics::testing::assert_temporal_schedule(BoxType::Cha, scheduled_slices);
+    }
+
+    #[test]
+    fn reads_phase_locked_sources_without_bias_over_balanced_windows() {
+        crate::metrics::testing::assert_unbiased_over_windows(BoxType::Cha, scheduled_slices);
+    }
+
+    #[test]
+    fn programs_only_the_cbos_of_a_slices_groups() {
+        let units = |cpu: u32| {
+            (0..6)
+                .map(|id| SnbChaUnit {
+                    architecture: SnbChaArchitecture::Ivb,
+                    cpu,
+                    id,
+                })
+                .collect()
+        };
+        let packages = vec![
+            SnbChaPackage::new(HsxUncoreScope { package_id: 0 }, units(3)),
+            SnbChaPackage::new(HsxUncoreScope { package_id: 1 }, units(30)),
+        ];
+        let mut program = config_program(
+            Grouping::Spatial,
+            Aggregate::Sum,
+            vec![config_group(0, &[1, 2], &[0]), config_group(1, &[4], &[0])],
+        );
+        program.groups[1].units.insert(1, BTreeSet::from([4]));
+        let units = |groups: &[usize]| {
+            let slice = ConfigSlice {
+                duration: Duration::from_secs(1),
+                groups: groups.to_vec(),
+            };
+            cbo_config_units(&packages, &program, &slice)
+                .unwrap()
+                .into_iter()
+                .map(|unit| (unit.package, unit.cbo.cpu, unit.cbo.id, unit.group))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            units(&[0, 1]),
+            vec![(0, 3, 1, 0), (0, 3, 2, 0), (0, 3, 4, 1), (1, 30, 4, 1)]
+        );
+        assert_eq!(units(&[1]), vec![(0, 3, 4, 1), (1, 30, 4, 1)]);
+    }
+
+    #[test]
+    fn folds_44_bit_config_readings_per_box_or_summed() {
+        for aggregate in [Aggregate::Box, Aggregate::Sum] {
+            let program = config_program(
+                Grouping::Spatial,
+                aggregate,
+                vec![
+                    config_group(0, &[1, 2], &[0, 2]),
+                    config_group(1, &[4], &[1]),
+                ],
+            );
+            let mut accumulator = CountAccumulator::new(test_config(program.clone()));
+            let slice = ConfigSlice {
+                duration: Duration::from_millis(100),
+                groups: vec![0, 1],
+            };
+            let readings = [
+                config_reading(1, 0, &[(0, 10), (2, (1 << 44) | 7)]),
+                config_reading(2, 0, &[(0, 5), (2, 1)]),
+                config_reading(4, 1, &[(1, 3)]),
+            ];
+            for _ in 0..2 {
+                add_cbo_config_slice(
+                    &mut accumulator,
+                    &program,
+                    &slice,
+                    &readings,
+                    Duration::from_millis(100),
+                )
+                .unwrap();
+            }
+
+            let counts = accumulator.counts();
+            let values = counts
+                .counts
+                .iter()
+                .map(|count| (count.unit, count.group, count.slot, count.value))
+                .collect::<Vec<_>>();
+            let general = CounterSlot::General;
+            match aggregate {
+                Aggregate::Box => assert_eq!(
+                    values,
+                    vec![
+                        (CountUnit::Box(1), 0, general(0), 20),
+                        (CountUnit::Box(1), 0, general(2), 14),
+                        (CountUnit::Box(2), 0, general(0), 10),
+                        (CountUnit::Box(2), 0, general(2), 2),
+                        (CountUnit::Box(4), 1, general(1), 6),
+                    ]
+                ),
+                Aggregate::Sum => assert_eq!(
+                    values,
+                    vec![
+                        (CountUnit::Sum, 0, general(0), 30),
+                        (CountUnit::Sum, 0, general(2), 16),
+                        (CountUnit::Sum, 1, general(1), 6),
+                    ]
+                ),
+            }
+            let running = counts
+                .running
+                .iter()
+                .map(|running| (running.package, running.group, running.seconds))
+                .collect::<Vec<_>>();
+            assert_eq!(running, vec![(0, 0, 0.2), (0, 1, 0.2)]);
+        }
+    }
+
+    #[test]
+    fn reports_discovered_cbos_as_config_units() {
+        let mut collector = config_collector(SnbChaArchitecture::Snb, 3);
+        collector.packages.push(SnbChaPackage::new(
+            HsxUncoreScope { package_id: 1 },
+            [0, 2]
+                .into_iter()
+                .map(|id| SnbChaUnit {
+                    architecture: SnbChaArchitecture::Snb,
+                    cpu: 30,
+                    id,
+                })
+                .collect(),
+        ));
+
+        assert_eq!(
+            collector.config_units(),
+            BTreeMap::from([(0, BTreeSet::from([0, 1, 2])), (1, BTreeSet::from([0, 2]))])
+        );
+    }
+
+    #[test]
+    fn rejects_configs_the_cbo_collector_cannot_run() {
+        let valid = || {
+            config_program(
+                Grouping::Fixed,
+                Aggregate::Sum,
+                vec![config_group(0, &[1, 2], &[0])],
+            )
+        };
+        let mut imc = valid();
+        imc.box_type = BoxType::Imc;
+        let mut other_package = valid();
+        other_package.groups[0].units = BTreeMap::from([(1, BTreeSet::from([1]))]);
+        let mut other_unit = valid();
+        other_unit.groups[0].units = BTreeMap::from([(0, BTreeSet::from([2, 6]))]);
+        let mut fixed_slot = valid();
+        fixed_slot.groups[0].counters[0].slot = CounterSlot::Fixed;
+        let mut fifth_slot = valid();
+        fifth_slot.groups[0].counters[0].slot = CounterSlot::General(4);
+        let mut no_filters = valid();
+        no_filters.groups[0].filters = None;
+        let mut filter1 = valid();
+        filter1.groups[0].filters = Some(ChaFilters {
+            filter0: 0,
+            filter1: 0x1c80_0000,
+        });
+
+        for architecture in [SnbChaArchitecture::Snb, SnbChaArchitecture::Ivb] {
+            let mut collector = config_collector(architecture, 6);
+            let mut cases = vec![
+                (imc.clone(), "cannot run imc configs"),
+                (other_package.clone(), "package 1, which this host lacks"),
+                (other_unit.clone(), "CBo 6, which package 0 lacks"),
+                (fixed_slot.clone(), "no counter slot fixed"),
+                (fifth_slot.clone(), "no counter slot 4"),
+                (no_filters.clone(), "has no filters"),
+            ];
+            if architecture == SnbChaArchitecture::Snb {
+                cases.push((
+                    filter1.clone(),
+                    "CHA config group 0 sets filter1 0x1c800000, but Sandy Bridge-EP CBos have one filter register",
+                ));
+            }
+            for (program, error) in cases {
+                let result = collector.set_config(Some(test_config(program)));
+                assert!(
+                    result
+                        .as_ref()
+                        .is_err_and(|message| message.contains(error)),
+                    "{architecture:?}: {result:?}"
+                );
+                assert!(!collector.has_config());
+            }
+            collector.set_config(Some(test_config(valid()))).unwrap();
+            assert!(collector.has_config());
+            if architecture == SnbChaArchitecture::Ivb {
+                collector
+                    .set_config(Some(test_config(filter1.clone())))
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn setting_a_config_restarts_counts_from_zero() {
+        let mut collector = config_collector(SnbChaArchitecture::Ivb, 6);
+        let first = config_program(
+            Grouping::Fixed,
+            Aggregate::Box,
+            vec![config_group(0, &[1], &[0])],
+        );
+        let second = config_program(
+            Grouping::Fixed,
+            Aggregate::Box,
+            vec![config_group(0, &[1], &[3])],
+        );
+        let count_one_slice =
+            |collector: &mut SnbChaCollector, program: &ProgrammedBoxType, slot: u8| {
+                let slice = hsx::config_schedule(program, Duration::from_secs(1), 0).remove(0);
+                add_cbo_config_slice(
+                    collector.config.as_mut().unwrap(),
+                    program,
+                    &slice,
+                    &[config_reading(1, 0, &[(slot, 9)])],
+                    Duration::from_secs(1),
+                )
+                .unwrap();
+            };
+        let counts = |collector: &SnbChaCollector| {
+            let counts = collector.config.as_ref().unwrap().counts();
+            (
+                counts.config.program.groups[0].counters[0].slot,
+                counts.counts[0].value,
+                counts.running[0].seconds,
+            )
+        };
+
+        collector
+            .set_config(Some(test_config(first.clone())))
+            .unwrap();
+        count_one_slice(&mut collector, &first, 0);
+        assert_eq!(counts(&collector), (CounterSlot::General(0), 9, 1.0));
+
+        collector
+            .set_config(Some(test_config(second.clone())))
+            .unwrap();
+        assert_eq!(counts(&collector), (CounterSlot::General(3), 0, 0.0));
+        count_one_slice(&mut collector, &second, 3);
+        assert_eq!(counts(&collector), (CounterSlot::General(3), 9, 1.0));
+
+        // An invalid config leaves the current one and its counts alone.
+        let mut elsewhere = second.clone();
+        elsewhere.groups[0].units = BTreeMap::from([(0, BTreeSet::from([9]))]);
+        assert!(collector.set_config(Some(test_config(elsewhere))).is_err());
+        assert_eq!(counts(&collector), (CounterSlot::General(3), 9, 1.0));
+
+        collector.set_config(Some(test_config(second))).unwrap();
+        assert_eq!(counts(&collector), (CounterSlot::General(3), 0, 0.0));
+
+        collector.set_config(None).unwrap();
+        assert!(!collector.has_config());
+    }
+
+    #[test]
+    fn routes_configs_through_the_cha_dispatcher() {
+        let program = config_program(
+            Grouping::Fixed,
+            Aggregate::Sum,
+            vec![config_group(0, &[1, 2], &[0])],
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        for mut collector in [
+            super::super::ChaCollector::Snb(config_collector(SnbChaArchitecture::Snb, 3)),
+            super::super::ChaCollector::Ivb(config_collector(SnbChaArchitecture::Ivb, 3)),
+        ] {
+            assert_eq!(
+                ConfigurableCollector::config_units(&collector),
+                BTreeMap::from([(0, BTreeSet::from([0, 1, 2]))])
+            );
+            collector
+                .set_config(Some(test_config(program.clone())))
+                .unwrap();
+            assert!(collector.has_config());
+            collector.set_config(None).unwrap();
+            assert!(!collector.has_config());
+
+            assert_eq!(
+                runtime.block_on(collector.sample_config(Duration::from_secs(1), 0)),
+                Err("CHA collector has no PMU config to sample".to_string())
+            );
+        }
+    }
+
+    /// A config request for one default group: its events by raw code and
+    /// umask, its filter fields by name or value.
+    fn default_group_request(group: SnbChaEventGroup) -> Value {
+        let filter = group.filter;
+        let mut request = json!({
+            "events": group.events.map(|event| (event.kind != SnbChaEventKind::Unused).then(|| {
+                json!({"event": event.event, "umask": event.umask, "tid_en": event.thread_filter})
+            })),
+        });
+        if filter.state != 0 || filter.thread_id != 0 {
+            let mut filter0 = serde_json::Map::new();
+            if filter.state != 0 {
+                let states = [
+                    (0x01, "I"),
+                    (0x02, "S"),
+                    (0x04, "E"),
+                    (0x08, "M"),
+                    (0x10, "F"),
+                ]
+                .into_iter()
+                .filter(|(bit, _)| filter.state & bit != 0)
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>();
+                filter0.insert("states".to_string(), json!(states));
+            }
+            if filter.thread_id != 0 {
+                filter0.insert("tid".to_string(), json!(filter.thread_id));
+            }
+            request["filter0"] = Value::Object(filter0);
+        }
+        if filter.opcode != 0 {
+            request["filter1"] = json!({"opcodes": [filter.opcode]});
+        }
+
+        request
+    }
+
+    /// `group` as `model`'s config validation programs it on CBo 3.
+    fn validated_group(model: IntelServerCpuModel, group: &Value) -> ProgrammedGroup {
+        let request =
+            serde_json::from_value(json!({"pmus": {"cha": {"groups": [group]}}})).unwrap();
+        let topology = PmuTopology {
+            units: BTreeMap::from([(BoxType::Cha, BTreeMap::from([(0, BTreeSet::from([3]))]))]),
+        };
+
+        crate::pmu_config::spec::validate(request, &topology, model)
+            .unwrap_or_else(|error| panic!("{model:?} {group}: {error}"))
+            .remove(0)
+            .program
+            .groups
+            .remove(0)
+    }
+
+    fn config_collector(architecture: SnbChaArchitecture, unit_count: usize) -> SnbChaCollector {
+        let mut collector = test_collector(architecture);
+        collector.packages[0].units = (0..unit_count)
+            .map(|id| SnbChaUnit {
+                architecture,
+                cpu: 0,
+                id,
+            })
+            .collect();
+
+        collector
+    }
+
+    fn config_group(index: u8, units: &[u16], slots: &[u8]) -> ProgrammedGroup {
+        ProgrammedGroup {
+            index,
+            counters: slots
+                .iter()
+                .map(|&slot| ProgrammedCounter {
+                    slot: CounterSlot::General(slot),
+                    control: 0x40_0035,
+                    labels: EventLabels::new(),
+                })
+                .collect(),
+            filters: Some(ChaFilters {
+                filter0: 0xc110_0000,
+                filter1: 0,
+            }),
+            units: BTreeMap::from([(0, units.iter().copied().collect())]),
+        }
+    }
+
+    fn config_program(
+        grouping: Grouping,
+        aggregate: Aggregate,
+        groups: Vec<ProgrammedGroup>,
+    ) -> ProgrammedBoxType {
+        ProgrammedBoxType {
+            box_type: BoxType::Cha,
+            grouping,
+            temporal_start: TemporalStart::Precession,
+            aggregate,
+            groups,
+        }
+    }
+
+    fn test_config(program: ProgrammedBoxType) -> PmuConfig {
+        PmuConfig {
+            config_id: 7,
+            started_at: std::time::SystemTime::UNIX_EPOCH,
+            program,
+        }
+    }
+
+    fn config_reading(unit: u16, group: u8, counters: &[(u8, u64)]) -> ConfigReading {
+        ConfigReading {
+            package: 0,
+            unit,
+            group,
+            counters: counters
+                .iter()
+                .map(|&(slot, value)| (CounterSlot::General(slot), value))
+                .collect(),
+        }
+    }
+
     fn measurement(
         kind: ChaEventKind,
         value: u64,
@@ -2470,6 +3281,7 @@ mod tests {
     fn test_collector(architecture: SnbChaArchitecture) -> SnbChaCollector {
         SnbChaCollector {
             architecture,
+            config: None,
             multiplex_mode: ChaMultiplexMode::default(),
             next_group: 0,
             next_partition_offset: 0,

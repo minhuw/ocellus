@@ -349,10 +349,11 @@ const IVB_CBO_ALIASES: &[Alias] = &[
 ];
 
 /// UNC_H_REQUESTS.* ([SNB] Table 2-48): all reads or all writes, with no
-/// local or remote split.
+/// local or remote split, and `all`, the two umasks ORed. [SNB] and the JSON
+/// list no InvItoE umask, so whether `all` counts InvItoE is not public.
 const SNB_REQUEST_OPS: Param = Param {
     field: "op",
-    values: &[("reads", 0x03), ("writes", 0x0c)],
+    values: &[("reads", 0x03), ("writes", 0x0c), ("all", 0x0f)],
 };
 /// UNC_H_TxR_AD.* ([SNB] Table 2-53): non-data responses and snoops the HA
 /// sends on the AD ring.
@@ -370,7 +371,8 @@ const SNB_HA_ALIASES: &[Alias] = &[
     Alias::new("txr_ad", 0x0f, 0x00, &[TXR_AD_OPS]),
 ];
 
-/// UNC_H_REQUESTS.* ([IVB] Table 2-57), Haswell-EP's.
+/// UNC_H_REQUESTS.* ([IVB] Table 2-57), Haswell-EP's, and `all`, its six
+/// one-bit umasks ORed, as READS and WRITES OR theirs.
 const IVB_REQUEST_OPS: Param = Param {
     field: "op",
     values: &[
@@ -382,6 +384,7 @@ const IVB_REQUEST_OPS: Param = Param {
         ("invitoe_remote", 0x20),
         ("reads", 0x03),
         ("writes", 0x0c),
+        ("all", 0x3f),
     ],
 };
 /// UNC_H_SNOOP_RESP.* ([IVB] Table 2-62), Haswell-EP's.
@@ -1691,6 +1694,59 @@ mod tests {
         );
     }
 
+    /// `requests` `all` counts every request type in one counter: the OR of
+    /// the model's other REQUESTS umasks, which the guides give as bits
+    /// (READS b00000011 is READS_LOCAL bxxxxxxx1 and READS_REMOTE bxxxxxx1x),
+    /// in the HA groups of step 0's bundles.
+    #[test]
+    fn requests_all_ors_every_request_umask() {
+        let ha = |model, events: Value| {
+            let mut configs = configs(model, pmu("ha", json!({"events": events}))).unwrap();
+            controls(&configs.remove(0).program.groups.remove(0))
+        };
+
+        for (model, ops, all) in [(SNB, SNB_REQUEST_OPS, 0x0f), (IVB, IVB_REQUEST_OPS, 0x3f)] {
+            let others = ops
+                .values
+                .iter()
+                .filter(|(name, _)| *name != "all")
+                .fold(0, |bits, (_, umask)| bits | umask);
+            assert_eq!(others, all, "{model:?}");
+        }
+        assert_eq!(
+            ha(
+                SNB,
+                json!([
+                    {"alias": "txr_ad", "op": "snp"},
+                    {"alias": "requests", "op": "all"},
+                    {"alias": "clockticks"}
+                ])
+            ),
+            [
+                (CounterSlot::General(0), 0x40_020f),
+                (CounterSlot::General(1), 0x40_0f01),
+                (CounterSlot::General(2), 0x40_0000),
+            ]
+        );
+        assert_eq!(
+            ha(
+                IVB,
+                json!([
+                    {"alias": "snoop_resp", "op": "rspi"},
+                    {"alias": "snoop_resp", "op": "rsps"},
+                    {"alias": "snoop_resp", "op": "rspcnflct"},
+                    {"alias": "requests", "op": "all"}
+                ])
+            ),
+            [
+                (CounterSlot::General(0), 0x40_0121),
+                (CounterSlot::General(1), 0x40_0221),
+                (CounterSlot::General(2), 0x40_4021),
+                (CounterSlot::General(3), 0x40_3f01),
+            ]
+        );
+    }
+
     #[test]
     fn encodes_cbo_filters_in_each_layout() {
         let tor_tid =
@@ -2466,7 +2522,7 @@ mod tests {
                     "ha",
                     json!({"events": [{"alias": "requests", "op": "reads_local"}]}),
                 ),
-                "pmus.ha.groups[0].events[0].op: requests op must be one of reads, writes, got \"reads_local\"",
+                "pmus.ha.groups[0].events[0].op: requests op must be one of reads, writes, all, got \"reads_local\"",
             ),
             (
                 IVB,

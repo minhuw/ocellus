@@ -43,8 +43,9 @@ NOTES = {
         "Board card c55: IVB LLC_LOOKUP state is FILTER0[22:17] in Intel's "
         "guide and Linux but [23:17] in the perfmon JSON; filter0.raw may "
         "set bit 23 until a hardware check settles it.",
-        "Sandy Bridge-EP and Ivy Bridge-EP have no public XSNP or "
-        "snoop-response event: no count shows the core snoops IO causes.",
+        "Sandy Bridge-EP and Ivy Bridge-EP have no public XSNP event: no "
+        "count shows the core snoops IO causes. IVB's HA snoop_resp counts "
+        "the snoop responses its HA receives, not the CBo's core snoops.",
     ],
     "hsx": [
         "docs/bdx-step0-checks.md items 1-11 (IO TID, ItoM vs PCIItoM, IO LLC "
@@ -91,11 +92,13 @@ def bundle(family):
                 ev("tor_inserts", tid, kind="opcode", home="any"), CLOCK]}
             return {"filter0": {"tid": "0x1e"}, **group} if tid else group
         lookup = "data_read" if family == "SNB" else "any"
+        ha = ([ev("txr_ad", op="snp"), ev("requests", op="all"), CLOCK] if family == "SNB" else
+              [ev("snoop_resp", op=op) for op in ("rspi", "rsps", "rspcnflct")] + [ev("requests", op="all")])
         pmus = {"cha": [tor("PCIItoM", True), tor("PCIRdCur", True),
                         {"filter0": {"states": STATES},
                          "events": [ev("llc_lookup", op=lookup), CLOCK]},
                         tor("PCIItoM", False)],
-                "imc": IMC}
+                "imc": IMC, "ha": [{"events": ha}]}
     elif arch == "hsx":
         def tor(opcode):
             return {"filter0": {"tid": "0x3e"}, "filter1": {"opcodes": [opcode]}, "events": [

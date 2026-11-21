@@ -93,7 +93,7 @@ the validators of `src/pmu_config/spec`.
 
 | Family | CHA/CBo groups | Other box types |
 | --- | --- | --- |
-| SNB, IVB | PCIItoM, PCIRdCur: `tor_occupancy`, `tor_inserts` (kind opcode, tid 0x1e); LLC lookup (SNB `data_read`, IVB `any`) on I,S,E,M,F; PCIItoM without tid | `imc` cas_count rd, wr, DCLK |
+| SNB, IVB | PCIItoM, PCIRdCur: `tor_occupancy`, `tor_inserts` (kind opcode, tid 0x1e); LLC lookup (SNB `data_read`, IVB `any`) on I,S,E,M,F; PCIItoM without tid | `imc` cas_count rd, wr, DCLK; `ha` SNB txr_ad snp, requests all, clockticks; IVB snoop_resp rspi, rsps, rspcnflct, requests all |
 | HSX, BDX | ItoM, PCIRdCur: occupancy and inserts with tid 0x3e, inserts without; PCIItoM occupancy and inserts, LLC lookup `any` | `imc` as SNB; `ha` clockticks, snoop_resp rspi, rsps, rspifwd; `irp` clockticks, coherent_ops pcitom, both sets |
 | SKX, CLX | ItoM, RdCur: io occupancy, inserts all and miss; LLC lookup `any`, all states | `imc` as SNB; `iio` data_req_of_cpu mem_write, mem_read, clockticks; `irp` clockticks, coherent_ops pcitom |
 | ICX | opcode ITOM, PCIRDCUR: as SKX; LLC lookup `data_read` | `imc` cas_count rd, wr, clockticks, fixed; `iio`, `irp` as SKX |
@@ -126,7 +126,8 @@ Any family may skip interconnect where no links are found and any
 - **SNB, IVB**: card c55 (PCIe TID 0x1e on IVB, tid with opc and opc with
   nid, SNB iMC rst bits, IVB box ctl bits 17:16, SNB IMC package mapping by
   bus order, IVB LLC_LOOKUP state bit 23, which only the perfmon JSON has).
-  Neither has a public XSNP or snoop-response event.
+  Neither has a public XSNP event; IVB's HA `snoop_resp` counts the snoop
+  responses its HA receives, not the CBo's core snoops.
 - **SKX, CLX**: per-CPU MBM needs an IMC or CHA cross-check (README, RDT).
 - **ICX**: the default CHA groups count IA ITOM and IA/IO WbMtoI, which
   Intel lists only as experimental on ICX.

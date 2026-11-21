@@ -97,7 +97,9 @@ settles the layout (board card c55).
 Their `ha` configs address each package's home agents as units: 0 on Sandy
 Bridge-EP, 0 (HA0) and, on the dies that have it, 1 (HA1) on Ivy Bridge-EP.
 Each event counts on any of the four counters. Aliases: `clockticks` and
-`requests` on both, with `op` `reads` or `writes`; on Sandy Bridge-EP
+`requests` on both, with `op` `reads`, `writes` or `all` (every request
+type in one counter: umask 0x0f on Sandy Bridge-EP, whose sources list no
+InvItoE umask, 0x3f with InvItoE on Ivy Bridge-EP); on Sandy Bridge-EP
 `txr_ad` (`op` `ndr` or `snp`, UNC_H_TxR_AD.*); on Ivy Bridge-EP the
 Haswell-EP ones, `requests` with the local, remote and InvItoE ops
 (`reads_local`, ...), `snoop_resp` and `snp_resp_recv_local` (`op` `rspi`,

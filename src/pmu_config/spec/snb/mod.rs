@@ -62,6 +62,9 @@ struct FilterLayout {
     tid: u64,
     state_shift: u32,
     state: u64,
+    /// Filter0 bits above `state` that only a raw filter0 sets, and that
+    /// LLC_LOOKUP takes as states; 0 where the sources agree on the field.
+    raw_state: u64,
     nid_shift: u32,
     nid: u64,
     opcode_shift: u32,
@@ -118,6 +121,7 @@ const SANDY_BRIDGE: Model = Model {
         tid: 0x1f,
         state_shift: 18,
         state: 0x1f << 18,
+        raw_state: 0,
         nid_shift: 10,
         nid: 0xff << 10,
         opcode_shift: 23,
@@ -152,11 +156,15 @@ const IVY_BRIDGE: Model = Model {
     // [15:0], opc [28:20], nc 30, isoc 31; bit 29 is reserved. Linux's
     // ivbep_cbox_filter_mask also has a link field at filter0 bits 8:5 and
     // a c6 bit at filter1 bit 29, which the guide reserves and configs leave
-    // 0.
+    // 0. The JSON's LLC_LOOKUP events give the state as CBoFilter0[23:17],
+    // though their description maps [22:17] to M'FMESI. Until a hardware
+    // check settles which (board card c55), a raw filter0 may set bit 23,
+    // which LLC_LOOKUP takes as a state; the named states stay in [22:17].
     filters: FilterLayout {
         tid: 0x1f,
         state_shift: 17,
         state: 0x3f << 17,
+        raw_state: 1 << 23,
         nid_shift: 0,
         nid: 0xffff,
         opcode_shift: 20,
@@ -257,6 +265,31 @@ const LLC_VICTIM_STATES: Param = Param {
     field: "state",
     values: &[("m", 0x01), ("e", 0x02), ("s", 0x04), ("miss", 0x08)],
 };
+/// UNC_C_TxR_INSERTS.* ([SNB] Table 2-32, [IVB] Table 2-36). Neither it nor
+/// MISC depends on a filter field: their tables have no Filter Dep column,
+/// their JSON events no Filter, and Linux's cbox extra_regs no entry.
+const TXR_INSERT_RINGS: Param = Param {
+    field: "ring",
+    values: &[
+        ("ad_cache", 0x01),
+        ("ak_cache", 0x02),
+        ("bl_cache", 0x04),
+        ("iv_cache", 0x08),
+        ("ad_core", 0x10),
+        ("ak_core", 0x20),
+        ("bl_core", 0x40),
+    ],
+};
+/// UNC_C_MISC.* ([SNB] Table 2-18, [IVB] Table 2-21)
+const MISC_OPS: Param = Param {
+    field: "op",
+    values: &[
+        ("rspi_was_fse", 0x01),
+        ("wc_aliasing", 0x02),
+        ("started", 0x04),
+        ("rfo_hit_s", 0x08),
+    ],
+};
 
 const SNB_CBO_ALIASES: &[Alias] = &[
     // UNC_C_CLOCKTICKS
@@ -275,6 +308,8 @@ const SNB_CBO_ALIASES: &[Alias] = &[
     ),
     Alias::new("llc_lookup", LLC_LOOKUP_EVENT, 0x00, &[SNB_LLC_LOOKUP_OPS]),
     Alias::new("llc_victims", LLC_VICTIMS_EVENT, 0x00, &[LLC_VICTIM_STATES]),
+    Alias::new("txr_inserts", 0x02, 0x00, &[TXR_INSERT_RINGS]),
+    Alias::new("misc", 0x39, 0x00, &[MISC_OPS]),
 ];
 
 const IVB_CBO_ALIASES: &[Alias] = &[
@@ -294,6 +329,8 @@ const IVB_CBO_ALIASES: &[Alias] = &[
     ),
     Alias::new("llc_lookup", LLC_LOOKUP_EVENT, 0x00, &[IVB_LLC_LOOKUP_OPS]),
     Alias::new("llc_victims", LLC_VICTIMS_EVENT, 0x00, &[LLC_VICTIM_STATES]),
+    Alias::new("txr_inserts", 0x02, 0x00, &[TXR_INSERT_RINGS]),
+    Alias::new("misc", 0x39, 0x00, &[MISC_OPS]),
 ];
 
 /// UNC_M_CAS_COUNT.* ([SNB] Table 2-66, [IVB] Table 2-80)
@@ -341,8 +378,8 @@ const IVB_IMC_ALIASES: &[Alias] = &[
 
 /// The filter state bits by name ([SNB] Table 2-12, [IVB] Table 2-16: I
 /// 0x01, S 0x02, E 0x04, M 0x08, F 0x10), which the default CBo collector
-/// programs too. Ivy Bridge-EP's sixth bit (0x20, M' in the JSON) takes a
-/// raw filter0.
+/// programs too. Ivy Bridge-EP's sixth bit (0x20, M' in the JSON) and its
+/// filter0 bit 23 (`FilterLayout::raw_state`) take a raw filter0.
 const FILTER0_STATES: [(&str, ChaCacheState); 5] = [
     ("I", ChaCacheState::I),
     ("S", ChaCacheState::S),
@@ -587,7 +624,7 @@ fn check_cbo_event(
                 "{path}: LLC_LOOKUP (event 0x34) counts nothing without umask bit 0"
             ));
         }
-        if filters.registers.filter0 & model.filters.state == 0 {
+        if filters.registers.filter0 & (model.filters.state | model.filters.raw_state) == 0 {
             return Err(format!(
                 "{path}: LLC_LOOKUP (event 0x34) counts nothing without filter0 states"
             ));
@@ -631,7 +668,8 @@ fn filter0(
         if request.states.is_some() || request.tid.is_some() {
             return Err(format!("{path}: raw excludes states and tid"));
         }
-        let value = masked_filter(raw, layout.filter0_mask(), &format!("{path}.raw"))?;
+        let mask = layout.filter0_mask() | layout.raw_state;
+        let value = masked_filter(raw, mask, &format!("{path}.raw"))?;
         return Ok((value, value & layout.tid != 0));
     }
     if request.states.is_none() && request.tid.is_none() {
@@ -1100,6 +1138,146 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// UNC_C_TxR_INSERTS.* and UNC_C_MISC.*, the same in the JSON of both
+    /// models: every public umask, on counters 0-1 only ("Counter": "0,1";
+    /// Linux's snbep_uncore_cbox_constraints 0x3), with no filter.
+    #[test]
+    fn encodes_txr_inserts_and_misc_as_the_json() {
+        let cases = [
+            ("txr_inserts", "ring", "ad_cache", 0x02, 0x01),
+            ("txr_inserts", "ring", "ak_cache", 0x02, 0x02),
+            ("txr_inserts", "ring", "bl_cache", 0x02, 0x04),
+            ("txr_inserts", "ring", "iv_cache", 0x02, 0x08),
+            ("txr_inserts", "ring", "ad_core", 0x02, 0x10),
+            ("txr_inserts", "ring", "ak_core", 0x02, 0x20),
+            ("txr_inserts", "ring", "bl_core", 0x02, 0x40),
+            ("misc", "op", "rspi_was_fse", 0x39, 0x01),
+            ("misc", "op", "wc_aliasing", 0x39, 0x02),
+            ("misc", "op", "started", 0x39, 0x04),
+            ("misc", "op", "rfo_hit_s", 0x39, 0x08),
+        ];
+
+        for model in [SNB, IVB] {
+            for (alias, field, value, code, umask) in cases {
+                let event = json!({"alias": alias, field: value});
+                let control = code | (umask << 8) | COUNTER_ENABLE;
+
+                let group = program(model, json!({"events": [null, event]})).unwrap();
+                assert_eq!(group.filters, filters(0, 0), "{model:?} {event}");
+                assert_eq!(
+                    controls(&group),
+                    [(CounterSlot::General(1), control)],
+                    "{model:?} {event}"
+                );
+                assert_eq!(group.counters[0].labels["alias"], alias);
+                // The raw event programs the same control.
+                let raw =
+                    program(model, json!({"events": [{"event": code, "umask": umask}]})).unwrap();
+                assert_eq!(
+                    controls(&raw),
+                    [(CounterSlot::General(0), control)],
+                    "{model:?} {event}"
+                );
+                for slot in [2, 3] {
+                    let mut events = vec![Value::Null; slot];
+                    events.push(event.clone());
+
+                    assert_eq!(
+                        program(model, json!({"events": events})).unwrap_err(),
+                        format!(
+                            "pmus.cha.groups[0].events[{slot}]: event {code:#04x} counts only on counters 0, 1"
+                        ),
+                        "{model:?} {event}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The four CBo events of the X8 calibration, which all count only on
+    /// counters 0-1, in two groups.
+    #[test]
+    fn programs_the_x8_calibration_events() {
+        let rings = json!({"events": [
+            {"alias": "txr_inserts", "ring": "iv_cache"},
+            {"alias": "txr_inserts", "ring": "bl_core"}
+        ]});
+        let lookups = json!({
+            "filter0": {"states": ["I", "S", "E", "M", "F"]},
+            "events": [
+                {"alias": "misc", "op": "rspi_was_fse"},
+                {"alias": "llc_lookup", "op": "data_read"}
+            ]
+        });
+
+        for (model, states) in [(SNB, 0x7c_0000), (IVB, 0x3e_0000)] {
+            let group = program(model, rings.clone()).unwrap();
+            assert_eq!(group.filters, filters(0, 0), "{model:?}");
+            assert_eq!(
+                controls(&group),
+                [
+                    (CounterSlot::General(0), 0x40_0802),
+                    (CounterSlot::General(1), 0x40_4002),
+                ],
+                "{model:?}"
+            );
+
+            let group = program(model, lookups.clone()).unwrap();
+            assert_eq!(group.filters, filters(states, 0), "{model:?}");
+            assert_eq!(
+                controls(&group),
+                [
+                    (CounterSlot::General(0), 0x40_0139),
+                    (CounterSlot::General(1), 0x40_0334),
+                ],
+                "{model:?}"
+            );
+        }
+        let group = program(IVB, rings).unwrap();
+        assert_eq!(
+            group.counters[0].labels,
+            labels(&[
+                ("alias", "txr_inserts"),
+                ("event", "0x02"),
+                ("umask", "0x08"),
+                ("filter0", "0x0"),
+                ("filter1", "0x0"),
+            ])
+        );
+    }
+
+    /// [IVB] Table 2-16 and Linux put the state in filter0 bits 22:17, the
+    /// JSON's LLC_LOOKUP events in 23:17 (board card c55): a raw filter0 may
+    /// set bit 23, which programs as given and which LLC_LOOKUP takes as a
+    /// state.
+    #[test]
+    fn ivy_bridge_raw_filter0_takes_bit_23() {
+        for (raw, filter0) in [("0x800000", 0x80_0000), ("0xfe0000", 0xfe_0000)] {
+            let group = program(
+                IVB,
+                json!({
+                    "filter0": {"raw": raw},
+                    "events": [{"alias": "llc_lookup", "op": "any"}]
+                }),
+            )
+            .unwrap();
+
+            assert_eq!(group.filters, filters(filter0, 0), "{raw}");
+            assert_eq!(controls(&group), [(CounterSlot::General(0), 0x40_1134)]);
+            assert_eq!(
+                group.counters[0].labels["filter0"],
+                format!("{filter0:#x}"),
+                "{raw}"
+            );
+        }
+        let group = program(
+            IVB,
+            json!({"filter0": {"raw": "0x80001e"}, "events": [{"alias": "clockticks", "tid_en": true}]}),
+        )
+        .unwrap();
+        assert_eq!(group.filters, filters(0x80_001e, 0));
     }
 
     #[test]
@@ -1667,12 +1845,21 @@ mod tests {
                 (
                     cha_event(json!({"alias": "sf_eviction", "state": "m"})),
                     format!(
-                        "pmus.cha.groups[0].events[0].alias: unknown {name} CBo alias \"sf_eviction\" (aliases: clockticks, tor_inserts, tor_occupancy, llc_lookup, llc_victims)"
+                        "pmus.cha.groups[0].events[0].alias: unknown {name} CBo alias \"sf_eviction\" (aliases: clockticks, tor_inserts, tor_occupancy, llc_lookup, llc_victims, txr_inserts, misc)"
                     ),
                 ),
                 (
                     cha_event(json!({"alias": "llc_victims", "state": "f"})),
                     "pmus.cha.groups[0].events[0].state: llc_victims state must be one of m, e, s, miss, got \"f\"".to_string(),
+                ),
+                // A Haswell-EP MISC umask.
+                (
+                    cha_event(json!({"alias": "misc", "op": "cvzero_prefetch_victim"})),
+                    "pmus.cha.groups[0].events[0].op: misc op must be one of rspi_was_fse, wc_aliasing, started, rfo_hit_s, got \"cvzero_prefetch_victim\"".to_string(),
+                ),
+                (
+                    cha_event(json!({"alias": "txr_inserts"})),
+                    "pmus.cha.groups[0].events[0]: txr_inserts needs a ring (ad_cache, ak_cache, bl_cache, iv_cache, ad_core, ak_core, bl_core)".to_string(),
                 ),
             ];
 
@@ -1738,6 +1925,12 @@ mod tests {
                 SNB,
                 cha_filters(json!({"filter0": {"raw": "0x20"}})),
                 "pmus.cha.groups[0].filter0.raw: must fit the mask 0x7c001f, got 0x20",
+            ),
+            // Bit 23 is opcode bit 0, a filter1 field.
+            (
+                SNB,
+                cha_filters(json!({"filter0": {"raw": "0x800000"}})),
+                "pmus.cha.groups[0].filter0.raw: must fit the mask 0x7c001f, got 0x800000",
             ),
             (
                 SNB,
@@ -1808,12 +2001,12 @@ mod tests {
             (
                 IVB,
                 cha_filters(json!({"filter0": {"raw": "0x20"}})),
-                "pmus.cha.groups[0].filter0.raw: must fit the mask 0x7e001f, got 0x20",
+                "pmus.cha.groups[0].filter0.raw: must fit the mask 0xfe001f, got 0x20",
             ),
             (
                 IVB,
-                cha_filters(json!({"filter0": {"raw": "0x800000"}})),
-                "pmus.cha.groups[0].filter0.raw: must fit the mask 0x7e001f, got 0x800000",
+                cha_filters(json!({"filter0": {"raw": "0x1000000"}})),
+                "pmus.cha.groups[0].filter0.raw: must fit the mask 0xfe001f, got 0x1000000",
             ),
             (
                 IVB,
@@ -1993,5 +2186,12 @@ mod tests {
         );
         assert_eq!(IVY_BRIDGE.filters.filter0_mask(), 0x007e_001f);
         assert_eq!(IVY_BRIDGE.filters.filter1_mask(), 0xdff0_ffff);
+        // Only Ivy Bridge-EP's bit 23 is outside the named fields (c55).
+        assert_eq!(SANDY_BRIDGE.filters.raw_state, 0);
+        assert_eq!(IVY_BRIDGE.filters.raw_state, 1 << 23);
+        assert_eq!(
+            IVY_BRIDGE.filters.raw_state & IVY_BRIDGE.filters.filter0_mask(),
+            0
+        );
     }
 }

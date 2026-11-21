@@ -87,9 +87,12 @@ guide documents. Sandy Bridge-EP's TOR events have no `local` or `remote`
 home and its filters no `nc` or `isoc`. It has one CBo filter register: a
 group's `filter0` fields (`tid`, `states`) and `filter1` fields (`opcodes`,
 `nid`) both fill it, each filter's `raw` gives its own fields' bits in
-place, and `event_info` carries only `filter0`. These encodings follow
-Intel's uncore guides (327043, 329468), the perfmon JSON and Linux, and have
-not been checked on hardware.
+place, and `event_info` carries only `filter0`. On Ivy Bridge-EP the guide
+and Linux put the LLC_LOOKUP state in FILTER0 bits 22:17 and the perfmon JSON
+in 23:17: `states` follow the guide, and bit 23 is accepted only in
+`filter0.raw`, where LLC_LOOKUP takes it as a state, until a hardware check
+settles the layout (board card c55). These encodings follow Intel's uncore guides (327043, 329468), the
+perfmon JSON and Linux, and have not been checked on hardware.
 
 Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha`, `imc`,
 `iio` and `irp`. Their CHAs select requests in the umask_ext field of each

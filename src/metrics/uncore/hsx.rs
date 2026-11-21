@@ -39,6 +39,7 @@ impl HsxUncoreScope {
 pub struct HsxUncoreSpec {
     pub imc_channels: &'static [metal::pci::PciDeviceSpec],
     pub name: &'static str,
+    pub ubox: metal::ubox::UboxSpec,
 }
 
 impl HsxUncoreSpec {
@@ -47,10 +48,12 @@ impl HsxUncoreSpec {
             IntelServerCpuModel::HaswellXeon => Some(Self {
                 imc_channels: &metal::arch::hsx::pci::HASWELL_IMC_CHANNELS,
                 name: "Haswell",
+                ubox: metal::ubox::HASWELL_UBOX,
             }),
             IntelServerCpuModel::BroadwellXeon => Some(Self {
                 imc_channels: &metal::arch::hsx::pci::BROADWELL_IMC_CHANNELS,
                 name: "Broadwell",
+                ubox: metal::ubox::BROADWELL_UBOX,
             }),
             _ => None,
         }
@@ -170,33 +173,20 @@ pub fn average_u64(values: impl Iterator<Item = u64>) -> u64 {
 
 pub fn bus_scopes(spec: HsxUncoreSpec) -> Result<Vec<HsxSocketBusScope>, String> {
     let scopes = package_scopes()?;
-    let socket_buses = metal::arch::hsx::pci::imc_socket_buses(spec.imc_channels, scopes.len())?;
+    let package_ids = scopes
+        .iter()
+        .map(|scope| scope.package_id)
+        .collect::<Vec<_>>();
+    let node_map = metal::ubox::UboxNodeMap::discover(spec.ubox, &package_ids)?;
 
-    if socket_buses.len() != scopes.len() {
-        return Err(format!(
-            "discovered {} {} IMC buses for {} CPU packages",
-            socket_buses.len(),
-            spec.name,
-            scopes.len()
-        ));
-    }
-
-    socket_buses
+    metal::arch::hsx::pci::imc_socket_buses(spec.imc_channels, &node_map)?
         .into_iter()
         .map(|socket_bus| {
-            let scope = scopes
-                .get(socket_bus.socket_index)
-                .copied()
-                .ok_or_else(|| {
-                    format!(
-                        "failed to map {} IMC socket index {} to a CPUID package",
-                        spec.name, socket_bus.socket_index
-                    )
-                })?;
-
             Ok(HsxSocketBusScope {
                 bus: socket_bus.bus,
-                scope,
+                scope: metal::ubox::package_scope(&scopes, socket_bus.package_id, |scope| {
+                    scope.package_id
+                })?,
             })
         })
         .collect()

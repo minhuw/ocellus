@@ -4,3 +4,4 @@ pub mod mmio;
 pub mod msr;
 pub mod pci;
 pub mod topology;
+pub mod ubox;

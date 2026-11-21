@@ -1,4 +1,5 @@
 use crate::metal::pci::{PciBus, PciDeviceSpec};
+use crate::metal::ubox::UboxNodeMap;
 
 pub const IMC_CHANNELS: [PciDeviceSpec; 6] = [
     PciDeviceSpec {
@@ -33,34 +34,25 @@ pub const IMC_CHANNELS: [PciDeviceSpec; 6] = [
     },
 ];
 
-pub fn imc_socket_buses(socket_count: usize) -> Result<Vec<ImcSocketBus>, String> {
+/// The bus of each package's IMC channels, by package.
+pub fn imc_socket_buses(node_map: &UboxNodeMap) -> Result<Vec<ImcSocketBus>, String> {
     let locations = crate::metal::pci::find_intel_devices_matching_spec(IMC_CHANNELS[0])?;
+    let socket_devices = node_map.socket_devices(&locations, "IMC")?;
 
-    if locations.len() < socket_count {
-        return Err(format!(
-            "discovered {} SKX IMC buses for {socket_count} CPU packages",
-            locations.len()
-        ));
-    }
-
-    locations
+    Ok(socket_devices
         .into_iter()
-        .take(socket_count)
-        .enumerate()
-        .map(|(socket_index, location)| {
-            Ok(ImcSocketBus {
-                bus: PciBus {
-                    bus: location.bus,
-                    group: location.group,
-                },
-                socket_index,
-            })
+        .map(|(package_id, location)| ImcSocketBus {
+            bus: PciBus {
+                bus: location.bus,
+                group: location.group,
+            },
+            package_id,
         })
-        .collect()
+        .collect())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImcSocketBus {
     pub bus: PciBus,
-    pub socket_index: usize,
+    pub package_id: u32,
 }

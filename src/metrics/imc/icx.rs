@@ -9,6 +9,7 @@ use prometheus_client::registry::Registry;
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metal::ubox::UboxNodeMap;
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE, topology_label};
 
 const COUNTER_COUNT: usize = 4;
@@ -657,26 +658,24 @@ fn discover_channels_from_ubox_bars(
     channels_per_bar: usize,
 ) -> Result<Vec<IcxImcChannel>, String> {
     let scopes = imc_scopes()?;
+    let package_ids = scopes
+        .iter()
+        .map(|scope| scope.package_id)
+        .collect::<Vec<_>>();
+    let node_map = UboxNodeMap::discover(metal::ubox::ICE_LAKE_UBOX, &package_ids)?;
     let uboxes = metal::pci::find_intel_devices_at_address_matching_device_ids(
         SERVER_UBOX0_DEVICE,
         SERVER_UBOX0_FUNCTION,
         &SERVER_UBOX0_DEVICE_IDS,
-    )?;
-
-    if uboxes.len() != scopes.len() {
-        return Err(format!(
-            "discovered {} UBOX0 devices for {} CPU packages",
-            uboxes.len(),
-            scopes.len()
-        ));
-    }
+    )?
+    .into_iter()
+    .map(|ubox| ubox.location)
+    .collect::<Vec<_>>();
 
     let mut channels = Vec::with_capacity(scopes.len() * bars_per_package * channels_per_bar);
-    for (socket_index, ubox) in uboxes.into_iter().enumerate() {
-        let scope = scopes.get(socket_index).copied().ok_or_else(|| {
-            format!("failed to map UBOX0 socket index {socket_index} to a CPUID package")
-        })?;
-        let device = metal::pci::PciDevice::open_readonly(ubox.location)?;
+    for (package_id, ubox) in node_map.socket_devices(&uboxes, "UBOX0")? {
+        let scope = metal::ubox::package_scope(&scopes, package_id, |scope| scope.package_id)?;
+        let device = metal::pci::PciDevice::open_readonly(ubox)?;
         let mmio_base = device.read_u32(SERVER_UBOX0_MMIO_BASE_OFFSET)?;
 
         for bar_index in 0..bars_per_package {
@@ -685,8 +684,7 @@ fn discover_channels_from_ubox_bars(
             let memory_bar = server_memory_bar(mmio_base, memory_offset);
             if memory_bar == 0 {
                 return Err(format!(
-                    "server memory BAR {bar_index} for UBOX0 {} is zero",
-                    ubox.location
+                    "server memory BAR {bar_index} for UBOX0 {ubox} is zero"
                 ));
             }
 

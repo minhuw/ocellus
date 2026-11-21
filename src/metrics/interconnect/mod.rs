@@ -867,6 +867,16 @@ mod qpi_common {
             }
         }
 
+        /// The UBOX that maps Haswell-EP and Broadwell-EP QPI buses to
+        /// packages; Sandy/Ivy Bridge-EP read theirs by `ubox_device_id`.
+        const fn ubox(self) -> Option<metal::ubox::UboxSpec> {
+            match self {
+                Self::Bdx => Some(metal::ubox::BROADWELL_UBOX),
+                Self::Hsx => Some(metal::ubox::HASWELL_UBOX),
+                Self::Ivb | Self::Snb => None,
+            }
+        }
+
         const fn ubox_device_id(self) -> u16 {
             match self {
                 Self::Bdx => 0x6f1e,
@@ -1335,6 +1345,29 @@ mod qpi_common {
     }
 
     fn package_bus_scopes(architecture: QpiArchitecture) -> Result<Vec<QpiBusScope>, String> {
+        if let Some(ubox) = architecture.ubox() {
+            let package_ids = package_scopes()?
+                .iter()
+                .map(|scope| scope.package_id)
+                .collect::<Vec<_>>();
+
+            return Ok(metal::ubox::UboxNodeMap::discover(ubox, &package_ids)?
+                .uboxes()
+                .iter()
+                .map(|ubox| QpiBusScope {
+                    bus: PciBus {
+                        bus: ubox.location.bus,
+                        group: ubox.location.group,
+                    },
+                    scope: UncoreScope {
+                        die_group_id: None,
+                        die_id: None,
+                        package_id: ubox.package_id,
+                    },
+                })
+                .collect());
+        }
+
         let mut bus_scopes = Vec::new();
 
         for location in
@@ -1929,11 +1962,21 @@ mod upi_common {
             0
         }
 
+        /// The UBOX that maps Skylake-SP and Ice Lake-SP UPI buses to
+        /// packages; Sapphire Rapids and Emerald Rapids read theirs by
+        /// `ubox_device_id`.
+        const fn ubox(self) -> Option<metal::ubox::UboxSpec> {
+            match self {
+                Self::Icx => Some(metal::ubox::ICE_LAKE_UBOX),
+                Self::Skx => Some(metal::ubox::SKYLAKE_UBOX),
+                Self::Emr | Self::Spr => None,
+            }
+        }
+
         const fn ubox_device_id(self) -> Option<u16> {
             match self {
                 Self::Emr | Self::Spr => Some(0x3250),
-                Self::Icx => Some(0x3450),
-                Self::Skx => None,
+                Self::Icx | Self::Skx => None,
             }
         }
     }
@@ -2362,6 +2405,38 @@ mod upi_common {
         architecture: UpiArchitecture,
         leaders: &[UncoreLeader],
     ) -> Result<Vec<UpiBusScope>, String> {
+        if let Some(ubox) = architecture.ubox() {
+            let scopes = leaders
+                .iter()
+                .map(|leader| leader.scope)
+                .collect::<Vec<_>>();
+            let package_ids = scopes
+                .iter()
+                .map(|scope| scope.package_id)
+                .collect::<Vec<_>>();
+            let node_map = metal::ubox::UboxNodeMap::discover(ubox, &package_ids)?;
+            let upi_buses =
+                metal::pci::find_intel_devices_matching_device_id(architecture.device_id())?
+                    .into_iter()
+                    .map(|location| PciBus {
+                        bus: location.bus,
+                        group: location.group,
+                    });
+
+            return node_map
+                .bus_packages(upi_buses)?
+                .into_iter()
+                .map(|(package_id, bus)| {
+                    Ok(UpiBusScope {
+                        bus,
+                        scope: metal::ubox::package_scope(&scopes, package_id, |scope| {
+                            scope.package_id
+                        })?,
+                    })
+                })
+                .collect();
+        }
+
         let mut bus_scopes = Vec::new();
 
         if let Some(ubox_device_id) = architecture.ubox_device_id() {

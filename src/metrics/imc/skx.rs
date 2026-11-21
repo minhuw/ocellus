@@ -11,6 +11,7 @@ use crate::metal;
 use crate::metal::arch::skx::pmon;
 use crate::metal::pci::PciDevice;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
+use crate::metal::ubox::UboxNodeMap;
 use crate::metrics::EventProfile;
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE, topology_label};
 use crate::pmu_config::types::{
@@ -759,27 +760,18 @@ fn discover_channel_specs(model: IntelServerCpuModel) -> Result<Vec<ImcChannelSp
 
 fn imc_bus_scopes() -> Result<Vec<(metal::pci::PciBus, ImcScope)>, String> {
     let socket_scopes = imc_scopes()?;
-    let socket_buses = metal::arch::skx::pci::imc_socket_buses(socket_scopes.len())?;
+    let package_ids = socket_scopes
+        .iter()
+        .map(|scope| scope.package_id)
+        .collect::<Vec<_>>();
+    let node_map = UboxNodeMap::discover(metal::ubox::SKYLAKE_UBOX, &package_ids)?;
 
-    if socket_buses.len() != socket_scopes.len() {
-        return Err(format!(
-            "discovered {} IMC buses for {} CPU packages",
-            socket_buses.len(),
-            socket_scopes.len()
-        ));
-    }
-
-    socket_buses
+    metal::arch::skx::pci::imc_socket_buses(&node_map)?
         .into_iter()
         .map(|socket_bus| {
-            let scope = socket_scopes
-                .get(socket_bus.socket_index)
-                .copied()
-                .ok_or_else(|| {
-                    format!(
-                        "failed to map SKX IMC socket index {} to a CPUID package",
-                        socket_bus.socket_index
-                    )
+            let scope =
+                metal::ubox::package_scope(&socket_scopes, socket_bus.package_id, |scope| {
+                    scope.package_id
                 })?;
 
             Ok((socket_bus.bus, scope))

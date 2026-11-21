@@ -9,10 +9,14 @@ mod counters;
 use crate::metal::arch::skx::pmon;
 use crate::pmu_config::spec::{
     Alias, BoxSpec, Encoding, EventRequest, GroupProgram, GroupRequest, Param, Token,
-    check_counter, check_event_count, event_encoding, join, raw_encoding,
+    check_counter, check_event_count, event_encoding, join, raw_encoding, register_field,
 };
 use crate::pmu_config::types::{BoxType, CounterSlot, EventLabels, ProgrammedCounter};
 
+const IIO_CH_MASK_MAX: u64 = 0xfff;
+const IIO_CH_MASK_SHIFT: u32 = 36;
+const IIO_FC_MASK_MAX: u8 = 0x07;
+const IIO_FC_MASK_SHIFT: u32 = 48;
 const UMASK_EXT_SHIFT: u32 = 32;
 
 /// How a model lays out its counter controls.
@@ -42,6 +46,7 @@ struct Model {
     imc: BoxSpec,
     /// The `alias` label of the IMC fixed counter.
     imc_fixed_alias: &'static str,
+    iio: BoxSpec,
 }
 
 const ICX: Model = Model {
@@ -66,6 +71,13 @@ const ICX: Model = Model {
     },
     // UNC_M_HCLOCKTICKS, the one perfmon event of `Counter` "FIXED".
     imc_fixed_alias: "hclockticks",
+    iio: BoxSpec {
+        model: "Ice Lake-SP",
+        name: "IIO",
+        general_counters: 4,
+        event_counters: &counters::ICX_IIO,
+        aliases: ICX_IIO_ALIASES,
+    },
 };
 
 const SPR: Model = spr("Sapphire Rapids");
@@ -96,6 +108,13 @@ const fn spr(name: &'static str) -> Model {
         // Perfmon lists no fixed iMC event; Linux spr_uncore_imc programs
         // the fixed counter as on Ice Lake-SP.
         imc_fixed_alias: "fixed_clockticks",
+        iio: BoxSpec {
+            model: name,
+            name: "IIO",
+            general_counters: 4,
+            event_counters: &counters::SPR_IIO,
+            aliases: SPR_IIO_ALIASES,
+        },
     }
 }
 
@@ -346,10 +365,71 @@ const SPR_IMC_ALIASES: &[Alias] = &[
     Alias::new("wpq_occupancy_pch1", 0x83, 0x00, &[]),
 ];
 
-/// The register fields of one counter's event on these models.
+/// PCIe partitions 0-7 of a stack in the IIO ch_mask, as the public
+/// UNC_IIO_DATA_REQ_*_CPU.*.PART0-7 events select them one each and
+/// UNC_IIO_COMP_BUF_INSERTS.CMPD.ALL_PARTS and the SPR
+/// UNC_IIO_DATA_REQ_OF_CPU.*.ALL_PARTS all of them.
+const IIO_ALL_PARTS: u8 = 0xff;
+/// UNC_IIO_DATA_REQ_OF_CPU.MEM_WRITE.*, .MEM_READ.* and .CMPD.*
+const DATA_REQ_OF_CPU_OPS: Param = Param {
+    field: "op",
+    values: &[("mem_write", 0x01), ("mem_read", 0x04), ("cmpd", 0x80)],
+};
+/// UNC_IIO_DATA_REQ_BY_CPU.MEM_WRITE.* and .MEM_READ.*
+const DATA_REQ_BY_CPU_OPS: Param = Param {
+    field: "op",
+    values: &[("mem_write", 0x01), ("mem_read", 0x04)],
+};
+
+const ICX_IIO_ALIASES: &[Alias] = &[
+    // UNC_IIO_CLOCKTICKS
+    Alias::new("clockticks", 0x01, 0x00, &[]),
+    // UNC_IIO_COMP_BUF_INSERTS.CMPD.ALL_PARTS
+    Alias {
+        ch_mask: IIO_ALL_PARTS,
+        fc_mask: 0x04,
+        ..Alias::new("comp_buf_inserts", 0xc2, 0x03, &[])
+    },
+    // UNC_IIO_COMP_BUF_OCCUPANCY.CMPD.ALL_PARTS
+    Alias {
+        fc_mask: 0x04,
+        ..Alias::new("comp_buf_occupancy", 0xd5, 0xff, &[])
+    },
+    Alias {
+        ch_mask: IIO_ALL_PARTS,
+        fc_mask: 0x07,
+        ..Alias::new("data_req_of_cpu", 0x83, 0x00, &[DATA_REQ_OF_CPU_OPS])
+    },
+    Alias {
+        ch_mask: IIO_ALL_PARTS,
+        fc_mask: 0x07,
+        ..Alias::new("data_req_by_cpu", 0xc0, 0x00, &[DATA_REQ_BY_CPU_OPS])
+    },
+];
+
+/// Sapphire Rapids and Emerald Rapids list COMP_BUF events only as
+/// experimental.
+const SPR_IIO_ALIASES: &[Alias] = &[
+    // UNC_IIO_CLOCKTICKS
+    Alias::new("clockticks", 0x01, 0x00, &[]),
+    Alias {
+        ch_mask: IIO_ALL_PARTS,
+        fc_mask: 0x07,
+        ..Alias::new("data_req_of_cpu", 0x83, 0x00, &[DATA_REQ_OF_CPU_OPS])
+    },
+    Alias {
+        ch_mask: IIO_ALL_PARTS,
+        fc_mask: 0x07,
+        ..Alias::new("data_req_by_cpu", 0xc0, 0x00, &[DATA_REQ_BY_CPU_OPS])
+    },
+];
+
+/// The register fields of one counter's event on these models. The IIO
+/// ch_mask is 12 bits wide here, so it replaces `base.ch_mask`.
 struct IcxEncoding {
     base: Encoding,
     umask_ext: u32,
+    ch_mask: u16,
 }
 
 pub(super) fn program_icx_group(
@@ -384,6 +464,7 @@ fn program_group(
 ) -> Result<GroupProgram, String> {
     let box_spec = match box_type {
         BoxType::Cha => &model.cha,
+        BoxType::Iio => &model.iio,
         BoxType::Imc => &model.imc,
         BoxType::Ha => return Err(format!("{path}: {} has no ha boxes", model.name)),
         _ => {
@@ -450,12 +531,14 @@ fn encoding(
     if event.tid_en {
         return Err(format!("{path}.tid_en: not supported on {}", model.name));
     }
-    for (field, given) in [
-        ("ch_mask", event.ch_mask.is_some()),
-        ("fc_mask", event.fc_mask.is_some()),
-    ] {
-        if given {
-            return Err(format!("{path}.{field}: only IIO events take a {field}"));
+    if box_type != BoxType::Iio {
+        for (field, given) in [
+            ("ch_mask", event.ch_mask.is_some()),
+            ("fc_mask", event.fc_mask.is_some()),
+        ] {
+            if given {
+                return Err(format!("{path}.{field}: only IIO events take a {field}"));
+            }
         }
     }
     if box_type == BoxType::Cha {
@@ -470,13 +553,32 @@ fn encoding(
         return Err(format!("{path}.opcode: only TOR aliases take an opcode"));
     }
     let box_spec = match box_type {
+        BoxType::Iio => &model.iio,
         BoxType::Imc => &model.imc,
         _ => unreachable!("program_group takes no other box types"),
     };
 
+    let mut base = event_encoding(box_spec, event, path)?;
+    let mut ch_mask = u16::from(base.ch_mask);
+    if let Some(value) = &event.ch_mask {
+        ch_mask = u16::try_from(value.0)
+            .ok()
+            .filter(|_| value.0 <= IIO_CH_MASK_MAX)
+            .ok_or_else(|| {
+                format!(
+                    "{path}.ch_mask: must be at most {IIO_CH_MASK_MAX:#x}, got {:#x}",
+                    value.0
+                )
+            })?;
+    }
+    if let Some(value) = &event.fc_mask {
+        base.fc_mask = register_field(value, IIO_FC_MASK_MAX, &format!("{path}.fc_mask"))?;
+    }
+
     Ok(IcxEncoding {
-        base: event_encoding(box_spec, event, path)?,
+        base,
         umask_ext: 0,
+        ch_mask,
     })
 }
 
@@ -504,6 +606,7 @@ fn cha_encoding(model: &Model, event: &EventRequest, path: &str) -> Result<IcxEn
             Ok(IcxEncoding {
                 base: raw_encoding(code, event, path)?,
                 umask_ext,
+                ch_mask: 0,
             })
         }
         (Some(_), Some(_)) => Err(format!("{path}: takes an alias or an event, not both")),
@@ -595,6 +698,7 @@ fn cha_alias_encoding(
             fc_mask: 0,
         },
         umask_ext,
+        ch_mask: 0,
     })
 }
 
@@ -638,6 +742,11 @@ fn control(model: &Model, box_type: BoxType, encoding: &IcxEncoding) -> u64 {
 
     match box_type {
         BoxType::Cha => select | (u64::from(encoding.umask_ext) << UMASK_EXT_SHIFT),
+        BoxType::Iio => {
+            select
+                | (u64::from(encoding.ch_mask) << IIO_CH_MASK_SHIFT)
+                | (u64::from(base.fc_mask) << IIO_FC_MASK_SHIFT)
+        }
         _ => select,
     }
 }
@@ -649,11 +758,18 @@ fn labels(box_type: BoxType, encoding: &IcxEncoding) -> EventLabels {
         ("event".to_string(), format!("{:#04x}", base.event)),
         ("umask".to_string(), format!("{:#04x}", base.umask)),
     ]);
-    if box_type == BoxType::Cha {
-        labels.insert(
-            "umask_ext".to_string(),
-            format!("{:#x}", encoding.umask_ext),
-        );
+    match box_type {
+        BoxType::Cha => {
+            labels.insert(
+                "umask_ext".to_string(),
+                format!("{:#x}", encoding.umask_ext),
+            );
+        }
+        BoxType::Iio => {
+            labels.insert("ch_mask".to_string(), format!("{:#04x}", encoding.ch_mask));
+            labels.insert("fc_mask".to_string(), format!("{:#04x}", base.fc_mask));
+        }
+        _ => {}
     }
 
     labels
@@ -681,7 +797,11 @@ mod tests {
             |count: u16| BTreeMap::from([(0, (0..count).collect()), (1, (0..count).collect())]);
 
         PmuTopology {
-            units: BTreeMap::from([(BoxType::Cha, packages(4)), (BoxType::Imc, packages(8))]),
+            units: BTreeMap::from([
+                (BoxType::Cha, packages(4)),
+                (BoxType::Iio, packages(6)),
+                (BoxType::Imc, packages(8)),
+            ]),
         }
     }
 
@@ -729,7 +849,7 @@ mod tests {
     #[test]
     fn counter_tables_are_sorted_and_fit_the_boxes() {
         for (_, model) in MODELS {
-            let boxes = [&model.cha, &model.imc];
+            let boxes = [&model.cha, &model.iio, &model.imc];
             for box_spec in boxes {
                 let counters = box_spec.event_counters;
                 assert!(
@@ -1325,6 +1445,181 @@ mod tests {
     }
 
     #[test]
+    fn programs_iio_events_as_perfmon_lists_them() {
+        use IntelServerCpuModel::{EmeraldRapids, IceLakeXeon, SapphireRapids};
+
+        // (model, slot, request, perfmon event, event, umask, ch_mask, fc_mask)
+        let cases = [
+            (
+                IceLakeXeon,
+                1,
+                json!({"alias": "data_req_of_cpu", "op": "mem_read", "ch_mask": 1}),
+                "UNC_IIO_DATA_REQ_OF_CPU.MEM_READ.PART0",
+                0x83,
+                0x04,
+                0x001,
+                0x07,
+            ),
+            (
+                IceLakeXeon,
+                2,
+                json!({"alias": "data_req_by_cpu", "op": "mem_write", "ch_mask": "0x80"}),
+                "UNC_IIO_DATA_REQ_BY_CPU.MEM_WRITE.PART7",
+                0xc0,
+                0x01,
+                0x080,
+                0x07,
+            ),
+            (
+                IceLakeXeon,
+                0,
+                json!({"alias": "comp_buf_inserts"}),
+                "UNC_IIO_COMP_BUF_INSERTS.CMPD.ALL_PARTS",
+                0xc2,
+                0x03,
+                0x0ff,
+                0x04,
+            ),
+            (
+                IceLakeXeon,
+                3,
+                json!({"alias": "comp_buf_occupancy"}),
+                "UNC_IIO_COMP_BUF_OCCUPANCY.CMPD.ALL_PARTS",
+                0xd5,
+                0xff,
+                0x000,
+                0x04,
+            ),
+            (
+                IceLakeXeon,
+                3,
+                json!({"alias": "clockticks"}),
+                "UNC_IIO_CLOCKTICKS",
+                0x01,
+                0x00,
+                0x000,
+                0x00,
+            ),
+            (
+                SapphireRapids,
+                0,
+                json!({"alias": "data_req_of_cpu", "op": "mem_write"}),
+                "UNC_IIO_DATA_REQ_OF_CPU.MEM_WRITE.ALL_PARTS",
+                0x83,
+                0x01,
+                0x0ff,
+                0x07,
+            ),
+            (
+                SapphireRapids,
+                3,
+                json!({"alias": "data_req_by_cpu", "op": "mem_read", "ch_mask": 1}),
+                "UNC_IIO_DATA_REQ_BY_CPU.MEM_READ.PART0",
+                0xc0,
+                0x04,
+                0x001,
+                0x07,
+            ),
+            (
+                EmeraldRapids,
+                2,
+                json!({"event": "0x85", "umask": 1, "ch_mask": "0xfff", "fc_mask": 7}),
+                "UNC_IIO_NUM_REQ_OF_CPU.COMMIT.ALL",
+                0x85,
+                0x01,
+                0xfff,
+                0x07,
+            ),
+        ];
+        for (model, slot, request, name, event, umask, ch_mask, fc_mask) in cases {
+            let mut events = vec![Value::Null; slot];
+            events.push(request);
+            let program = program(model, "iio", json!({ "events": events }));
+            let counter = &program.groups[0].counters[0];
+            assert_eq!(counter.slot, CounterSlot::General(slot as u8), "{name}");
+            assert_eq!(
+                counter.control,
+                perfmon_control(model, event, umask, 0) | (ch_mask << 36) | (fc_mask << 48),
+                "{model:?} {name}"
+            );
+            assert_eq!(
+                counter.labels["ch_mask"],
+                format!("{ch_mask:#04x}"),
+                "{name}"
+            );
+            assert_eq!(
+                counter.labels["fc_mask"],
+                format!("{fc_mask:#04x}"),
+                "{name}"
+            );
+        }
+
+        // Perfmon spells this one's masks out in UMaskExt as well.
+        let program = program(
+            SapphireRapids,
+            "iio",
+            json!({"events": [null, null, {"alias": "data_req_by_cpu", "op": "mem_read", "ch_mask": 1}]}),
+        );
+        assert_eq!(program.groups[0].counters[0].control >> 32, 0x0007_0010);
+    }
+
+    #[test]
+    fn rejects_invalid_iio_requests() {
+        use IntelServerCpuModel::{IceLakeXeon, SapphireRapids};
+
+        let cases = [
+            (
+                IceLakeXeon,
+                json!({"events": [{"alias": "clockticks", "ch_mask": "0x1000"}]}),
+                "pmus.iio.groups[0].events[0].ch_mask: must be at most 0xfff, got 0x1000",
+            ),
+            (
+                SapphireRapids,
+                json!({"events": [{"alias": "clockticks", "fc_mask": 8}]}),
+                "pmus.iio.groups[0].events[0].fc_mask: must be at most 0x07, got 0x8",
+            ),
+            (
+                SapphireRapids,
+                json!({"events": [{"alias": "comp_buf_inserts"}]}),
+                "pmus.iio.groups[0].events[0].alias: unknown Sapphire Rapids IIO alias \"comp_buf_inserts\" (aliases: clockticks, data_req_of_cpu, data_req_by_cpu)",
+            ),
+            (
+                IceLakeXeon,
+                json!({"events": [null, null, {"alias": "data_req_of_cpu", "op": "mem_read"}]}),
+                "pmus.iio.groups[0].events[2]: event 0x83 counts only on counters 0, 1",
+            ),
+            (
+                IceLakeXeon,
+                json!({"events": [{"alias": "data_req_by_cpu", "op": "mem_read"}]}),
+                "pmus.iio.groups[0].events[0]: event 0xc0 counts only on counters 2, 3",
+            ),
+            (
+                IceLakeXeon,
+                json!({"events": [{"alias": "data_req_of_cpu", "op": "peer_write"}]}),
+                "pmus.iio.groups[0].events[0].op: data_req_of_cpu op must be one of mem_write, mem_read, cmpd, got \"peer_write\"",
+            ),
+            (
+                SapphireRapids,
+                json!({"events": [{"event": 1, "umask_ext": 1}]}),
+                "pmus.iio.groups[0].events[0].umask_ext: only CHA events take a umask_ext",
+            ),
+            (
+                SapphireRapids,
+                json!({"fixed": true, "events": [{"alias": "clockticks"}]}),
+                "pmus.iio.groups[0].fixed: only IMC boxes have a fixed counter on Sapphire Rapids",
+            ),
+            (
+                IceLakeXeon,
+                json!({"filter1": {"opcodes": ["ItoM"]}, "events": [{"alias": "clockticks"}]}),
+                "pmus.iio.groups[0].filter1: not supported on Ice Lake-SP, whose CHA events select requests by umask_ext",
+            ),
+        ];
+        for (model, group, expected) in cases {
+            assert_eq!(error(model, "iio", group.clone()), expected, "{group}");
+        }
+    }
+
+    #[test]
     fn rejects_other_box_types_until_supported() {
         assert_eq!(
             error(IntelServerCpuModel::IceLakeXeon, "ha", json!({})),
@@ -1383,13 +1678,29 @@ mod tests {
             ]
         }});
         let ids = MODELS.map(|(model, _)| configs(model, pmus.clone()).unwrap()[0].config_id);
-
         assert_eq!(
             ids,
             [
                 4_677_831_721_322_206,
                 8_486_092_047_021_842,
                 8_486_092_047_021_842
+            ]
+        );
+
+        let pmus = json!({"iio": {
+            "grouping": "spatial",
+            "groups": [
+                {"units": [0, 1], "events": [{"alias": "data_req_of_cpu", "op": "mem_read"}, null, {"alias": "data_req_by_cpu", "op": "mem_write"}]},
+                {"units": [5], "events": [{"alias": "clockticks"}]}
+            ]
+        }});
+        let ids = MODELS.map(|(model, _)| configs(model, pmus.clone()).unwrap()[0].config_id);
+        assert_eq!(
+            ids,
+            [
+                3_259_434_963_336_868,
+                4_958_946_945_325_460,
+                4_958_946_945_325_460
             ]
         );
     }

@@ -78,26 +78,25 @@ impl ConfigurableCollector for IioCollector {
 
     fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.config_units(),
+            Self::Icx(collector) => collector.config_units(),
             Self::Skx(collector) => collector.config_units(),
-            Self::Emr(_) | Self::Icx(_) | Self::Spr(_) => BTreeMap::new(),
         }
     }
 
     fn has_config(&self) -> bool {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.has_config(),
+            Self::Icx(collector) => collector.has_config(),
             Self::Skx(collector) => collector.has_config(),
-            Self::Emr(_) | Self::Icx(_) | Self::Spr(_) => false,
         }
     }
 
     fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.set_config(config),
+            Self::Icx(collector) => collector.set_config(config),
             Self::Skx(collector) => collector.set_config(config),
-            _ if config.is_none() => Ok(()),
-            collector => Err(format!(
-                "PMU configs are not supported on {}",
-                collector.architecture()
-            )),
         }
     }
 
@@ -107,23 +106,11 @@ impl ConfigurableCollector for IioCollector {
         cycle: u64,
     ) -> Result<UncoreCounts, String> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => {
+                collector.sample_config(interval, cycle).await
+            }
+            Self::Icx(collector) => collector.sample_config(interval, cycle).await,
             Self::Skx(collector) => collector.sample_config(interval, cycle).await,
-            collector => Err(format!(
-                "PMU configs are not supported on {}",
-                collector.architecture()
-            )),
-        }
-    }
-}
-
-impl IioCollector {
-    /// The architecture's name, for errors.
-    fn architecture(&self) -> &'static str {
-        match self {
-            Self::Emr(_) => "Emerald Rapids",
-            Self::Icx(_) => "Ice Lake-SP",
-            Self::Spr(_) => "Sapphire Rapids",
-            Self::Skx(_) => "Skylake-SP",
         }
     }
 }

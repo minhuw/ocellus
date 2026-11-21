@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -9,10 +9,14 @@ use prometheus_client::registry::Registry;
 use crate::arch::{Architecture, IntelServerCpuModel};
 use crate::metal::msr::Msr;
 use crate::metrics::common::topology_label;
+use crate::metrics::uncore::config::{self, ConfigBox};
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, events_per_second, frequency_hz, mask_counter,
     measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled, uncore_leaders,
     wrapping_delta,
+};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, PmuConfig, ProgrammedGroup, UncoreCounts,
 };
 
 const COUNTER_ENABLE_BIT: u64 = 1 << 22;
@@ -275,16 +279,90 @@ impl IcxIioMetrics {
 
 #[derive(Debug)]
 pub struct IcxIioCollector {
+    /// The PMU config counted instead of the default groups, with its counts
+    /// so far.
+    config: Option<CountAccumulator>,
     next_group: usize,
     packages: Vec<IioPackage>,
 }
 
 impl IcxIioCollector {
+    /// The IIO stacks of each package that PMU configs can program.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        self.packages
+            .iter()
+            .map(|package| {
+                (
+                    package.scope.package_id as u16,
+                    package
+                        .units
+                        .iter()
+                        .map(|unit| unit.stack.id() as u16)
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        if let Some(config) = &config {
+            config::check_config(
+                config,
+                BoxType::Iio,
+                &self.config_units(),
+                IIO_COUNTER_COUNT,
+                false,
+            )?;
+        }
+
+        self.config = config.map(CountAccumulator::new);
+        // The free-running PCIe counters count on: no delta may span a config.
+        for package in &mut self.packages {
+            package.free_running.previous = None;
+        }
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        if interval.is_zero() {
+            return Err("IIO measure interval must be non-zero".to_string());
+        }
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "IIO has no PMU config to sample".to_string())?;
+        let packages = &self.packages;
+
+        config::sample_config(accumulator, interval, cycle, |package, unit| {
+            packages
+                .iter()
+                .filter(|candidate| candidate.scope.package_id as u16 == package)
+                .flat_map(|candidate| &candidate.units)
+                .find(|candidate| candidate.stack.id() as u16 == unit)
+                .copied()
+                .ok_or_else(|| format!("IIO stack {unit} of package {package} does not exist"))
+        })
+        .await
+    }
+
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         let packages = discover_packages(architecture.intel_server_model())?;
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
+            config: None,
             next_group: 0,
             packages,
         })
@@ -650,6 +728,51 @@ impl IioUnit {
 
     fn write_unit_control(self, value: u64) -> Result<(), String> {
         Msr::open(self.cpu)?.write(iio_unit_control_offset(self.stack), value)
+    }
+}
+
+impl IioUnit {
+    /// The MSR writes, as (address, value), that program config `group`:
+    /// freeze and reset the stack, then set each counter control with the
+    /// reset bit, 0 for unused counters.
+    fn config_writes(self, group: &ProgrammedGroup) -> Vec<(u64, u64)> {
+        let mut writes = vec![(
+            iio_unit_control_offset(self.stack),
+            u64::from(UNIT_FREEZE_AND_RESET),
+        )];
+        writes.extend(
+            config::general_controls(group, IIO_COUNTER_COUNT, COUNTER_RESET_BIT)
+                .into_iter()
+                .enumerate()
+                .map(|(index, control)| (iio_control_offset(self.stack, index), control)),
+        );
+
+        writes
+    }
+}
+
+impl ConfigBox for IioUnit {
+    fn program_group(&self, group: &ProgrammedGroup) -> Result<(), String> {
+        let msr = Msr::open(self.cpu)?;
+        for (address, value) in self.config_writes(group) {
+            msr.write(address, value)?;
+        }
+
+        Ok(())
+    }
+
+    fn freeze_box(&self) -> Result<(), String> {
+        self.freeze()
+    }
+
+    fn unfreeze_box(&self) -> Result<(), String> {
+        self.unfreeze()
+    }
+
+    fn read_slot(&self, slot: CounterSlot) -> Result<u64, String> {
+        let index = config::counter_index(slot, IIO_COUNTER_COUNT, false)?
+            .expect("IIO stacks have no fixed counter");
+        self.read_counter(index)
     }
 }
 
@@ -1135,5 +1258,81 @@ mod tests {
 
     fn test_stack_scope(scope: UncoreScope, stack: IcxIioStack) -> IioStackScope {
         IioStackScope { scope, stack }
+    }
+
+    fn config_collector() -> IcxIioCollector {
+        IcxIioCollector {
+            config: None,
+            next_group: 0,
+            packages: vec![
+                IioPackage::new(0, test_scope()),
+                IioPackage::new(
+                    32,
+                    UncoreScope {
+                        package_id: 1,
+                        ..test_scope()
+                    },
+                ),
+            ],
+        }
+    }
+
+    #[test]
+    fn programs_a_config_group_on_one_stack() {
+        // UNC_IIO_DATA_REQ_OF_CPU.MEM_READ.PART0 as the spec programs it.
+        let group = config::fixtures::group(
+            0,
+            0,
+            &[2],
+            &[(CounterSlot::General(1), 0x0007_0010_0050_0483)],
+        );
+        let unit = IioUnit {
+            cpu: 0,
+            stack: ICX_IIO_STACKS[2],
+        };
+
+        assert_eq!(
+            unit.config_writes(&group),
+            [
+                (0x0a90, 0x30103),
+                (0x0a98, 0),
+                (0x0a99, 0x0007_0010_0052_0483),
+                (0x0a9a, 0),
+                (0x0a9b, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn runs_iio_configs_on_present_stacks() {
+        config::fixtures::assert_runs_configs(
+            &mut crate::metrics::iio::IioCollector::Icx(config_collector()),
+            BoxType::Iio,
+            (0..2).map(|package| (package, (0..6).collect())).collect(),
+            IIO_COUNTER_COUNT,
+            false,
+        );
+    }
+
+    #[test]
+    fn setting_a_config_discards_free_running_readings() {
+        let mut collector = config_collector();
+        for package in &mut collector.packages {
+            package.free_running.previous = Some((Instant::now(), vec![1]));
+        }
+
+        collector.set_config(None).unwrap();
+
+        assert!(
+            collector
+                .packages
+                .iter()
+                .all(|package| package.free_running.previous.is_none())
+        );
+    }
+
+    #[test]
+    fn schedules_iio_config_groups() {
+        config::fixtures::assert_config_schedule(BoxType::Iio);
     }
 }

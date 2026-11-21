@@ -91,10 +91,10 @@ place, and `event_info` carries only `filter0`. These encodings follow
 Intel's uncore guides (327043, 329468), the perfmon JSON and Linux, and have
 not been checked on hardware.
 
-Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha` and
-`imc`. Their CHAs select requests in the umask_ext field of each counter's
-control rather
-than in filter registers, so groups take no `filter0` or `filter1`:
+Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha`, `imc`
+and `iio`. Their CHAs select requests in the umask_ext field of each counter's
+control rather than in filter registers, so groups take no `filter0` or
+`filter1`:
 
 ```sh
 curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
@@ -120,6 +120,13 @@ curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
   and `fixed_clockticks` on Sapphire/Emerald Rapids, for which Intel lists
   no fixed iMC event. The unit id is the channel's position among its
   package's channels in discovery order.
+- IIO aliases: `clockticks`, `data_req_of_cpu` (`op` `mem_write`,
+  `mem_read` or `cmpd`) and `data_req_by_cpu` (`op` `mem_write` or
+  `mem_read`), both on PCIe partitions 0-7 (`ch_mask` 0xff, `fc_mask` 0x07),
+  and on Ice Lake-SP `comp_buf_inserts` and `comp_buf_occupancy`. `ch_mask`
+  (12 bits, control bits 36-47) and `fc_mask` (3 bits, 48-50) override an
+  alias's masks. The unit id is the stack id: 0-5 on Ice Lake-SP, the
+  discovered stacks of 0-11 on Sapphire/Emerald Rapids.
 - Raw events take `event`, `umask` and, for CHA, `umask_ext` (Ice Lake-SP
   26 bits, Sapphire/Emerald Rapids 32 bits).
 - Aliases cover only events of Intel's public perfmon files

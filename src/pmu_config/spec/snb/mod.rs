@@ -1,5 +1,5 @@
 //! Sandy Bridge-EP and Ivy Bridge-EP encodings of PMU config requests for
-//! the CBo (`cha`) and IMC boxes. The models lay out the CBo filters
+//! the CBo (`cha`), HA and IMC boxes. The models lay out the CBo filters
 //! differently: Sandy Bridge-EP has one filter register, Ivy Bridge-EP a
 //! FILTER0 and a FILTER1 like Haswell-EP.
 //!
@@ -20,9 +20,9 @@ use crate::pmu_config::types::{BoxType, ChaFilters, CounterSlot, EventLabels, Pr
 /// Cn_MSR_PMON_CTL ([SNB] Table 2-10, [IVB] Table 2-14): ev_sel [7:0],
 /// umask [15:8], tid_en 19, en 22, and bits 21:20 "Reserved; SW must write
 /// to 0", which configs leave 0. MC_CHy_PCI_PMON_CTL ([SNB] Table 2-61,
-/// [IVB] Table 2-75) has no tid_en and the same enable bit; configs leave
-/// its overflow enable (bit 20 on Ivy Bridge-EP, reserved on Sandy
-/// Bridge-EP) 0.
+/// [IVB] Table 2-75) and HA_PCI_PMON_CTL ([SNB] Table 2-35, [IVB] Table
+/// 2-40) have no tid_en and the same enable bit; configs leave their
+/// overflow enable (bit 20 on Ivy Bridge-EP, reserved on Sandy Bridge-EP) 0.
 const COUNTER_TID_ENABLE: u64 = 1 << 19;
 const COUNTER_ENABLE: u64 = 1 << 22;
 /// MC_CHy_PCI_PMON_FIXED_CTL.en ([SNB] Table 2-62, [IVB] Table 2-76).
@@ -45,6 +45,7 @@ const NID_UMASK: u8 = 0x40;
 struct Model {
     name: &'static str,
     cbo: BoxSpec,
+    ha: BoxSpec,
     imc: BoxSpec,
     filters: FilterLayout,
     /// IDI opcodes by name, from the model's guide.
@@ -107,6 +108,13 @@ const SANDY_BRIDGE: Model = Model {
         event_counters: &counters::SNB_CBO,
         aliases: SNB_CBO_ALIASES,
     },
+    ha: BoxSpec {
+        model: SNB_MODEL,
+        name: "HA",
+        general_counters: 4,
+        event_counters: &counters::SNB_HA,
+        aliases: SNB_HA_ALIASES,
+    },
     imc: BoxSpec {
         model: SNB_MODEL,
         name: "IMC",
@@ -143,6 +151,13 @@ const IVY_BRIDGE: Model = Model {
         general_counters: 4,
         event_counters: &counters::IVB_CBO,
         aliases: IVB_CBO_ALIASES,
+    },
+    ha: BoxSpec {
+        model: IVB_MODEL,
+        name: "HA",
+        general_counters: 4,
+        event_counters: &counters::IVB_HA,
+        aliases: IVB_HA_ALIASES,
     },
     imc: BoxSpec {
         model: IVB_MODEL,
@@ -333,6 +348,96 @@ const IVB_CBO_ALIASES: &[Alias] = &[
     Alias::new("misc", 0x39, 0x00, &[MISC_OPS]),
 ];
 
+/// UNC_H_REQUESTS.* ([SNB] Table 2-48): all reads or all writes, with no
+/// local or remote split.
+const SNB_REQUEST_OPS: Param = Param {
+    field: "op",
+    values: &[("reads", 0x03), ("writes", 0x0c)],
+};
+/// UNC_H_TxR_AD.* ([SNB] Table 2-53): non-data responses and snoops the HA
+/// sends on the AD ring.
+const TXR_AD_OPS: Param = Param {
+    field: "op",
+    values: &[("ndr", 0x01), ("snp", 0x02)],
+};
+
+// [SNB] and the JSON list no SNOOP_RESP (0x21), SNP_RESP_RECV_LOCAL (0x60)
+// or OSB (0x53).
+const SNB_HA_ALIASES: &[Alias] = &[
+    // UNC_H_CLOCKTICKS
+    Alias::new("clockticks", 0x00, 0x00, &[]),
+    Alias::new("requests", 0x01, 0x00, &[SNB_REQUEST_OPS]),
+    Alias::new("txr_ad", 0x0f, 0x00, &[TXR_AD_OPS]),
+];
+
+/// UNC_H_REQUESTS.* ([IVB] Table 2-57), Haswell-EP's.
+const IVB_REQUEST_OPS: Param = Param {
+    field: "op",
+    values: &[
+        ("reads_local", 0x01),
+        ("reads_remote", 0x02),
+        ("writes_local", 0x04),
+        ("writes_remote", 0x08),
+        ("invitoe_local", 0x10),
+        ("invitoe_remote", 0x20),
+        ("reads", 0x03),
+        ("writes", 0x0c),
+    ],
+};
+/// UNC_H_SNOOP_RESP.* ([IVB] Table 2-62), Haswell-EP's.
+const SNOOP_RESP_OPS: Param = Param {
+    field: "op",
+    values: &[
+        ("rspi", 0x01),
+        ("rsps", 0x02),
+        ("rspifwd", 0x04),
+        ("rspsfwd", 0x08),
+        ("rsp_wb", 0x10),
+        ("rsp_fwd_wb", 0x20),
+        ("rspcnflct", 0x40),
+    ],
+};
+/// UNC_H_SNP_RESP_RECV_LOCAL.* ([IVB] Table 2-63), Haswell-EP's, named as
+/// SNOOP_RESP's.
+const SNP_RESP_RECV_LOCAL_OPS: Param = Param {
+    field: "op",
+    values: &[
+        ("rspi", 0x01),
+        ("rsps", 0x02),
+        ("rspifwd", 0x04),
+        ("rspsfwd", 0x08),
+        ("rsp_wb", 0x10),
+        ("rsp_fwd_wb", 0x20),
+        ("rspcnflct", 0x40),
+        ("other", 0x80),
+    ],
+};
+/// UNC_H_OSB.* ([IVB] Table 2-55): three of Haswell-EP's six.
+const IVB_OSB_OPS: Param = Param {
+    field: "op",
+    values: &[
+        ("reads_local", 0x02),
+        ("invitoe_local", 0x04),
+        ("remote", 0x08),
+    ],
+};
+
+// Haswell-EP's HA aliases. [IVB] lists no TxR_AD (0x0f) and the JSON only
+// UNC_H_TxR_AD.HOM (umask 0x04), so Ivy Bridge-EP has no txr_ad alias.
+const IVB_HA_ALIASES: &[Alias] = &[
+    // UNC_H_CLOCKTICKS
+    Alias::new("clockticks", 0x00, 0x00, &[]),
+    Alias::new("requests", 0x01, 0x00, &[IVB_REQUEST_OPS]),
+    Alias::new("snoop_resp", 0x21, 0x00, &[SNOOP_RESP_OPS]),
+    Alias::new(
+        "snp_resp_recv_local",
+        0x60,
+        0x00,
+        &[SNP_RESP_RECV_LOCAL_OPS],
+    ),
+    Alias::new("osb", 0x53, 0x00, &[IVB_OSB_OPS]),
+];
+
 /// UNC_M_CAS_COUNT.* ([SNB] Table 2-66, [IVB] Table 2-80)
 const CAS_COUNT_OPS: Param = Param {
     field: "op",
@@ -470,8 +575,9 @@ fn program_group(
 ) -> Result<GroupProgram, String> {
     let snb_box = match box_type {
         BoxType::Cha => &model.cbo,
+        BoxType::Ha => &model.ha,
         BoxType::Imc => &model.imc,
-        BoxType::Iio | BoxType::Irp | BoxType::Ha => {
+        BoxType::Iio | BoxType::Irp => {
             return Err(format!(
                 "{path}: PMU configs do not support {} on {}",
                 box_type.label(),
@@ -1357,6 +1463,234 @@ mod tests {
         assert!(imc(SNB).is_ok() && imc(IVB).is_ok());
     }
 
+    /// Every HA alias programs the event code and umask of its JSON event
+    /// (UNC_H_<alias>.<op>), on any of the four counters, as the raw event
+    /// does, with no filter.
+    #[test]
+    fn encodes_ha_aliases_as_the_json() {
+        let both = &[SNB, IVB][..];
+        let cases = [
+            (both, json!({"alias": "clockticks"}), 0x00, 0x00),
+            (
+                both,
+                json!({"alias": "requests", "op": "reads"}),
+                0x01,
+                0x03,
+            ),
+            (
+                both,
+                json!({"alias": "requests", "op": "writes"}),
+                0x01,
+                0x0c,
+            ),
+            (&[SNB], json!({"alias": "txr_ad", "op": "ndr"}), 0x0f, 0x01),
+            (&[SNB], json!({"alias": "txr_ad", "op": "snp"}), 0x0f, 0x02),
+            (
+                &[IVB],
+                json!({"alias": "requests", "op": "reads_local"}),
+                0x01,
+                0x01,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "requests", "op": "reads_remote"}),
+                0x01,
+                0x02,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "requests", "op": "writes_local"}),
+                0x01,
+                0x04,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "requests", "op": "writes_remote"}),
+                0x01,
+                0x08,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "requests", "op": "invitoe_local"}),
+                0x01,
+                0x10,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "requests", "op": "invitoe_remote"}),
+                0x01,
+                0x20,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snoop_resp", "op": "rspi"}),
+                0x21,
+                0x01,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snoop_resp", "op": "rsps"}),
+                0x21,
+                0x02,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snoop_resp", "op": "rspifwd"}),
+                0x21,
+                0x04,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snoop_resp", "op": "rspsfwd"}),
+                0x21,
+                0x08,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snoop_resp", "op": "rsp_wb"}),
+                0x21,
+                0x10,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snoop_resp", "op": "rsp_fwd_wb"}),
+                0x21,
+                0x20,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snoop_resp", "op": "rspcnflct"}),
+                0x21,
+                0x40,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snp_resp_recv_local", "op": "rspi"}),
+                0x60,
+                0x01,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snp_resp_recv_local", "op": "rsp_wb"}),
+                0x60,
+                0x10,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snp_resp_recv_local", "op": "rsp_fwd_wb"}),
+                0x60,
+                0x20,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "snp_resp_recv_local", "op": "other"}),
+                0x60,
+                0x80,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "osb", "op": "reads_local"}),
+                0x53,
+                0x02,
+            ),
+            (
+                &[IVB],
+                json!({"alias": "osb", "op": "invitoe_local"}),
+                0x53,
+                0x04,
+            ),
+            (&[IVB], json!({"alias": "osb", "op": "remote"}), 0x53, 0x08),
+        ];
+        let ha = |model, events: Vec<Value>| {
+            let mut configs = configs(model, pmu("ha", json!({"events": events})))?;
+            Ok::<_, String>(configs.remove(0).program.groups.remove(0))
+        };
+
+        for (models, event, code, umask) in cases {
+            let control = code | (umask << 8) | COUNTER_ENABLE;
+            for &model in models {
+                for slot in 0..4 {
+                    let mut events = vec![Value::Null; slot];
+                    events.push(event.clone());
+                    let group = ha(model, events).unwrap();
+
+                    assert_eq!(group.filters, None, "{model:?} {event}");
+                    assert_eq!(
+                        controls(&group),
+                        [(CounterSlot::General(slot as u8), control)],
+                        "{model:?} {event} slot {slot}"
+                    );
+                }
+                let group = ha(model, vec![event.clone()]).unwrap();
+                assert_eq!(
+                    group.counters[0].labels,
+                    labels(&[
+                        ("alias", event["alias"].as_str().unwrap()),
+                        ("event", &format!("{code:#04x}")),
+                        ("umask", &format!("{umask:#04x}")),
+                    ]),
+                    "{model:?} {event}"
+                );
+                let raw = ha(model, vec![json!({"event": code, "umask": umask})]).unwrap();
+                assert_eq!(
+                    controls(&raw),
+                    [(CounterSlot::General(0), control)],
+                    "{model:?} {event}"
+                );
+            }
+        }
+    }
+
+    /// The snoop events of the X1.5 analysis: Sandy Bridge-EP's TxR_AD.SNP
+    /// with the home agent's requests, and Ivy Bridge-EP's snoop responses.
+    #[test]
+    fn programs_the_snoop_events_of_each_model() {
+        let ha = |model, events: Value| {
+            let mut configs = configs(model, pmu("ha", json!({"events": events}))).unwrap();
+            controls(&configs.remove(0).program.groups.remove(0))
+        };
+
+        assert_eq!(
+            ha(
+                SNB,
+                json!([
+                    {"alias": "clockticks"},
+                    {"alias": "txr_ad", "op": "snp"},
+                    {"alias": "requests", "op": "reads"},
+                    {"alias": "requests", "op": "writes"}
+                ])
+            ),
+            [
+                (CounterSlot::General(0), 0x40_0000),
+                (CounterSlot::General(1), 0x40_020f),
+                (CounterSlot::General(2), 0x40_0301),
+                (CounterSlot::General(3), 0x40_0c01),
+            ]
+        );
+        assert_eq!(
+            ha(
+                IVB,
+                json!([
+                    {"alias": "clockticks"},
+                    {"alias": "snoop_resp", "op": "rspi"},
+                    {"alias": "snoop_resp", "op": "rsps"},
+                    {"alias": "snoop_resp", "op": "rspifwd"}
+                ])
+            ),
+            [
+                (CounterSlot::General(0), 0x40_0000),
+                (CounterSlot::General(1), 0x40_0121),
+                (CounterSlot::General(2), 0x40_0221),
+                (CounterSlot::General(3), 0x40_0421),
+            ]
+        );
+        // Ivy Bridge-EP takes event 0x0f raw: the JSON lists its umask 0x04.
+        assert_eq!(
+            ha(IVB, json!([{"event": "0x0f", "umask": "0x04"}])),
+            [(CounterSlot::General(0), 0x40_040f)]
+        );
+    }
+
     #[test]
     fn encodes_cbo_filters_in_each_layout() {
         let tor_tid =
@@ -1605,8 +1939,47 @@ mod tests {
                     format!("pmus.irp.groups[0]: PMU configs do not support irp on {name}"),
                 ),
                 (
-                    pmu("ha", json!({"events": [{"event": 0}]})),
-                    format!("pmus.ha.groups[0]: PMU configs do not support ha on {name}"),
+                    pmu(
+                        "ha",
+                        json!({"events": vec![json!({"alias": "clockticks"}); 5]}),
+                    ),
+                    format!(
+                        "pmus.ha.groups[0].events: {name} HA boxes have 4 general counters, got 5 events"
+                    ),
+                ),
+                (
+                    pmu("ha", json!({"events": [{"event": "0x02"}]})),
+                    format!("pmus.ha.groups[0].events[0]: Intel lists no {name} HA event 0x02"),
+                ),
+                (
+                    pmu(
+                        "ha",
+                        json!({"filter1": {"nid": 1}, "events": [{"alias": "clockticks"}]}),
+                    ),
+                    "pmus.ha.groups[0].filter1: only CBo groups take filters".to_string(),
+                ),
+                (
+                    pmu("ha", json!({"events": [{"alias": "clockticks"}], "fixed": true})),
+                    format!(
+                        "pmus.ha.groups[0].fixed: only IMC boxes have a fixed counter on {name}"
+                    ),
+                ),
+                (
+                    pmu(
+                        "ha",
+                        json!({"events": [{"alias": "requests", "op": "reads", "tid_en": true}]}),
+                    ),
+                    "pmus.ha.groups[0].events[0].tid_en: only CBo events take tid_en".to_string(),
+                ),
+                (
+                    pmu("ha", json!({"events": [{"alias": "requests"}]})),
+                    "pmus.ha.groups[0].events[0]: requests needs a op (".to_string(),
+                ),
+                (
+                    pmu("ha", json!({"events": [{"alias": "cas_count", "op": "rd"}]})),
+                    format!(
+                        "pmus.ha.groups[0].events[0].alias: unknown {name} HA alias \"cas_count\" (aliases: clockticks, requests,"
+                    ),
                 ),
                 (
                     pmu(
@@ -2066,6 +2439,53 @@ mod tests {
                 pmu("imc", json!({"events": [{"event": "0x90"}]})),
                 "pmus.imc.groups[0].events[0]: Intel lists no Sandy Bridge-EP IMC event 0x90",
             ),
+            (
+                SNB,
+                pmu(
+                    "ha",
+                    json!({"events": [{"alias": "snoop_resp", "op": "rspi"}]}),
+                ),
+                "pmus.ha.groups[0].events[0].alias: unknown Sandy Bridge-EP HA alias \"snoop_resp\" (aliases: clockticks, requests, txr_ad)",
+            ),
+            (
+                SNB,
+                pmu(
+                    "ha",
+                    json!({"events": [{"event": "0x21", "umask": "0x01"}]}),
+                ),
+                "pmus.ha.groups[0].events[0]: Intel lists no Sandy Bridge-EP HA event 0x21",
+            ),
+            (
+                SNB,
+                pmu("ha", json!({"events": [{"event": "0x03"}]})),
+                "pmus.ha.groups[0].events[0]: Intel lists no Sandy Bridge-EP HA event 0x03",
+            ),
+            (
+                SNB,
+                pmu(
+                    "ha",
+                    json!({"events": [{"alias": "requests", "op": "reads_local"}]}),
+                ),
+                "pmus.ha.groups[0].events[0].op: requests op must be one of reads, writes, got \"reads_local\"",
+            ),
+            (
+                IVB,
+                pmu("ha", json!({"events": [{"alias": "txr_ad", "op": "snp"}]})),
+                "pmus.ha.groups[0].events[0].alias: unknown Ivy Bridge-EP HA alias \"txr_ad\" (aliases: clockticks, requests, snoop_resp, snp_resp_recv_local, osb)",
+            ),
+            (
+                IVB,
+                pmu(
+                    "ha",
+                    json!({"events": [{"alias": "osb", "op": "cancelled"}]}),
+                ),
+                "pmus.ha.groups[0].events[0].op: osb op must be one of reads_local, invitoe_local, remote, got \"cancelled\"",
+            ),
+            (
+                IVB,
+                pmu("ha", json!({"events": [{"event": "0x06"}]})),
+                "pmus.ha.groups[0].events[0]: Intel lists no Ivy Bridge-EP HA event 0x06",
+            ),
         ];
 
         for (model, request, expected) in cases {
@@ -2117,14 +2537,33 @@ mod tests {
         // The same counters on another box type get another id.
         let raw = |box_type: &str| json!({box_type: {"groups": [{"events": [{"event": "0x00"}]}]}});
         assert_ne!(config_id(SNB, &raw("imc")), config_id(SNB, &raw("cha")));
+        assert_ne!(config_id(SNB, &raw("ha")), config_id(SNB, &raw("imc")));
+
+        // The snoop groups of `programs_the_snoop_events_of_each_model`.
+        let snb_ha = json!({"ha": {"groups": [{"events": [
+            {"alias": "clockticks"},
+            {"alias": "txr_ad", "op": "snp"},
+            {"alias": "requests", "op": "reads"},
+            {"alias": "requests", "op": "writes"}
+        ]}]}});
+        let ivb_ha = json!({"ha": {"groups": [{"events": [
+            {"alias": "clockticks"},
+            {"alias": "snoop_resp", "op": "rspi"},
+            {"alias": "snoop_resp", "op": "rsps"},
+            {"alias": "snoop_resp", "op": "rspifwd"}
+        ]}]}});
+        assert_eq!(config_id(SNB, &snb_ha), 8_665_712_520_203_799);
+        assert_eq!(config_id(IVB, &ivb_ha), 3_492_090_334_475_815);
     }
 
     #[test]
     fn tables_are_sorted_and_aliases_name_listed_events() {
         for snb_box in [
             &SANDY_BRIDGE.cbo,
+            &SANDY_BRIDGE.ha,
             &SANDY_BRIDGE.imc,
             &IVY_BRIDGE.cbo,
+            &IVY_BRIDGE.ha,
             &IVY_BRIDGE.imc,
         ] {
             let name = format!("{} {}", snb_box.model, snb_box.name);

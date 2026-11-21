@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -12,7 +12,12 @@ use crate::metal::arch::skx::pmon;
 use crate::metal::pci::PciDevice;
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE};
 use crate::metrics::uncore::hsx::{
-    HsxUncoreScope, events_per_second, frequency_hz, ratio, scale_to_enabled,
+    ConfigReading, HsxUncoreScope, config_schedule, events_per_second, fold_readings, frequency_hz,
+    ratio, read_counter_dwords, scale_to_enabled, slice_units, unit_map,
+};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, PmuConfig, ProgrammedBoxType, ProgrammedGroup,
+    UncoreCounts,
 };
 
 const IRP_COUNTER_COUNT: usize = 4;
@@ -32,6 +37,13 @@ const IRP_COUNTER_OFFSETS: [u64; IRP_COUNTER_COUNT] = [
     IRP1_COUNTER1_OFFSET,
 ];
 const IRP_UNIT_CONTROL_OFFSET: u64 = 0xf4;
+/// PMU configs program the IRP box's two counter sets as units 0 (IRP0:
+/// controls d8/dc, counters IRP0_COUNTER{0,1}_OFFSET) and 1 (IRP1: e0/e4,
+/// IRP1_COUNTER{0,1}_OFFSET) of 2 counters each, the counters Intel's event
+/// lists allow (see `pmu_config::spec::hsx`). The box control freezes and
+/// resets both.
+const IRP_CONFIG_SET_COUNT: usize = 2;
+const IRP_CONFIG_SET_COUNTERS: usize = 2;
 
 const HSX_IRP_EVENT_GROUPS: [HsxIrpEventGroup; 4] = [
     HsxIrpEventGroup {
@@ -204,8 +216,110 @@ impl HsxIrpMetrics {
 
 #[derive(Debug)]
 pub struct HsxIrpCollector {
+    config: Option<CountAccumulator>,
     next_group: usize,
     packages: Vec<HsxIrpPackage>,
+}
+
+impl HsxIrpCollector {
+    /// The IRP counter sets of each package that PMU configs can program:
+    /// unit 0 is IRP0, unit 1 IRP1.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        unit_map(config_ids(&self.packages))
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        // The default sample resets and programs every IRP box on every
+        // slice.
+        let Some(config) = config else {
+            self.config = None;
+            return Ok(());
+        };
+        check_config(&config.program, &self.config_units())?;
+        self.config = Some(CountAccumulator::new(config));
+
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    /// The IRP boxes of packages in none of the config's groups stay
+    /// untouched.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        if interval.is_zero() {
+            return Err("HSX IRP measure interval must be non-zero".to_string());
+        }
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "no PMU config is set for HSX IRP".to_string())?;
+        let program = accumulator.config().program.clone();
+        let ids = config_ids(&self.packages);
+
+        for slice in config_schedule(&program, interval, cycle) {
+            // The group each counter set runs, by position in `packages`.
+            let mut boxes =
+                BTreeMap::<usize, [Option<&ProgrammedGroup>; IRP_CONFIG_SET_COUNT]>::new();
+            for (position, group) in slice_units(&ids, &program, &slice)? {
+                boxes.entry(position / IRP_CONFIG_SET_COUNT).or_default()
+                    [position % IRP_CONFIG_SET_COUNT] = Some(&program.groups[group]);
+            }
+            for (&package, &sets) in &boxes {
+                for (offset, value) in config_box_writes(sets)? {
+                    self.packages[package].unit.write(offset, value)?;
+                }
+            }
+
+            let started_at = Instant::now();
+            for &package in boxes.keys() {
+                self.packages[package].unit.unfreeze()?;
+            }
+            tokio::time::sleep(slice.duration).await;
+            for &package in boxes.keys() {
+                self.packages[package].unit.freeze()?;
+            }
+            let running = started_at.elapsed();
+
+            let mut readings = Vec::new();
+            for (&package, sets) in &boxes {
+                let unit = &self.packages[package].unit;
+                for (set, group) in sets.iter().enumerate() {
+                    let Some(group) = group else {
+                        continue;
+                    };
+                    let counters = group
+                        .counters
+                        .iter()
+                        .map(|counter| {
+                            let index = config_counter_index(set, counter.slot)?;
+                            let value = unit.read_config_counter(IRP_COUNTER_OFFSETS[index])?;
+                            Ok((counter.slot, value))
+                        })
+                        .collect::<Result<_, String>>()?;
+                    let (package_id, unit_id) = ids[package * IRP_CONFIG_SET_COUNT + set];
+                    readings.push(ConfigReading {
+                        package: package_id,
+                        unit: unit_id,
+                        group: group.index,
+                        counters,
+                    });
+                }
+            }
+            fold_readings(accumulator, &readings, running)?;
+        }
+
+        Ok(accumulator.counts())
+    }
 }
 
 impl HsxIrpCollector {
@@ -215,6 +329,7 @@ impl HsxIrpCollector {
         probe_writable_pci(&packages)?;
 
         Ok(Self {
+            config: None,
             next_group: 0,
             packages,
         })
@@ -512,9 +627,19 @@ impl HsxIrpUnit {
         Ok(HsxIrpUnitReading { counters })
     }
 
+    /// The counter at `offset`, read as the HSX IMC and HA configs read
+    /// theirs.
+    fn read_config_counter(&self, offset: u64) -> Result<u64, String> {
+        read_counter_dwords(offset, |offset| self.device.read_u32(offset))
+    }
+
     fn unfreeze(&self) -> Result<(), String> {
         self.device
             .write_u32(IRP_UNIT_CONTROL_OFFSET, pmon::UNIT_UNFREEZE)
+    }
+
+    fn write(&self, offset: u64, value: u32) -> Result<(), String> {
+        self.device.write_u32(offset, value)
     }
 }
 
@@ -586,6 +711,105 @@ impl HsxIrpMeasurementAccumulator {
 
 fn bytes_per_second(measurement: &HsxIrpEventMeasurement) -> f64 {
     event_rate(measurement) * BYTES_PER_CACHE_LINE
+}
+
+/// Errs for a program the IRP counter sets in `units` cannot count.
+fn check_config(
+    program: &ProgrammedBoxType,
+    units: &BTreeMap<u16, BTreeSet<u16>>,
+) -> Result<(), String> {
+    if program.box_type != BoxType::Irp {
+        return Err(format!(
+            "Haswell-EP/Broadwell-EP IRP cannot count a {} config",
+            program.box_type.label()
+        ));
+    }
+
+    for group in &program.groups {
+        if group.filters.is_some() {
+            return Err(format!(
+                "IRP config group {} has filters, which IRP counter sets do not have",
+                group.index
+            ));
+        }
+        for (package, group_units) in &group.units {
+            let host_units = units.get(package).ok_or_else(|| {
+                format!(
+                    "IRP config group {} runs on package {package}, which has no IRP box on this host",
+                    group.index
+                )
+            })?;
+            if let Some(unit) = group_units.difference(host_units).next() {
+                return Err(format!(
+                    "IRP config group {} runs on counter set {unit} of package {package}, which this host does not have",
+                    group.index
+                ));
+            }
+        }
+        // Both sets take the same slots.
+        config_box_writes([Some(group), None])?;
+    }
+
+    Ok(())
+}
+
+/// The (offset, value) writes that program one IRP box for a slice, from the
+/// group each counter set runs: freeze and reset the box, then reset and
+/// enable each counter of a set's group, and write 0 to every other control,
+/// those of a set in no group included.
+fn config_box_writes(
+    sets: [Option<&ProgrammedGroup>; IRP_CONFIG_SET_COUNT],
+) -> Result<Vec<(u64, u32)>, String> {
+    let mut controls = [0; IRP_COUNTER_COUNT];
+
+    for (set, group) in sets.into_iter().enumerate() {
+        let Some(group) = group else {
+            continue;
+        };
+        for counter in &group.counters {
+            let index = config_counter_index(set, counter.slot)
+                .map_err(|error| format!("IRP config group {}: {error}", group.index))?;
+            let control = u32::try_from(counter.control).map_err(|_| {
+                format!(
+                    "IRP config group {} slot {} control 0x{:x} does not fit in 32 bits",
+                    group.index,
+                    counter.slot.label(),
+                    counter.control
+                )
+            })?;
+            controls[index] = control | pmon::COUNTER_RESET;
+        }
+    }
+
+    Ok([(IRP_UNIT_CONTROL_OFFSET, pmon::UNIT_FREEZE_AND_RESET)]
+        .into_iter()
+        .chain(IRP_CONTROL_OFFSETS.into_iter().zip(controls))
+        .collect())
+}
+
+/// The index in `IRP_CONTROL_OFFSETS` and `IRP_COUNTER_OFFSETS` of a slot of
+/// counter set `set`.
+fn config_counter_index(set: usize, slot: CounterSlot) -> Result<usize, String> {
+    match slot {
+        CounterSlot::General(index) if usize::from(index) < IRP_CONFIG_SET_COUNTERS => {
+            Ok(set * IRP_CONFIG_SET_COUNTERS + usize::from(index))
+        }
+        slot => Err(format!(
+            "Haswell-EP/Broadwell-EP IRP counter sets have no counter slot {}",
+            slot.label()
+        )),
+    }
+}
+
+/// The package and unit id of each IRP counter set: those of `packages[p]`
+/// at positions `IRP_CONFIG_SET_COUNT * p + set`.
+fn config_ids(packages: &[HsxIrpPackage]) -> Vec<(u16, u16)> {
+    packages
+        .iter()
+        .flat_map(|package| {
+            (0..IRP_CONFIG_SET_COUNT as u16).map(|set| (package.scope.package_id as u16, set))
+        })
+        .collect()
 }
 
 fn discover_packages(model: IntelServerCpuModel) -> Result<Vec<HsxIrpPackage>, String> {
@@ -714,6 +938,8 @@ fn unfreeze_packages(packages: &[HsxIrpPackage]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::uncore::hsx::config_fixtures::*;
+    use crate::pmu_config::types::{ChaFilters, CountUnit, Grouping};
 
     #[test]
     fn computes_hsx_irp_metrics() {
@@ -757,6 +983,7 @@ mod tests {
     #[test]
     fn rotates_starting_event_group() {
         let mut collector = HsxIrpCollector {
+            config: None,
             next_group: 0,
             packages: Vec::new(),
         };
@@ -842,6 +1069,233 @@ mod tests {
                 vec![(HsxIrpEventKind::Clockticks, 0xd8, 0xa0)],
             ]
         );
+    }
+
+    #[test]
+    fn reports_two_counter_sets_per_package_as_config_units() {
+        let collector = test_collector(vec![
+            test_package(0, &[0; 0x100]),
+            test_package(1, &[0; 0x100]),
+        ]);
+
+        assert_eq!(
+            collector.config_units(),
+            BTreeMap::from([(0, BTreeSet::from([0, 1])), (1, BTreeSet::from([0, 1]))])
+        );
+    }
+
+    #[test]
+    fn programs_each_counter_set_on_its_controls() {
+        let program = spatial_program();
+
+        assert_eq!(
+            config_box_writes([Some(&program.groups[0]), Some(&program.groups[1])]).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0x42_1013),
+                (0xdc, 0x42_0216),
+                (0xe0, 0x42_0000),
+                (0xe4, 0),
+            ]
+        );
+        // The controls of a set in no group of the slice are cleared.
+        assert_eq!(
+            config_box_writes([None, Some(&program.groups[0])]).unwrap(),
+            vec![
+                (0xf4, 0x3_0103),
+                (0xd8, 0),
+                (0xdc, 0),
+                (0xe0, 0x42_1013),
+                (0xe4, 0x42_0216),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_configs_irp_counter_sets_cannot_count() {
+        let host = BTreeMap::from([(0, BTreeSet::from([0, 1]))]);
+        check_config(&spatial_program(), &host).unwrap();
+
+        let mut ha = spatial_program();
+        ha.box_type = BoxType::Ha;
+        let mut package = spatial_program();
+        package.groups[0].units.insert(1, BTreeSet::from([0]));
+        let mut unit = spatial_program();
+        unit.groups[1].units.insert(0, BTreeSet::from([2]));
+        let mut slot = spatial_program();
+        slot.groups[1]
+            .counters
+            .push(config_counter(CounterSlot::General(2), 0x40_0000));
+        let mut fixed = spatial_program();
+        fixed.groups[0]
+            .counters
+            .push(config_counter(CounterSlot::Fixed, 0x40_0000));
+        let mut wide = spatial_program();
+        wide.groups[0].counters[0].control = 1 << 32;
+        let mut filters = spatial_program();
+        filters.groups[0].filters = Some(ChaFilters {
+            filter0: 0,
+            filter1: 0,
+        });
+
+        for (program, error) in [
+            (ha, "Haswell-EP/Broadwell-EP IRP cannot count a ha config"),
+            (
+                package,
+                "IRP config group 0 runs on package 1, which has no IRP box on this host",
+            ),
+            (
+                unit,
+                "IRP config group 1 runs on counter set 2 of package 0, which this host does not have",
+            ),
+            (
+                slot,
+                "IRP config group 1: Haswell-EP/Broadwell-EP IRP counter sets have no counter slot 2",
+            ),
+            (
+                fixed,
+                "IRP config group 0: Haswell-EP/Broadwell-EP IRP counter sets have no counter slot fixed",
+            ),
+            (
+                wide,
+                "IRP config group 0 slot 0 control 0x100000000 does not fit in 32 bits",
+            ),
+            (
+                filters,
+                "IRP config group 0 has filters, which IRP counter sets do not have",
+            ),
+        ] {
+            assert_eq!(check_config(&program, &host), Err(error.to_string()));
+        }
+    }
+
+    #[test]
+    fn counts_a_config_on_its_counter_sets_and_restarts_when_it_changes() {
+        let mut config_space = [0_u8; 0x100];
+        for (offset, value) in [
+            (0xa0, 7_u64),
+            (0xa8, 9),
+            (0xb0, (0xff << 48) | 11),
+            (0xb8, 13),
+        ] {
+            config_space[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        for offset in [0xd8, 0xdc, 0xe0, 0xe4, 0xf4] {
+            config_space[offset..offset + 4].copy_from_slice(&0x40_0001_u32.to_le_bytes());
+        }
+        let mut collector = test_collector(vec![
+            test_package(0, &config_space),
+            test_package(1, &config_space),
+        ]);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        collector
+            .set_config(Some(config(spatial_program())))
+            .unwrap();
+        for factor in [1, 2] {
+            let counts = runtime
+                .block_on(collector.sample_config(Duration::from_millis(1), 0))
+                .unwrap();
+            assert_eq!(
+                count_values(&counts),
+                vec![
+                    (0, CountUnit::Box(0), CounterSlot::General(0), 7 * factor),
+                    (0, CountUnit::Box(0), CounterSlot::General(1), 9 * factor),
+                    (0, CountUnit::Box(1), CounterSlot::General(0), 11 * factor),
+                ]
+            );
+        }
+
+        let registers = |package: &HsxIrpPackage| {
+            [0xf4, 0xd8, 0xdc, 0xe0, 0xe4]
+                .map(|offset| package.unit.device.read_u32(offset).unwrap())
+        };
+        // Package 0's box ends frozen with each set's controls; package 1 is
+        // in no group.
+        assert_eq!(
+            registers(&collector.packages[0]),
+            [0x3_0100, 0x42_1013, 0x42_0216, 0x42_0000, 0]
+        );
+        assert_eq!(registers(&collector.packages[1]), [0x40_0001; 5]);
+
+        collector
+            .set_config(Some(config(spatial_program())))
+            .unwrap();
+        let restarted = collector.config.as_ref().unwrap().counts();
+        assert!(count_values(&restarted).iter().all(|count| count.3 == 0));
+        let counts = runtime
+            .block_on(collector.sample_config(Duration::from_millis(1), 0))
+            .unwrap();
+        assert_eq!(count_values(&counts)[0].3, 7);
+
+        collector.set_config(None).unwrap();
+        assert!(!collector.has_config());
+    }
+
+    /// PCIItoM and inbound writes on IRP0, clockticks on IRP1, of package 0.
+    fn spatial_program() -> ProgrammedBoxType {
+        config_program(
+            BoxType::Irp,
+            Grouping::Spatial,
+            vec![
+                config_group(
+                    0,
+                    vec![
+                        config_counter(CounterSlot::General(0), 0x40_1013),
+                        config_counter(CounterSlot::General(1), 0x40_0216),
+                    ],
+                    BTreeMap::from([(0, BTreeSet::from([0]))]),
+                ),
+                config_group(
+                    1,
+                    vec![config_counter(CounterSlot::General(0), 0x40_0000)],
+                    BTreeMap::from([(0, BTreeSet::from([1]))]),
+                ),
+            ],
+        )
+    }
+
+    fn test_collector(packages: Vec<HsxIrpPackage>) -> HsxIrpCollector {
+        HsxIrpCollector {
+            config: None,
+            next_group: 0,
+            packages,
+        }
+    }
+
+    /// A package whose IRP box's config space is a temporary file holding
+    /// `config_space`.
+    fn test_package(package_id: u32, config_space: &[u8]) -> HsxIrpPackage {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "ocellus-hsx-irp-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, config_space).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        HsxIrpPackage {
+            scope: HsxUncoreScope { package_id },
+            unit: HsxIrpUnit {
+                device: PciDevice::from_file(
+                    file,
+                    metal::pci::PciLocation {
+                        bus: 0,
+                        device: 0,
+                        function: 0,
+                        group: 0,
+                    },
+                ),
+            },
+        }
     }
 
     fn assert_event(kind: HsxIrpEventKind, event: u8, umask: u8) {

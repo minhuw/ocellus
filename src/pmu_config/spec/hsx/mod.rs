@@ -1,5 +1,5 @@
 //! Haswell-EP and Broadwell-EP encodings of PMU config requests. The two
-//! models program their CBo (`cha`), HA and IMC boxes alike.
+//! models program their CBo (`cha`), HA, IMC and IRP boxes alike.
 //!
 //! [V4] is Intel's Xeon E5 and E7 v4 uncore performance monitoring guide
 //! (334291-001US); the JSON is the perfmon file `counters` comes from.
@@ -18,9 +18,9 @@ use crate::pmu_config::types::{BoxType, ChaFilters, CounterSlot, EventLabels, Pr
 const MODEL: &str = "Haswell-EP/Broadwell-EP";
 
 /// Cn_MSR_PMON_CTL ([V4] Table 2-16): ev_sel [7:0], umask [15:8], tid_en 19,
-/// en 22, and bits 21:20 "Reserved; SW must write to 0". The HA and IMC
-/// controls (Tables 2-64, 2-115) ignore bit 19 and have an overflow enable at
-/// bit 20, which configs leave 0 on every box.
+/// en 22, and bits 21:20 "Reserved; SW must write to 0". The HA, IMC and IRP
+/// controls (Tables 2-64, 2-115, 2-148) ignore bit 19 and have an overflow
+/// enable at bit 20, which configs leave 0 on every box.
 const COUNTER_TID_ENABLE: u64 = 1 << 19;
 const COUNTER_ENABLE: u64 = 1 << 22;
 
@@ -88,6 +88,18 @@ const IMC: BoxSpec = BoxSpec {
     general_counters: 4,
     event_counters: &counters::IMC,
     aliases: IMC_ALIASES,
+};
+
+/// One of the IRP box's "two sets of two 48b wide counters
+/// (IRP{0,1}_PCI_PMON_CTR/CTL{1:0})" ([V4] 2.7.1): unit 0 is IRP0, unit 1
+/// IRP1. [V4] and the JSON list every event on counters 0-1, which this reads
+/// as the two counters of a set; Linux treats the box as one of 4 counters.
+const IRP: BoxSpec = BoxSpec {
+    model: MODEL,
+    name: "IRP",
+    general_counters: 2,
+    event_counters: &counters::IRP,
+    aliases: IRP_ALIASES,
 };
 
 // Encodings from [V4] and the JSON, which agree; the comments name the
@@ -278,6 +290,39 @@ const IMC_ALIASES: &[Alias] = &[
     Alias::new("wpq_cycles_ne", 0x21, 0x00, &[]),
 ];
 
+/// UNC_I_COHERENT_OPS.* (Table 2-151), named as on Skylake-SP.
+const COHERENT_OPS: Param = Param {
+    field: "op",
+    values: &[
+        ("pcirdcur", 0x01),
+        ("crd", 0x02),
+        ("drd", 0x04),
+        ("rfo", 0x08),
+        ("pcitom", 0x10),
+        ("pcidcahint", 0x20),
+        ("wbmtoi", 0x40),
+        ("clflush", 0x80),
+    ],
+};
+/// UNC_I_TRANSACTIONS.READS and .WRITES (Table 2-155), the inbound reads and
+/// writes of the default IRP collector.
+const TRANSACTION_OPS: Param = Param {
+    field: "op",
+    values: &[("reads", 0x01), ("writes", 0x02)],
+};
+
+// The events of the default IRP collector.
+const IRP_ALIASES: &[Alias] = &[
+    // UNC_I_CLOCKTICKS
+    Alias::new("clockticks", 0x00, 0x00, &[]),
+    Alias::new("coherent_ops", 0x13, 0x00, &[COHERENT_OPS]),
+    Alias::new("transactions", 0x16, 0x00, &[TRANSACTION_OPS]),
+    // UNC_I_CACHE_TOTAL_OCCUPANCY.ANY (Table 2-150)
+    Alias::new("cache_total_occupancy", 0x12, 0x01, &[]),
+    // UNC_I_MISC1.LOST_FWD (Table 2-153)
+    Alias::new("lost_fwd", 0x15, 0x10, &[]),
+];
+
 /// Cn_MSR_PMON_BOX_FILTER0.state bits by name, after [V4] Table 2-18
 /// (I 0x01, S 0x02, E 0x04, M 0x08, F 0x10), which the default CBo collector
 /// programs too. The undocumented D (0x20) and M' (0x40) take a raw filter0.
@@ -334,7 +379,8 @@ pub(super) fn program_group(
         BoxType::Cha => &CBO,
         BoxType::Ha => &HA,
         BoxType::Imc => &IMC,
-        BoxType::Iio | BoxType::Irp => {
+        BoxType::Irp => &IRP,
+        BoxType::Iio => {
             return Err(format!(
                 "{path}: PMU configs do not support {} on {MODEL}",
                 box_type.label()
@@ -680,7 +726,7 @@ mod tests {
             units: BTreeMap::from([
                 (BoxType::Cha, packages(4)),
                 (BoxType::Iio, packages(1)),
-                (BoxType::Irp, packages(1)),
+                (BoxType::Irp, packages(2)),
                 (BoxType::Imc, packages(8)),
                 (BoxType::Ha, packages(2)),
             ]),
@@ -887,6 +933,107 @@ mod tests {
     }
 
     #[test]
+    fn programs_both_irp_counter_sets_by_default() {
+        let configs = configs(pmu(
+            "irp",
+            json!({"events": [
+                {"alias": "coherent_ops", "op": "pcitom"},
+                {"alias": "transactions", "op": "writes"}
+            ]}),
+        ))
+        .unwrap();
+        let group = &configs[0].program.groups[0];
+
+        assert_eq!(
+            group.units,
+            BTreeMap::from([(0, BTreeSet::from([0, 1])), (1, BTreeSet::from([0, 1]))])
+        );
+        assert_eq!(group.filters, None);
+        assert_eq!(
+            controls(group),
+            [
+                (CounterSlot::General(0), 0x40_1013),
+                (CounterSlot::General(1), 0x40_0216)
+            ]
+        );
+        assert_eq!(
+            group.counters[1].labels,
+            labels(&[
+                ("alias", "transactions"),
+                ("event", "0x16"),
+                ("umask", "0x02")
+            ])
+        );
+
+        let raw = program(
+            "irp",
+            json!({"units": [1], "events": [null, {"event": "0x14", "umask": "0x01"}]}),
+        )
+        .unwrap();
+        assert_eq!(controls(&raw), [(CounterSlot::General(1), 0x40_0114)]);
+        assert_eq!(raw.counters[0].labels["alias"], "raw");
+    }
+
+    /// The default IRP collector's groups (src/metrics/irp/hsx.rs:48-81) put
+    /// four events on the controls of both counter sets, each
+    /// `pmon::counter_control(event, umask, true)`. As a config they are two
+    /// spatial groups, IRP0's events on unit 0 and IRP1's on unit 1. Config
+    /// mode leaves out the reset bit (17) and the overflow enable (20).
+    #[test]
+    fn expresses_the_default_irp_groups_as_spatial_configs() {
+        const COLLECTOR_ONLY_BITS: u64 = (1 << 17) | (1 << 20);
+        let coherent_ops = |op: &str| json!({"alias": "coherent_ops", "op": op});
+
+        for (irp0, irp1, collector_controls) in [
+            (
+                [coherent_ops("pcirdcur"), coherent_ops("crd")],
+                [coherent_ops("drd"), coherent_ops("rfo")],
+                [0x52_0113_u64, 0x52_0213, 0x52_0413, 0x52_0813],
+            ),
+            (
+                [coherent_ops("pcitom"), coherent_ops("pcidcahint")],
+                [coherent_ops("wbmtoi"), coherent_ops("clflush")],
+                [0x52_1013, 0x52_2013, 0x52_4013, 0x52_8013],
+            ),
+            (
+                [
+                    json!({"alias": "cache_total_occupancy"}),
+                    json!({"alias": "transactions", "op": "reads"}),
+                ],
+                [
+                    json!({"alias": "transactions", "op": "writes"}),
+                    json!({"alias": "lost_fwd"}),
+                ],
+                [0x52_0112, 0x52_0116, 0x52_0216, 0x52_1015],
+            ),
+        ] {
+            let configs = configs(json!({"pmus": {"irp": {"grouping": "spatial", "groups": [
+                {"units": [0], "events": irp0},
+                {"units": [1], "events": irp1}
+            ]}}}))
+            .unwrap();
+            let groups = &configs[0].program.groups;
+            let expected = collector_controls.map(|control| control & !COLLECTOR_ONLY_BITS);
+
+            assert_eq!(
+                controls(&groups[0]),
+                [
+                    (CounterSlot::General(0), expected[0]),
+                    (CounterSlot::General(1), expected[1])
+                ]
+            );
+            assert_eq!(
+                controls(&groups[1]),
+                [
+                    (CounterSlot::General(0), expected[2]),
+                    (CounterSlot::General(1), expected[3])
+                ]
+            );
+            assert_eq!(groups[1].units[&1], BTreeSet::from([1]));
+        }
+    }
+
+    #[test]
     fn encodes_every_alias() {
         let cases = [
             ("cha", json!({"alias": "clockticks"}), 0x00, 0x00),
@@ -1044,6 +1191,69 @@ mod tests {
             ("imc", json!({"alias": "rpq_inserts"}), 0x10, 0x00),
             ("imc", json!({"alias": "rpq_cycles_ne"}), 0x11, 0x00),
             ("imc", json!({"alias": "wpq_cycles_ne"}), 0x21, 0x00),
+            ("irp", json!({"alias": "clockticks"}), 0x00, 0x00),
+            (
+                "irp",
+                json!({"alias": "coherent_ops", "op": "pcirdcur"}),
+                0x13,
+                0x01,
+            ),
+            (
+                "irp",
+                json!({"alias": "coherent_ops", "op": "crd"}),
+                0x13,
+                0x02,
+            ),
+            (
+                "irp",
+                json!({"alias": "coherent_ops", "op": "drd"}),
+                0x13,
+                0x04,
+            ),
+            (
+                "irp",
+                json!({"alias": "coherent_ops", "op": "rfo"}),
+                0x13,
+                0x08,
+            ),
+            (
+                "irp",
+                json!({"alias": "coherent_ops", "op": "pcitom"}),
+                0x13,
+                0x10,
+            ),
+            (
+                "irp",
+                json!({"alias": "coherent_ops", "op": "pcidcahint"}),
+                0x13,
+                0x20,
+            ),
+            (
+                "irp",
+                json!({"alias": "coherent_ops", "op": "wbmtoi"}),
+                0x13,
+                0x40,
+            ),
+            (
+                "irp",
+                json!({"alias": "coherent_ops", "op": "clflush"}),
+                0x13,
+                0x80,
+            ),
+            (
+                "irp",
+                json!({"alias": "transactions", "op": "reads"}),
+                0x16,
+                0x01,
+            ),
+            (
+                "irp",
+                json!({"alias": "transactions", "op": "writes"}),
+                0x16,
+                0x02,
+            ),
+            ("irp", json!({"alias": "cache_total_occupancy"}), 0x12, 0x01),
+            ("irp", json!({"alias": "lost_fwd"}), 0x15, 0x10),
         ];
 
         for (box_type, event, code, umask) in cases {
@@ -1282,8 +1492,58 @@ mod tests {
                 "pmus.iio.groups[0]: PMU configs do not support iio on Haswell-EP/Broadwell-EP",
             ),
             (
-                pmu("irp", json!({"events": [{"event": 0}]})),
-                "pmus.irp.groups[0]: PMU configs do not support irp on Haswell-EP/Broadwell-EP",
+                pmu(
+                    "irp",
+                    json!({"events": vec![json!({"alias": "clockticks"}); 3]}),
+                ),
+                "pmus.irp.groups[0].events: Haswell-EP/Broadwell-EP IRP boxes have 2 general counters, got 3 events",
+            ),
+            (
+                pmu(
+                    "irp",
+                    json!({"events": [null, null, {"alias": "clockticks"}]}),
+                ),
+                "pmus.irp.groups[0].events: Haswell-EP/Broadwell-EP IRP boxes have 2 general counters, got 3 events",
+            ),
+            (
+                pmu("irp", json!({"events": [{"event": "0x10"}]})),
+                "pmus.irp.groups[0].events[0]: Intel lists no Haswell-EP/Broadwell-EP IRP event 0x10",
+            ),
+            (
+                pmu(
+                    "irp",
+                    json!({"units": [2], "events": [{"alias": "clockticks"}]}),
+                ),
+                "pmus.irp.groups[0].units[0]: unit 2 does not exist in package 0 (units: 0, 1)",
+            ),
+            (
+                pmu(
+                    "irp",
+                    json!({"filter0": {"states": ["M"]}, "events": [{"alias": "clockticks"}]}),
+                ),
+                "pmus.irp.groups[0].filter0: only CBo groups take filters",
+            ),
+            (
+                pmu("irp", json!({"fixed": true})),
+                "pmus.irp.groups[0].fixed: only IMC boxes have a fixed counter on Haswell-EP/Broadwell-EP",
+            ),
+            (
+                pmu(
+                    "irp",
+                    json!({"events": [{"alias": "clockticks", "tid_en": true}]}),
+                ),
+                "pmus.irp.groups[0].events[0].tid_en: only CBo events take tid_en",
+            ),
+            (
+                pmu(
+                    "irp",
+                    json!({"events": [{"alias": "transactions", "op": "atomic"}]}),
+                ),
+                "pmus.irp.groups[0].events[0].op: transactions op must be one of reads, writes, got \"atomic\"",
+            ),
+            (
+                pmu("irp", json!({"events": [{"alias": "faf_inserts"}]})),
+                "pmus.irp.groups[0].events[0].alias: unknown Haswell-EP/Broadwell-EP IRP alias \"faf_inserts\" (aliases: clockticks, coherent_ops, transactions, cache_total_occupancy, lost_fwd)",
             ),
             (
                 pmu(
@@ -1621,7 +1881,7 @@ mod tests {
 
     #[test]
     fn tables_are_sorted_and_aliases_name_listed_events() {
-        for hsx_box in [CBO, HA, IMC] {
+        for hsx_box in [CBO, HA, IMC, IRP] {
             assert!(
                 hsx_box
                     .event_counters

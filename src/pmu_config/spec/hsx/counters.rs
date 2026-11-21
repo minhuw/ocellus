@@ -110,6 +110,34 @@ pub(super) const HA: [(u8, u8); 60] = [
     (0x72, 0b1111),
 ];
 
+/// Unit IRP. Every event lists counters 0 and 1, as does section 2.7.4 of the
+/// Haswell-EP and Broadwell-EP uncore guides (331051, 334291): the counters of
+/// one of the box's two counter sets.
+pub(super) const IRP: [(u8, u8); 22] = [
+    (0x00, 0b0011),
+    (0x01, 0b0011),
+    (0x02, 0b0011),
+    (0x03, 0b0011),
+    (0x04, 0b0011),
+    (0x05, 0b0011),
+    (0x06, 0b0011),
+    (0x07, 0b0011),
+    (0x08, 0b0011),
+    (0x09, 0b0011),
+    (0x0a, 0b0011),
+    (0x0d, 0b0011),
+    (0x0e, 0b0011),
+    (0x0f, 0b0011),
+    (0x12, 0b0011),
+    (0x13, 0b0011),
+    (0x14, 0b0011),
+    (0x15, 0b0011),
+    (0x16, 0b0011),
+    (0x17, 0b0011),
+    (0x18, 0b0011),
+    (0x19, 0b0011),
+];
+
 /// Unit iMC.
 pub(super) const IMC: [(u8, u8); 41] = [
     (0x00, 0b1111),

@@ -60,12 +60,21 @@ it.
    (a directory read).
 10. **IRP counters.** Ocellus reads the HSX/BDX IRP counters at a0/a8/b0/b8,
     as Linux has since commit 41a134a5830a; Intel's guides list a0/b0/b8/c0.
-    With Ocellus stopped, put clockticks (event 0x00) on all four IRP
-    counters through perf: four equal counts confirm the offsets. Then put
-    one DMA traffic event (0x13/0x10 PCIItoM or 0x16/0x02 inbound writes) on
-    all four counters under NIC receive: equal counts mean one IRP set and
-    the current four-counter use is right; two different pairs mean counters
-    0-1 and 2-3 belong to separate sets, which the collector must sum.
+    The guides describe "two sets of two" counters, IRP0 (controls d8/dc)
+    and IRP1 (e0/e4), and list every IRP event on counters 0-1 only. PMU
+    configs follow them: `irp` units 0 and 1 are IRP0 and IRP1, with 2
+    counters each. Run both checks through perf with Ocellus stopped, or
+    through an `irp` config with `"aggregate": "box"` and no `units`, which
+    puts a group's two events on both sets. First put clockticks (event
+    0x00) on all four counters: four equal counts confirm the offsets. Then
+    put one DMA traffic event (0x13/0x10 PCIItoM or 0x16/0x02 inbound
+    writes) on all four counters under NIC receive. Equal counts mean both
+    sets see all IRP traffic: the default groups' four-counter use is right,
+    and a config must count one set, never `"aggregate": "sum"` over both.
+    Two different pairs mean IRP0 and IRP1 split the traffic: a config's
+    sum over both sets is the box total, and the default collector, whose
+    events on counters 2-3 then see only IRP1, must sum each event over both
+    sets.
 11. **IMC channel discovery.** Ocellus pairs each IMC channel's PCI address
     with a device id (D20:F0 = 0x6FB0, as in the kernel's table); the encoding
     report read 0x6FB4 for D20:F0 from V4. Check that the IMC collector starts

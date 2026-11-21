@@ -55,13 +55,28 @@ curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
 }'
 ```
 
-Haswell-EP and Broadwell-EP take configs for `cha` (the CBo boxes), `imc`
-and `ha` (the home agents). Their TOR events filter by `kind` and `home`
+Haswell-EP and Broadwell-EP take configs for `cha` (the CBo boxes), `imc`,
+`ha` (the home agents) and `irp`. Their TOR events filter by `kind` and `home`
 rather than by source: requests from IO are told apart by thread id, which a
 group sets in `filter0.tid` and which applies only to the events that set
 `"tid_en": true`. Several of these encodings come from Intel sources that
 disagree, so run the checks in `docs/bdx-step0-checks.md` on a new
 Broadwell-EP host before interpreting its counts.
+
+Their IRP box has two sets of two counters, IRP0 and IRP1, which configs
+address as units 0 and 1 of each package: a group takes at most 2 events and
+runs on both sets unless it lists `units`. Intel's guides and event lists
+allow every IRP event on counters 0-1 only, which Ocellus reads as the two
+counters of a set. Aliases: `clockticks`, `coherent_ops` (`op`: `pcirdcur`,
+`crd`, `drd`, `rfo`, `pcitom`, `pcidcahint`, `wbmtoi`, `clflush`),
+`transactions` (`op`: `reads`, `writes`), `cache_total_occupancy` (`.ANY`)
+and `lost_fwd`; other events take a raw `event` and `umask`. Two things are
+unchecked on hardware (`docs/bdx-step0-checks.md` item 10): whether the
+counters sit at a0/a8 (IRP0) and b0/b8 (IRP1), as Linux reads them, rather
+than Intel's a0/b0 and b8/c0, and whether the two sets split the box's
+traffic or both see all of it. Until item 10 has run, count with
+`"aggregate": "box"` or one set's `units`; with `"aggregate": "sum"` a
+group on both sets counts the box's traffic twice if both sets see all of it.
 
 - `PUT /pmu-config` sets the configs of the box types it names and returns
   every other box type to its default groups. Once every affected collector

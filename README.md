@@ -45,7 +45,8 @@ a client set uncore event groups at runtime. While a box type (`cha`, `iio`,
 `irp`, `imc`, `ha`) has a config, its collector counts the config's groups
 instead of its default ones, and `/metrics` exports raw counts cumulative since
 the config was set in place of the box type's default `ocellus_<box type>_*`
-(Haswell-EP/Broadwell-EP: `ocellus_haswell_<box type>_*`) metrics.
+(Haswell-EP/Broadwell-EP: `ocellus_haswell_<box type>_*`; Ivy Bridge-EP HA:
+`ocellus_haswell_ha_*`; Sandy Bridge-EP HA: none) metrics.
 
 ```sh
 curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
@@ -79,8 +80,8 @@ traffic or both see all of it. Until item 10 has run, count with
 `"aggregate": "box"` or one set's `units`; with `"aggregate": "sum"` a
 group on both sets counts the box's traffic twice if both sets see all of it.
 
-Sandy Bridge-EP and Ivy Bridge-EP take configs for `cha` (the CBo boxes)
-and `imc` in the Haswell-EP shape. An IMC unit is the channel's index in its
+Sandy Bridge-EP and Ivy Bridge-EP take configs for `cha` (the CBo boxes),
+`ha` and `imc` in the Haswell-EP shape. An IMC unit is the channel's index in its
 package, 0-3 on Sandy Bridge-EP and 0-7 on Ivy Bridge-EP, and `"fixed": true`
 adds DCLK. PCIe requests carry thread id 0x1e, which only the Sandy Bridge-EP
 guide documents. Sandy Bridge-EP's TOR events have no `local` or `remote`
@@ -91,8 +92,27 @@ place, and `event_info` carries only `filter0`. On Ivy Bridge-EP the guide
 and Linux put the LLC_LOOKUP state in FILTER0 bits 22:17 and the perfmon JSON
 in 23:17: `states` follow the guide, and bit 23 is accepted only in
 `filter0.raw`, where LLC_LOOKUP takes it as a state, until a hardware check
-settles the layout (board card c55). These encodings follow Intel's uncore guides (327043, 329468), the
-perfmon JSON and Linux, and have not been checked on hardware.
+settles the layout (board card c55).
+
+Their `ha` configs address each package's home agents as units: 0 on Sandy
+Bridge-EP, 0 (HA0) and, on the dies that have it, 1 (HA1) on Ivy Bridge-EP.
+Each event counts on any of the four counters. Aliases: `clockticks` and
+`requests` on both, with `op` `reads` or `writes`; on Sandy Bridge-EP
+`txr_ad` (`op` `ndr` or `snp`, UNC_H_TxR_AD.*); on Ivy Bridge-EP the
+Haswell-EP ones, `requests` with the local, remote and InvItoE ops
+(`reads_local`, ...), `snoop_resp` and `snp_resp_recv_local` (`op` `rspi`,
+`rsps`, `rspifwd`, `rspsfwd`, `rsp_wb`, `rsp_fwd_wb`, `rspcnflct`, and
+`other` for the latter) and `osb` (`op` `reads_local`, `invitoe_local` or
+`remote`). Sandy Bridge-EP has no SNOOP_RESP event, and Ivy Bridge-EP no
+TxR_AD.SNP (its perfmon JSON lists only TxR_AD.HOM, umask 0x04, which a raw
+event takes). The default HA group runs only on Ivy Bridge-EP, the
+Haswell-EP one of local and remote requests, and exports the Haswell-EP
+`ocellus_haswell_ha_*` metrics; Sandy Bridge-EP's REQUESTS cannot tell
+local from remote, so its HA collector has no default group and takes only
+configs.
+
+These encodings follow Intel's uncore guides (327043, 329468), the perfmon
+JSON and Linux, and have not been checked on hardware.
 
 Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha`, `imc`,
 `iio` and `irp`. Their CHAs select requests in the umask_ext field of each

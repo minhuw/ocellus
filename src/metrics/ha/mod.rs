@@ -1,4 +1,5 @@
 pub mod hsx;
+pub mod snb;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -17,18 +18,28 @@ use crate::runtime::pmu_control::ConfigRequests;
 #[serde(rename_all = "snake_case", tag = "architecture")]
 pub enum HaMetrics {
     Hsx(hsx::HsxHaMetrics),
+    /// Haswell-EP's metrics, of the same REQUESTS events.
+    Ivb(hsx::HsxHaMetrics),
+    /// Always without scopes: Sandy Bridge-EP has no default HA group.
+    Snb(hsx::HsxHaMetrics),
 }
 
-/// The home agents; only Haswell-EP and Broadwell-EP have them as PMU boxes
-/// of their own.
+/// The home agents, PMU boxes of their own from Sandy Bridge-EP to
+/// Broadwell-EP; from Skylake-SP on, the CHA is the home agent.
 #[derive(Debug)]
 pub enum HaCollector {
     Hsx(hsx::HsxHaCollector),
+    Ivb(snb::SnbHaCollector),
+    Snb(snb::SnbHaCollector),
 }
 
 impl HaCollector {
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         match architecture.intel_server_model() {
+            IntelServerCpuModel::SandyBridgeEp => {
+                snb::SnbHaCollector::new(architecture).map(Self::Snb)
+            }
+            IntelServerCpuModel::IvyTown => snb::SnbHaCollector::new(architecture).map(Self::Ivb),
             IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => {
                 hsx::HsxHaCollector::new(architecture).map(Self::Hsx)
             }
@@ -39,13 +50,20 @@ impl HaCollector {
     pub fn is_supported(architecture: &Architecture) -> bool {
         matches!(
             IntelServerCpuModel::from_family_model(architecture.family, architecture.model),
-            Some(IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon)
+            Some(
+                IntelServerCpuModel::SandyBridgeEp
+                    | IntelServerCpuModel::IvyTown
+                    | IntelServerCpuModel::HaswellXeon
+                    | IntelServerCpuModel::BroadwellXeon
+            )
         )
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<HaMetrics, String> {
         match self {
             Self::Hsx(collector) => collector.sample(interval).await.map(HaMetrics::Hsx),
+            Self::Ivb(collector) => collector.sample(interval).await.map(HaMetrics::Ivb),
+            Self::Snb(collector) => collector.sample(interval).await.map(HaMetrics::Snb),
         }
     }
 }
@@ -60,18 +78,21 @@ impl ConfigurableCollector for HaCollector {
     fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
         match self {
             Self::Hsx(collector) => collector.config_units(),
+            Self::Ivb(collector) | Self::Snb(collector) => collector.config_units(),
         }
     }
 
     fn has_config(&self) -> bool {
         match self {
             Self::Hsx(collector) => collector.has_config(),
+            Self::Ivb(collector) | Self::Snb(collector) => collector.has_config(),
         }
     }
 
     fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
         match self {
             Self::Hsx(collector) => collector.set_config(config),
+            Self::Ivb(collector) | Self::Snb(collector) => collector.set_config(config),
         }
     }
 
@@ -82,6 +103,9 @@ impl ConfigurableCollector for HaCollector {
     ) -> Result<UncoreCounts, String> {
         match self {
             Self::Hsx(collector) => collector.sample_config(interval, cycle).await,
+            Self::Ivb(collector) | Self::Snb(collector) => {
+                collector.sample_config(interval, cycle).await
+            }
         }
     }
 }
@@ -117,6 +141,10 @@ impl HaTask {
 #[derive(Debug)]
 pub enum HaPrometheusMetrics {
     Hsx(hsx::HsxHaPrometheusMetrics),
+    /// The Haswell-EP families.
+    Ivb(hsx::HsxHaPrometheusMetrics),
+    /// No family: Sandy Bridge-EP has no default HA metrics.
+    Snb,
 }
 
 impl HaPrometheusMetrics {
@@ -125,6 +153,10 @@ impl HaPrometheusMetrics {
             metadata.processor.family,
             metadata.processor.model,
         ) {
+            Some(IntelServerCpuModel::SandyBridgeEp) => Some(Self::Snb),
+            Some(IntelServerCpuModel::IvyTown) => {
+                Some(Self::Ivb(hsx::HsxHaPrometheusMetrics::register(registry)))
+            }
             Some(IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon) => {
                 Some(Self::Hsx(hsx::HsxHaPrometheusMetrics::register(registry)))
             }
@@ -135,6 +167,19 @@ impl HaPrometheusMetrics {
     pub fn update(&self, metrics: HaMetrics) {
         match (self, metrics) {
             (Self::Hsx(prometheus), HaMetrics::Hsx(metrics)) => prometheus.update(metrics),
+            (Self::Ivb(prometheus), HaMetrics::Ivb(metrics)) => prometheus.update(metrics),
+            (Self::Snb, HaMetrics::Snb(metrics)) => {
+                debug_assert!(
+                    metrics.scopes.is_empty(),
+                    "Sandy Bridge-EP HA metrics with scopes: {metrics:?}"
+                );
+            }
+            (prometheus, metrics) => {
+                debug_assert!(
+                    false,
+                    "mismatched HA Prometheus updater {prometheus:?} for metrics {metrics:?}"
+                );
+            }
         }
     }
 }
@@ -144,10 +189,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supports_haswell_ep_and_broadwell_ep_only() {
-        assert!(HaCollector::is_supported(&test_architecture(0x3f)));
-        assert!(HaCollector::is_supported(&test_architecture(0x4f)));
-        for model in [0x2d, 0x3e, 0x55, 0x6a, 0x8f, 0xcf] {
+    fn supports_sandy_bridge_ep_to_broadwell_ep_only() {
+        for model in [0x2d, 0x3e, 0x3f, 0x4f] {
+            assert!(HaCollector::is_supported(&test_architecture(model)));
+        }
+        for model in [0x55, 0x6a, 0x8f, 0xcf] {
             assert!(!HaCollector::is_supported(&test_architecture(model)));
         }
     }

@@ -39,7 +39,8 @@ non-removable disk in `lsblk`, NVMe first) size the checks.
    0x55 SKX (CLX from stepping 5), 0x6A ICX, 0x8F SPR, 0xCF EMR; on any other
    model nothing else runs. It fails if `processor_info` names another model.
 2. **`collectors.*`**: each collector of the family gains samples over two
-   intervals, is not stopped and exports every package. RDT: L3 occupancy
+   intervals, is not stopped and exports every package; the SNB HA, which has
+   no default group, exports no series. RDT: L3 occupancy
    everywhere; MBM on BDX and later exactly when `/proc/cpuinfo` has
    `cqm_mbm_total` or `cqm_mbm_local`, never on HSX. `collectors.journal`
    lists the `skipping ... collector` lines of the unit's current
@@ -107,8 +108,8 @@ ItoM or PCIItoM is BDX item 2.
 
 | Family | Collectors it lacks (journal skips) |
 | --- | --- |
-| SNB | IIO, IRP, HA, RDT |
-| IVB | IIO, HA, RDT |
+| SNB | IIO, IRP, RDT |
+| IVB | IIO, RDT |
 | HSX, BDX | IIO (HSX also has no MBM) |
 | SKX, CLX, ICX, SPR, EMR | HA |
 

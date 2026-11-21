@@ -30,6 +30,26 @@ pub enum BusFill {
     FromBelow,
 }
 
+/// Linux `snbep_uncore_pci_init()`: device 0x3ce0, SNBEP_CPUNODEID 0x40,
+/// SNBEP_GIDNIDMAP 0x54, `reverse`.
+pub const SANDY_BRIDGE_UBOX: UboxSpec = UboxSpec {
+    bus_fill: BusFill::FromAbove,
+    device_id: 0x3ce0,
+    name: "Sandy Bridge-EP",
+    node_id_offset: 0x40,
+    node_map_offset: 0x54,
+};
+
+/// Linux `ivbep_uncore_pci_init()`: device 0x0e1e, the Sandy Bridge-EP
+/// registers, `reverse`.
+pub const IVY_BRIDGE_UBOX: UboxSpec = UboxSpec {
+    bus_fill: BusFill::FromAbove,
+    device_id: 0x0e1e,
+    name: "Ivy Bridge-EP",
+    node_id_offset: 0x40,
+    node_map_offset: 0x54,
+};
+
 pub const HASWELL_UBOX: UboxSpec = UboxSpec {
     bus_fill: BusFill::FromAbove,
     device_id: 0x2f1e,

@@ -2608,6 +2608,46 @@ mod tests {
         assert!(!metrics.contains(r#"collector="ha""#));
     }
 
+    /// Ivy Bridge-EP exports the Haswell-EP HA families; Sandy Bridge-EP,
+    /// whose HA has no default group, none.
+    #[test]
+    fn renders_the_hsx_ha_families_on_ivy_bridge_and_none_on_sandy_bridge() {
+        use crate::metrics::MetricUpdate;
+        use crate::metrics::ha::HaMetrics;
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let render = |info, metrics| {
+            let exporter = PrometheusExporter::new(SamplerReader::new_for_test(
+                crate::runtime::sampler::SamplerMetadata {
+                    measure_interval: std::time::Duration::from_millis(1),
+                    info,
+                },
+                crate::metrics::MetricsState::default(),
+            ));
+            exporter
+                .metrics
+                .update(sampled(MetricUpdate::Ha(Box::new(metrics)), 1));
+            runtime.block_on(exporter.render_metrics()).unwrap()
+        };
+        let HaMetrics::Hsx(hsx) = hsx_ha_metrics() else {
+            unreachable!("hsx_ha_metrics is Haswell-EP's");
+        };
+
+        let ivb = render(ivy_bridge_info_metadata(), HaMetrics::Ivb(hsx));
+        assert_eq!(lines_containing(&ivb, "ocellus_haswell_"), HSX_HA_LINES);
+
+        let snb = render(
+            sandy_bridge_info_metadata(),
+            HaMetrics::Snb(crate::metrics::ha::hsx::HsxHaMetrics { scopes: Vec::new() }),
+        );
+        assert!(lines_containing(&snb, "ocellus_haswell_").is_empty());
+        assert!(lines_containing(&snb, "ocellus_ha_").is_empty());
+
+        for metrics in [ivb, snb] {
+            assert!(metrics.contains(r#"ocellus_samples_total{collector="ha"} 1"#));
+        }
+    }
+
     #[test]
     fn leaves_out_the_hsx_ha_defaults_while_an_ha_config_runs() {
         use crate::metrics::MetricUpdate;

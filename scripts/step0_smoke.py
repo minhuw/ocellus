@@ -30,6 +30,9 @@ ARCH = {"SNB": "snb", "IVB": "snb", "HSX": "hsx", "BDX": "hsx", "SKX": "skx",
         "CLX": "skx", "ICX": "icx", "SPR": "spr", "EMR": "spr"}
 CLOCKS = {"clockticks", "dclk", "hclockticks", "fixed_clockticks"}
 SKIP_RE = re.compile(r"ocellus: skipping (\S+) collector: (.*)")
+# Collectors that sample their default groups but export no series of them:
+# the Sandy Bridge-EP HA has no default group.
+NO_DEFAULT_SERIES = {("SNB", "ha")}
 NOTES = {
     "snb": [
         "Board card c55: check on hardware PCIe TID 0x1e on IVB (only the SNB "
@@ -155,7 +158,7 @@ def expected_collectors(family):
     names = {"cha", "imc", "pcu", "rapl"}
     names |= {"iio"} if arch in ("skx", "icx", "spr") else set()
     names |= {"irp"} if family != "SNB" else set()
-    names |= {"ha"} if arch == "hsx" else set()
+    names |= {"ha"} if arch in ("snb", "hsx") else set()
     names |= {"rdt"} if arch != "snb" else set()
     return names
 
@@ -409,13 +412,14 @@ def check_collectors(args, report, host, m1, m2):
         before = value(m1, "ocellus_samples_total", collector=name)
         after = value(m2, "ocellus_samples_total", collector=name)
         packages = collector_packages(m2, name)
+        want = [] if (host.family, name) in NO_DEFAULT_SERIES else host.packages
         measured = {"samples": [before, after], "packages": sorted(packages, key=int),
                     "stopped": value(m2, "ocellus_collector_stopped", collector=name) == 1}
         healthy = (before is not None and after is not None and after > before
-                   and not measured["stopped"] and packages >= set(host.packages))
+                   and not measured["stopped"] and packages >= set(want))
         wanted = name in expected or name == "interconnect"
         report.add(f"collectors.{name}", "pass" if healthy and wanted else "fail", measured,
-                   {"packages": host.packages} if wanted else "absent",
+                   {"packages": want} if wanted else "absent",
                    "" if wanted else f"not expected on {host.family}")
     if "rdt" in expected:
         occupancy = collector_packages({k: v for k, v in m2.items() if k == "ocellus_rdt_l3_occupancy_bytes"}, "rdt")

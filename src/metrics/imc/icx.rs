@@ -27,9 +27,10 @@ const SERVER_MC_CH_PMON_CTL0_OFFSET: u64 = 0x40;
 const SERVER_MC_CH_PMON_FIXED_CTR_OFFSET: u64 = 0x38;
 const SERVER_MC_CH_PMON_FIXED_CTL_OFFSET: u64 = 0x54;
 const SERVER_MC_CH_PMON_STEP: u64 = 0x4000;
-const SERVER_UBOX0_DEVICE: u8 = 0;
-const SERVER_UBOX0_DEVICE_IDS: [u16; 2] = [0x3451, 0x3251];
-const SERVER_UBOX0_FUNCTION: u8 = 1;
+// The UBOX0 function with the memory BAR registers, Linux's
+// SNR_MC_DEVICE_ID, which snr_uncore_get_mc_dev() finds by device id on
+// each die.
+const SERVER_UBOX0_DEVICE_ID: u16 = 0x3451;
 const SERVER_UBOX0_MMIO_BASE_OFFSET: u64 = 0xd0;
 const UNIT_COUNTER_RESET_BIT: u32 = 1 << 1;
 const UNIT_CONTROL_RESET_BIT: u32 = 1 << 0;
@@ -663,18 +664,10 @@ fn discover_channels_from_ubox_bars(
         .map(|scope| scope.package_id)
         .collect::<Vec<_>>();
     let node_map = UboxNodeMap::discover(metal::ubox::ICE_LAKE_UBOX, &package_ids)?;
-    let uboxes = metal::pci::find_intel_devices_at_address_matching_device_ids(
-        SERVER_UBOX0_DEVICE,
-        SERVER_UBOX0_FUNCTION,
-        &SERVER_UBOX0_DEVICE_IDS,
-    )?
-    .into_iter()
-    .map(|ubox| ubox.location)
-    .collect::<Vec<_>>();
+    let uboxes = metal::pci::find_intel_devices_matching_device_id(SERVER_UBOX0_DEVICE_ID)?;
 
     let mut channels = Vec::with_capacity(scopes.len() * bars_per_package * channels_per_bar);
-    for (package_id, ubox) in node_map.socket_devices(&uboxes, "UBOX0")? {
-        let scope = metal::ubox::package_scope(&scopes, package_id, |scope| scope.package_id)?;
+    for (scope, ubox) in scope_uboxes(&node_map, &uboxes, &scopes)? {
         let device = metal::pci::PciDevice::open_readonly(ubox)?;
         let mmio_base = device.read_u32(SERVER_UBOX0_MMIO_BASE_OFFSET)?;
 
@@ -705,6 +698,25 @@ fn discover_channels_from_ubox_bars(
     }
 
     Ok(channels)
+}
+
+/// The UBOX0 device of each scope, of the package the UBOX node id map gives
+/// its bus.
+fn scope_uboxes(
+    node_map: &UboxNodeMap,
+    uboxes: &[metal::pci::PciLocation],
+    scopes: &[IcxImcScope],
+) -> Result<Vec<(IcxImcScope, metal::pci::PciLocation)>, String> {
+    node_map
+        .socket_devices(uboxes, "UBOX0")?
+        .into_iter()
+        .map(|(package_id, ubox)| {
+            Ok((
+                metal::ubox::package_scope(scopes, package_id, |scope| scope.package_id)?,
+                ubox,
+            ))
+        })
+        .collect()
 }
 
 fn events_per_second(events: u64, duration: Duration) -> f64 {
@@ -943,6 +955,46 @@ mod tests {
             (0x123_u64 << 23) | (0x456_u64 << 12)
         );
         assert_eq!(server_memory_bar(0, 0), 0);
+    }
+
+    #[test]
+    fn pairs_ubox0_devices_with_packages_by_node_id() {
+        // The UBOX on bus 0x7e is node 1, package 1; UBOX0 need not be D0:F1.
+        let node_map = metal::ubox::tests::fake_node_map(
+            metal::ubox::ICE_LAKE_UBOX,
+            &[0x7e, 0xfe],
+            &[1, 0],
+            0b001_000,
+            &[0, 1],
+        )
+        .unwrap();
+        let ubox0 = |bus| metal::pci::PciLocation {
+            bus,
+            device: 1,
+            function: 1,
+            group: 0,
+        };
+        let scope = |package_id| IcxImcScope {
+            die_group_id: None,
+            die_id: Some(0),
+            package_id,
+        };
+
+        assert_eq!(
+            scope_uboxes(
+                &node_map,
+                &[ubox0(0x7e), ubox0(0xfe)],
+                &[scope(0), scope(1)]
+            ),
+            Ok(vec![(scope(0), ubox0(0xfe)), (scope(1), ubox0(0x7e))])
+        );
+        assert_eq!(
+            scope_uboxes(&node_map, &[ubox0(0x7e)], &[scope(0), scope(1)]),
+            Err(
+                "discovered Ice Lake-SP UBOX0 devices on packages [1] for packages {0, 1}"
+                    .to_string()
+            )
+        );
     }
 
     #[test]

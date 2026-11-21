@@ -207,45 +207,6 @@ pub fn find_intel_devices_matching_device_id(device_id: u16) -> Result<Vec<PciLo
     Ok(locations)
 }
 
-pub fn find_intel_devices_at_address_matching_device_ids(
-    device: u8,
-    function: u8,
-    device_ids: &[u16],
-) -> Result<Vec<PciVendorDevice>, String> {
-    let mut locations = Vec::new();
-
-    scan_pci_devices(|location, vendor_device_id| {
-        if location.device == device
-            && location.function == function
-            && device_ids.contains(&vendor_device_id)
-        {
-            locations.push(PciVendorDevice {
-                device_id: vendor_device_id,
-                location,
-            });
-        }
-    })?;
-
-    locations.sort_by_key(|device| {
-        (
-            device.location.group,
-            device.location.bus,
-            device.location.device,
-            device.location.function,
-            device.device_id,
-        )
-    });
-    locations.dedup_by_key(|device| {
-        (
-            device.location.group,
-            device.location.bus,
-            device.location.device,
-            device.location.function,
-        )
-    });
-    Ok(locations)
-}
-
 pub fn find_intel_devices_matching_any_spec(
     specs: &[PciDeviceSpec],
 ) -> Result<Vec<PciLocation>, String> {

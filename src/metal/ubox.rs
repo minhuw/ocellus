@@ -238,7 +238,7 @@ pub fn package_scope<S: Copy>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// The config space, by bus and offset, of UBOXes on `buses` of segment
@@ -268,7 +268,7 @@ mod tests {
         (locations, config_space)
     }
 
-    fn fake_node_map(
+    pub(crate) fn fake_node_map(
         spec: UboxSpec,
         buses: &[u8],
         node_ids: &[u32],

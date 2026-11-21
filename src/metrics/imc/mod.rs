@@ -117,32 +117,31 @@ impl ConfigurableCollector for ImcCollector {
 
     fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.config_units(),
             Self::Hsx(collector) => collector.config_units(),
             Self::Ivb(collector) | Self::Snb(collector) => collector.config_units(),
             Self::Skx(collector) => collector.config_units(),
-            Self::Emr(_) | Self::Icx(_) | Self::Spr(_) => BTreeMap::new(),
+            Self::Icx(collector) => collector.config_units(),
         }
     }
 
     fn has_config(&self) -> bool {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.has_config(),
             Self::Hsx(collector) => collector.has_config(),
             Self::Ivb(collector) | Self::Snb(collector) => collector.has_config(),
             Self::Skx(collector) => collector.has_config(),
-            Self::Emr(_) | Self::Icx(_) | Self::Spr(_) => false,
+            Self::Icx(collector) => collector.has_config(),
         }
     }
 
     fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.set_config(config),
             Self::Hsx(collector) => collector.set_config(config),
             Self::Ivb(collector) | Self::Snb(collector) => collector.set_config(config),
+            Self::Icx(collector) => collector.set_config(config),
             Self::Skx(collector) => collector.set_config(config),
-            _ if config.is_none() => Ok(()),
-            collector => Err(format!(
-                "PMU configs are not supported on {}",
-                collector.architecture()
-            )),
         }
     }
 
@@ -152,30 +151,15 @@ impl ConfigurableCollector for ImcCollector {
         cycle: u64,
     ) -> Result<UncoreCounts, String> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => {
+                collector.sample_config(interval, cycle).await
+            }
             Self::Hsx(collector) => collector.sample_config(interval, cycle).await,
             Self::Ivb(collector) | Self::Snb(collector) => {
                 collector.sample_config(interval, cycle).await
             }
+            Self::Icx(collector) => collector.sample_config(interval, cycle).await,
             Self::Skx(collector) => collector.sample_config(interval, cycle).await,
-            collector => Err(format!(
-                "PMU configs are not supported on {}",
-                collector.architecture()
-            )),
-        }
-    }
-}
-
-impl ImcCollector {
-    /// The architecture's name, for errors.
-    fn architecture(&self) -> &'static str {
-        match self {
-            Self::Emr(_) => "Emerald Rapids",
-            Self::Hsx(_) => "Haswell-EP and Broadwell-EP",
-            Self::Icx(_) => "Ice Lake-SP",
-            Self::Ivb(_) => "Ivy Bridge-EP",
-            Self::Snb(_) => "Sandy Bridge-EP",
-            Self::Spr(_) => "Sapphire Rapids",
-            Self::Skx(_) => "Skylake-SP",
         }
     }
 }

@@ -22,6 +22,15 @@ impl Mmio {
         Ok(Self { base, file })
     }
 
+    /// An `Mmio` over /dev/null for tests: writes vanish and reads fail.
+    #[cfg(test)]
+    pub fn null(base: u64) -> Self {
+        Self {
+            base,
+            file: File::open("/dev/null").expect("/dev/null opens"),
+        }
+    }
+
     pub fn read_u64(&self, offset: u64) -> Result<u64, String> {
         self.read_u64_raw(offset)
             .map_err(|error| format!("failed to read MMIO {self} offset 0x{offset:x}: {error}"))

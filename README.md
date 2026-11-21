@@ -91,8 +91,9 @@ place, and `event_info` carries only `filter0`. These encodings follow
 Intel's uncore guides (327043, 329468), the perfmon JSON and Linux, and have
 not been checked on hardware.
 
-Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha`. Their
-CHAs select requests in the umask_ext field of each counter's control rather
+Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha` and
+`imc`. Their CHAs select requests in the umask_ext field of each counter's
+control rather
 than in filter registers, so groups take no `filter0` or `filter1`:
 
 ```sh
@@ -111,6 +112,14 @@ curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
   TOR event names (`DRD`, `RFO`, `ITOM`, `PCIRDCUR`, ...; the error lists the
   model's names per source) or a raw 11-bit value, and needs source `ia` or
   `io`; IA opcodes match before morphing, as every Intel IA opcode event does.
+- IMC aliases: `clockticks`, `cas_count` (`op` `rd`, `wr` or `all`),
+  `rpq_inserts_pch0`/`_pch1`, `wpq_inserts_pch0`/`_pch1`,
+  `rpq_occupancy_pch0`/`_pch1`, `wpq_occupancy_pch0`/`_pch1`, and on
+  Sapphire/Emerald Rapids `hclockticks`. `"fixed": true` enables the fixed
+  counter, labelled `hclockticks` on Ice Lake-SP (Intel's UNC_M_HCLOCKTICKS)
+  and `fixed_clockticks` on Sapphire/Emerald Rapids, for which Intel lists
+  no fixed iMC event. The unit id is the channel's position among its
+  package's channels in discovery order.
 - Raw events take `event`, `umask` and, for CHA, `umask_ext` (Ice Lake-SP
   26 bits, Sapphire/Emerald Rapids 32 bits).
 - Aliases cover only events of Intel's public perfmon files

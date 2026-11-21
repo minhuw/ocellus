@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -8,6 +8,10 @@ use prometheus_client::registry::Registry;
 
 use crate::metal;
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE, topology_label};
+use crate::metrics::uncore::config::{self, ConfigBox};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, PmuConfig, ProgrammedGroup, UncoreCounts,
+};
 
 const COUNTER_COUNT: usize = 4;
 const COUNTER_WIDTH: u32 = 48;
@@ -153,6 +157,9 @@ impl SprImcMetrics {
 #[derive(Debug)]
 pub struct SprImcCollector {
     channels: Vec<SprImcChannel>,
+    /// The PMU config counted instead of the default groups, with its counts
+    /// so far.
+    config: Option<CountAccumulator>,
     next_group: usize,
 }
 
@@ -160,8 +167,71 @@ impl SprImcCollector {
     pub fn new() -> Result<Self, String> {
         Ok(Self {
             channels: discover_channels()?,
+            config: None,
             next_group: 0,
         })
+    }
+
+    /// The channel ids of each package that PMU configs can program.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        let mut units = BTreeMap::<u16, BTreeSet<u16>>::new();
+        for ((package, unit), _) in config_channels(&self.channels) {
+            units.entry(package).or_default().insert(unit);
+        }
+
+        units
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        if let Some(config) = &config {
+            config::check_config(
+                config,
+                BoxType::Imc,
+                &self.config_units(),
+                COUNTER_COUNT,
+                true,
+            )?;
+            for group in &config.program.groups {
+                for counter in &group.counters {
+                    imc_control(counter.control)?;
+                }
+            }
+        }
+
+        self.config = config.map(CountAccumulator::new);
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        if interval.is_zero() {
+            return Err("SPR/EMR IMC measure interval must be non-zero".to_string());
+        }
+        let channels = config_channels(&self.channels);
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "IMC collector has no PMU config to sample".to_string())?;
+
+        config::sample_config(accumulator, interval, cycle, |package, unit| {
+            channels
+                .iter()
+                .find(|(id, _)| *id == (package, unit))
+                .map(|(_, channel)| *channel)
+                .ok_or_else(|| format!("IMC channel {unit} does not exist in package {package}"))
+        })
+        .await
     }
 
     pub async fn sample(&mut self, interval: Duration) -> Result<SprImcMetrics, String> {
@@ -425,6 +495,82 @@ impl SprImcChannel {
     fn unfreeze(&self) -> Result<(), String> {
         self.pmon.write_unit_control(SPR_UNIT_UNFREEZE)
     }
+}
+
+impl SprImcChannel {
+    /// The MMIO writes, as (offset, value), that program config `group`:
+    /// freeze the channel, reset its controls and then its counters, then
+    /// set each counter control, 0 for the counters the group leaves unused,
+    /// the fixed counter's included. General controls take no reset bit: the
+    /// unit resets the counters. The fixed counter takes its reset bit, as
+    /// the default groups program it.
+    fn config_writes(&self, group: &ProgrammedGroup) -> Result<Vec<(u64, u32)>, String> {
+        let pmon = &self.pmon;
+        let mut writes = vec![
+            (pmon.unit_control, SPR_UNIT_FREEZE_AND_CONTROL_RESET),
+            (pmon.unit_control, SPR_UNIT_FREEZE_AND_COUNTER_RESET),
+        ];
+        let controls = config::general_controls(group, COUNTER_COUNT, 0);
+        for (offset, control) in pmon.controls.into_iter().zip(controls) {
+            writes.push((offset, imc_control(control)?));
+        }
+        let fixed = group
+            .counters
+            .iter()
+            .find(|counter| counter.slot == CounterSlot::Fixed)
+            .map_or(0, |counter| {
+                counter.control | u64::from(FIXED_COUNTER_RESET_BIT)
+            });
+        writes.push((pmon.fixed_control, imc_control(fixed)?));
+
+        Ok(writes)
+    }
+}
+
+impl ConfigBox for SprImcChannel {
+    fn program_group(&self, group: &ProgrammedGroup) -> Result<(), String> {
+        for (offset, value) in self.config_writes(group)? {
+            self.pmon.mmio.write_u32(offset, value)?;
+        }
+
+        Ok(())
+    }
+
+    fn freeze_box(&self) -> Result<(), String> {
+        self.freeze()
+    }
+
+    fn unfreeze_box(&self) -> Result<(), String> {
+        self.unfreeze()
+    }
+
+    fn read_slot(&self, slot: CounterSlot) -> Result<u64, String> {
+        match config::counter_index(slot, COUNTER_COUNT, true)? {
+            Some(index) => self.pmon.read_counter(index),
+            None => self.pmon.read_fixed_counter(),
+        }
+    }
+}
+
+/// Each channel with its package and unit id, its position among the
+/// channels of its package in discovery order.
+fn config_channels(channels: &[SprImcChannel]) -> Vec<((u16, u16), &SprImcChannel)> {
+    let mut next_ids = BTreeMap::<u16, u16>::new();
+    channels
+        .iter()
+        .map(|channel| {
+            let package = channel.scope.package_id as u16;
+            let id = next_ids.entry(package).or_default();
+            *id += 1;
+            ((package, *id - 1), channel)
+        })
+        .collect()
+}
+
+/// A config counter control as the 32-bit MMIO control register takes it.
+fn imc_control(control: u64) -> Result<u32, String> {
+    u32::try_from(control)
+        .map_err(|_| format!("IMC counter control {control:#x} does not fit in 32 bits"))
 }
 
 #[derive(Debug)]
@@ -962,5 +1108,105 @@ mod tests {
             (actual - expected).abs() < 1e-12,
             "expected {expected}, got {actual}"
         );
+    }
+
+    fn config_channel(package_id: u32) -> SprImcChannel {
+        SprImcChannel {
+            pmon: SprImcPmon {
+                counters: std::array::from_fn(|index| 0x08 + index as u64 * 8),
+                controls: std::array::from_fn(|index| 0x40 + index as u64 * 4),
+                fixed_counter: SERVER_MC_CH_PMON_FIXED_CTR_OFFSET,
+                fixed_control: SERVER_MC_CH_PMON_FIXED_CTL_OFFSET,
+                mmio: metal::mmio::Mmio::null(0),
+                unit_control: 0,
+            },
+            scope: SprImcScope {
+                die_group_id: None,
+                die_id: None,
+                package_id,
+            },
+        }
+    }
+
+    /// Three channels in each of two packages, interleaved as discovery
+    /// never finds them, to show that ids count per package.
+    fn config_collector() -> SprImcCollector {
+        SprImcCollector {
+            channels: [0, 1, 0, 1, 0, 1].map(config_channel).into(),
+            config: None,
+            next_group: 0,
+        }
+    }
+
+    #[test]
+    fn programs_a_config_group_on_one_channel() {
+        // UNC_M_CAS_COUNT.RD as the spec programs it, and the fixed counter.
+        let group = config::fixtures::group(
+            0,
+            1,
+            &[2],
+            &[
+                (CounterSlot::General(1), 0xcf05),
+                (CounterSlot::Fixed, 0x40_0000),
+            ],
+        );
+
+        assert_eq!(
+            config_channel(1).config_writes(&group).unwrap(),
+            [
+                (0x00, 0x101),
+                (0x00, 0x201),
+                (0x40, 0),
+                (0x44, 0xcf05),
+                (0x48, 0),
+                (0x4c, 0),
+                (0x54, 0x48_0000),
+            ]
+        );
+        let unused = config::fixtures::group(0, 1, &[2], &[]);
+        assert_eq!(
+            config_channel(1).config_writes(&unused).unwrap().last(),
+            Some(&(0x54, 0))
+        );
+    }
+
+    #[test]
+    fn runs_imc_configs_on_discovered_channels() {
+        let units = BTreeMap::from([
+            (0, BTreeSet::from([0, 1, 2])),
+            (1, BTreeSet::from([0, 1, 2])),
+        ]);
+        for mut collector in [
+            crate::metrics::imc::ImcCollector::Spr(config_collector()),
+            crate::metrics::imc::ImcCollector::Emr(config_collector()),
+        ] {
+            config::fixtures::assert_runs_configs(
+                &mut collector,
+                BoxType::Imc,
+                units.clone(),
+                COUNTER_COUNT,
+                true,
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_configs_whose_controls_do_not_fit_the_imc_controls() {
+        let mut collector = config_collector();
+        let config = config::fixtures::config(
+            BoxType::Imc,
+            config::fixtures::group(0, 0, &[1], &[(CounterSlot::General(0), 1 << 32)]),
+        );
+
+        assert_eq!(
+            collector.set_config(Some(config)),
+            Err("IMC counter control 0x100000000 does not fit in 32 bits".to_string())
+        );
+        assert!(!collector.has_config());
+    }
+
+    #[test]
+    fn schedules_imc_config_groups() {
+        config::fixtures::assert_config_schedule(BoxType::Imc);
     }
 }

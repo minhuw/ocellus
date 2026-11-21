@@ -21,6 +21,24 @@ pub(crate) trait ConfigBox {
     fn read_slot(&self, slot: CounterSlot) -> Result<u64, String>;
 }
 
+impl<B: ConfigBox> ConfigBox for &B {
+    fn program_group(&self, group: &ProgrammedGroup) -> Result<(), String> {
+        (*self).program_group(group)
+    }
+
+    fn freeze_box(&self) -> Result<(), String> {
+        (*self).freeze_box()
+    }
+
+    fn unfreeze_box(&self) -> Result<(), String> {
+        (*self).unfreeze_box()
+    }
+
+    fn read_slot(&self, slot: CounterSlot) -> Result<u64, String> {
+        (*self).read_slot(slot)
+    }
+}
+
 /// Checks that `config` programs `box_type` on units of `host_units`, with no
 /// filters, general counters below `counter_count`, and the fixed counter
 /// only where the boxes have one (`fixed`).

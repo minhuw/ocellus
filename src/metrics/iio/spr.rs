@@ -10,8 +10,7 @@ use crate::metal::msr::Msr;
 use crate::metrics::common::topology_label;
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, events_per_second, frequency_hz, mask_counter,
-    measurement_round_count, queue_residency_seconds, ratio, scale_to_enabled, uncore_leaders,
-    wrapping_delta,
+    measurement_round_count, scale_to_enabled, uncore_leaders, wrapping_delta,
 };
 
 const IIO_CHANNEL_MASK_SHIFT: u32 = 36;
@@ -53,12 +52,11 @@ pub const SPR_IIO_STACKS: [SprIioStack; IIO_UNIT_COUNT] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum IioEventKind {
     Clockticks,
-    CompletionInserts,
-    CompletionOccupancy,
     InboundReadDwords,
     InboundReadTransactions,
     InboundWriteDwords,
     InboundWriteTransactions,
+    Unused,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +69,16 @@ struct IioEventSpec {
 }
 
 impl IioEventSpec {
+    const fn unused() -> Self {
+        Self {
+            channel_mask: 0,
+            event: 0,
+            function_class_mask: 0,
+            kind: IioEventKind::Unused,
+            umask: 0,
+        }
+    }
+
     const fn sum(
         kind: IioEventKind,
         event: u8,
@@ -98,7 +106,7 @@ const SPR_IIO_EVENT_GROUPS: [IioEventGroup; 2] = [
         events: [
             IioEventSpec::sum(IioEventKind::InboundWriteDwords, 0x83, 0x01, 0x00ff, 0x07),
             IioEventSpec::sum(IioEventKind::InboundReadDwords, 0x83, 0x04, 0x00ff, 0x07),
-            IioEventSpec::sum(IioEventKind::CompletionOccupancy, 0xd5, 0xff, 0x00ff, 0x07),
+            IioEventSpec::unused(),
             IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00),
         ],
     },
@@ -118,7 +126,7 @@ const SPR_IIO_EVENT_GROUPS: [IioEventGroup; 2] = [
                 0x00ff,
                 0x07,
             ),
-            IioEventSpec::sum(IioEventKind::CompletionInserts, 0xc2, 0x04, 0x00ff, 0x07),
+            IioEventSpec::unused(),
             IioEventSpec::sum(IioEventKind::Clockticks, 0x01, 0x00, 0x0000, 0x00),
         ],
     },
@@ -195,9 +203,6 @@ pub struct SprIioPciePortMetrics {
 pub struct SprIioScopeMetrics {
     #[serde(flatten)]
     pub scope: UncoreScope,
-    pub completion_inserts_per_second: f64,
-    pub completion_latency_seconds: f64,
-    pub completion_occupancy_entries: f64,
     pub frequency_hz: f64,
     pub stack: SprIioStack,
     pub inbound_read_bytes_per_second: f64,
@@ -212,10 +217,6 @@ impl SprIioScopeMetrics {
         measurements: &BTreeMap<IioEventKind, IioEventMeasurement>,
     ) -> Result<Self, String> {
         let clockticks = required_measurement(measurements, IioEventKind::Clockticks)?;
-        let completion_inserts =
-            required_measurement(measurements, IioEventKind::CompletionInserts)?;
-        let completion_occupancy =
-            required_measurement(measurements, IioEventKind::CompletionOccupancy)?;
         let inbound_read_dwords =
             required_measurement(measurements, IioEventKind::InboundReadDwords)?;
         let inbound_read_transactions =
@@ -227,16 +228,6 @@ impl SprIioScopeMetrics {
 
         Ok(Self {
             scope: stack_scope.scope,
-            completion_inserts_per_second: event_rate(completion_inserts),
-            completion_latency_seconds: completion_latency_seconds(
-                completion_occupancy,
-                completion_inserts,
-                clockticks,
-            ),
-            completion_occupancy_entries: ratio(
-                completion_occupancy.value,
-                completion_occupancy.ticks,
-            ),
             frequency_hz: frequency_hz(clockticks.value, clockticks.running),
             inbound_read_bytes_per_second: dwords_per_second(inbound_read_dwords),
             inbound_reads_per_second: event_rate(inbound_read_transactions),
@@ -395,9 +386,6 @@ impl IioScopeLabels {
 
 #[derive(Debug)]
 pub struct SprIioPrometheusMetrics {
-    completion_inserts_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    completion_latency_seconds: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
-    completion_occupancy_entries: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     frequency_hz: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     inbound_read_bytes_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
     inbound_reads_per_second: Family<IioScopeLabels, Gauge<f64, AtomicU64>>,
@@ -410,11 +398,6 @@ pub struct SprIioPrometheusMetrics {
 impl SprIioPrometheusMetrics {
     pub fn register(registry: &mut Registry) -> Self {
         let metrics = Self {
-            completion_inserts_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
-            ),
-            completion_latency_seconds: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
-            completion_occupancy_entries: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
-            ),
             frequency_hz: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(),
             inbound_read_bytes_per_second: Family::<IioScopeLabels, Gauge<f64, AtomicU64>>::default(
             ),
@@ -428,21 +411,6 @@ impl SprIioPrometheusMetrics {
                 Family::<IioPciePortLabels, Gauge<f64, AtomicU64>>::default(),
         };
 
-        registry.register(
-            "ocellus_iio_completion_inserts_per_second",
-            "Interval-derived IIO completion inserts per second",
-            metrics.completion_inserts_per_second.clone(),
-        );
-        registry.register(
-            "ocellus_iio_completion_latency_seconds",
-            "Interval-derived IIO completion residency latency in seconds",
-            metrics.completion_latency_seconds.clone(),
-        );
-        registry.register(
-            "ocellus_iio_completion_occupancy_entries",
-            "Average IIO completion occupancy in entries",
-            metrics.completion_occupancy_entries.clone(),
-        );
         registry.register(
             "ocellus_iio_frequency_hz",
             "Interval-derived IIO clock frequency in hertz",
@@ -486,15 +454,6 @@ impl SprIioPrometheusMetrics {
         for scope in metrics.scopes {
             let labels = IioScopeLabels::from_scope(scope.scope, scope.stack);
 
-            self.completion_inserts_per_second
-                .get_or_create(&labels)
-                .set(scope.completion_inserts_per_second);
-            self.completion_latency_seconds
-                .get_or_create(&labels)
-                .set(scope.completion_latency_seconds);
-            self.completion_occupancy_entries
-                .get_or_create(&labels)
-                .set(scope.completion_occupancy_entries);
             self.frequency_hz
                 .get_or_create(&labels)
                 .set(scope.frequency_hz);
@@ -620,13 +579,17 @@ impl IioUnit {
     fn program(self, group: IioEventGroup) -> Result<(), String> {
         let msr = Msr::open(self.cpu)?;
         for (counter_index, event) in group.events.into_iter().enumerate() {
-            let control = iio_counter_control(
-                event.event,
-                event.umask,
-                event.channel_mask,
-                event.function_class_mask,
-                true,
-            );
+            let control = if event.kind == IioEventKind::Unused {
+                0
+            } else {
+                iio_counter_control(
+                    event.event,
+                    event.umask,
+                    event.channel_mask,
+                    event.function_class_mask,
+                    true,
+                )
+            };
 
             msr.write(iio_control_offset(self.stack, counter_index), control)?;
         }
@@ -634,16 +597,15 @@ impl IioUnit {
         Ok(())
     }
 
-    fn read(self, group: IioEventGroup) -> Result<IioUnitReading, String> {
-        IioUnitReading::from_counters(
-            [
+    fn read(self) -> Result<IioUnitReading, String> {
+        Ok(IioUnitReading {
+            counters: [
                 self.read_counter(0).map(mask_iio_counter)?,
                 self.read_counter(1).map(mask_iio_counter)?,
                 self.read_counter(2).map(mask_iio_counter)?,
                 self.read_counter(3).map(mask_iio_counter)?,
             ],
-            group,
-        )
+        })
     }
 
     fn stack(self) -> SprIioStack {
@@ -666,42 +628,18 @@ impl IioUnit {
 #[derive(Clone, Copy, Debug)]
 struct IioUnitReading {
     counters: [u64; IIO_COUNTER_COUNT],
-    ticks: u64,
-}
-
-impl IioUnitReading {
-    // Occupancy and its clock must cover the same freeze/reset slice, so the
-    // ticks are the CLOCKTICKS counter of the same group. The free-running
-    // IOCLK counter holds an absolute value that includes time outside it.
-    fn from_counters(
-        counters: [u64; IIO_COUNTER_COUNT],
-        group: IioEventGroup,
-    ) -> Result<Self, String> {
-        let clock_index = group
-            .events
-            .iter()
-            .position(|event| event.kind == IioEventKind::Clockticks)
-            .ok_or_else(|| "IIO event group has no CLOCKTICKS counter".to_string())?;
-
-        Ok(Self {
-            counters,
-            ticks: counters[clock_index],
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct IioEventMeasurement {
     enabled: Duration,
     running: Duration,
-    ticks: u64,
     value: u64,
 }
 
 impl IioEventMeasurement {
-    fn add(&mut self, value: u64, ticks: u64, running: Duration) {
+    fn add(&mut self, value: u64, running: Duration) {
         self.running += running;
-        self.ticks += ticks;
         self.value += value;
     }
 }
@@ -735,20 +673,16 @@ impl IioMeasurementAccumulator {
         stack: SprIioStack,
         kind: IioEventKind,
         value: u64,
-        ticks: u64,
         measurement: IioMeasurement,
     ) {
         self.measurements
             .entry(IioStackScope { scope, stack })
             .or_default()
             .entry(kind)
-            .and_modify(|event_measurement| {
-                event_measurement.add(value, ticks, measurement.running)
-            })
+            .and_modify(|event_measurement| event_measurement.add(value, measurement.running))
             .or_insert(IioEventMeasurement {
                 enabled: measurement.enabled,
                 running: measurement.running,
-                ticks,
                 value,
             });
     }
@@ -831,18 +765,6 @@ fn event_rate(measurement: &IioEventMeasurement) -> f64 {
         scale_to_enabled(measurement.value, measurement.enabled, measurement.running),
         measurement.enabled,
     )
-}
-
-fn completion_latency_seconds(
-    occupancy: &IioEventMeasurement,
-    inserts: &IioEventMeasurement,
-    clockticks: &IioEventMeasurement,
-) -> f64 {
-    let occupancy = scale_to_enabled(occupancy.value, occupancy.enabled, occupancy.running);
-    let insert_count = scale_to_enabled(inserts.value, inserts.enabled, inserts.running);
-    let clockticks = scale_to_enabled(clockticks.value, clockticks.enabled, clockticks.running);
-
-    queue_residency_seconds(occupancy, insert_count, clockticks, inserts.enabled)
 }
 
 fn freeze_packages(packages: &[IioPackage]) -> Result<(), String> {
@@ -951,19 +873,20 @@ fn read_packages(
 ) -> Result<(), String> {
     for package in packages {
         for unit in &package.units {
-            let reading = unit.read(measurement.group)?;
+            let reading = unit.read()?;
 
             for counter_index in 0..IIO_COUNTER_COUNT {
                 let event = measurement.group.events[counter_index];
 
-                measurements.add(
-                    package.scope,
-                    unit.stack(),
-                    event.kind,
-                    reading.counters[counter_index],
-                    reading.ticks,
-                    measurement,
-                );
+                if event.kind != IioEventKind::Unused {
+                    measurements.add(
+                        package.scope,
+                        unit.stack(),
+                        event.kind,
+                        reading.counters[counter_index],
+                        measurement,
+                    );
+                }
             }
         }
     }
@@ -1030,13 +953,11 @@ mod tests {
             BTreeMap::from([(
                 test_stack_scope(scope, SPR_IIO_STACKS[0]),
                 BTreeMap::from([
-                    measurement(IioEventKind::Clockticks, 1_000, 1_000, 100),
-                    measurement(IioEventKind::CompletionInserts, 200, 1_000, 100),
-                    measurement(IioEventKind::CompletionOccupancy, 400, 1_000, 100),
-                    measurement(IioEventKind::InboundReadDwords, 300, 1_000, 100),
-                    measurement(IioEventKind::InboundReadTransactions, 30, 1_000, 100),
-                    measurement(IioEventKind::InboundWriteDwords, 500, 1_000, 100),
-                    measurement(IioEventKind::InboundWriteTransactions, 50, 1_000, 100),
+                    measurement(IioEventKind::Clockticks, 1_000, 100),
+                    measurement(IioEventKind::InboundReadDwords, 300, 100),
+                    measurement(IioEventKind::InboundReadTransactions, 30, 100),
+                    measurement(IioEventKind::InboundWriteDwords, 500, 100),
+                    measurement(IioEventKind::InboundWriteTransactions, 50, 100),
                 ]),
             )]),
             Vec::new(),
@@ -1044,9 +965,6 @@ mod tests {
         .unwrap();
 
         let scope_metrics = metrics.scopes[0];
-        assert_eq!(scope_metrics.completion_inserts_per_second, 2_000.0);
-        assert_eq!(scope_metrics.completion_latency_seconds, 0.0002);
-        assert_eq!(scope_metrics.completion_occupancy_entries, 0.4);
         assert_eq!(scope_metrics.frequency_hz, 10_000.0);
         assert_eq!(scope_metrics.inbound_read_bytes_per_second, 12_000.0);
         assert_eq!(scope_metrics.inbound_reads_per_second, 300.0);
@@ -1112,15 +1030,31 @@ mod tests {
     }
 
     #[test]
-    fn schedules_perfmon_experimental_spr_completion_occupancy_event() {
-        assert_eq!(
-            SPR_IIO_EVENT_GROUPS[0].events[2],
-            IioEventSpec::sum(IioEventKind::CompletionOccupancy, 0xd5, 0xff, 0x00ff, 0x07)
-        );
-        assert_eq!(
-            SPR_IIO_EVENT_GROUPS[1].events[2],
-            IioEventSpec::sum(IioEventKind::CompletionInserts, 0xc2, 0x04, 0x00ff, 0x07)
-        );
+    fn schedules_only_public_perfmon_spr_iio_events() {
+        // Event and umask of UNC_IIO_CLOCKTICKS,
+        // DATA_REQ_OF_CPU.MEM_WRITE/MEM_READ.ALL_PARTS and
+        // TXN_REQ_OF_CPU.MEM_WRITE/MEM_READ in sapphirerapids_uncore.json and
+        // emeraldrapids_uncore.json. Those files list TXN_REQ_OF_CPU only per
+        // part (channel masks 0x01 to 0x80); the default counts all parts
+        // (0xff). COMP_BUF_INSERTS (0xc2) and COMP_BUF_OCCUPANCY (0xd5) are
+        // only in the experimental files.
+        let public = [
+            (0x01, 0x00),
+            (0x83, 0x01),
+            (0x83, 0x04),
+            (0x84, 0x01),
+            (0x84, 0x04),
+        ];
+
+        for group in SPR_IIO_EVENT_GROUPS {
+            for event in group.events {
+                assert!(
+                    event.kind == IioEventKind::Unused
+                        || public.contains(&(event.event, event.umask)),
+                    "{event:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1129,28 +1063,6 @@ mod tests {
         assert_eq!(UNIT_FREEZE_AND_CONTROL_RESET, 0x101);
         assert_eq!(UNIT_FREEZE_AND_COUNTER_RESET, 0x201);
         assert_eq!(UNIT_UNFREEZE, 0x000);
-    }
-
-    #[test]
-    fn takes_spr_iio_ticks_from_the_group_clockticks_counter() {
-        for group in SPR_IIO_EVENT_GROUPS {
-            let clock_index = group
-                .events
-                .iter()
-                .position(|event| event.kind == IioEventKind::Clockticks)
-                .unwrap();
-            let mut counters = [100, 200, 400, 300];
-            counters[clock_index] = 1_000;
-
-            let reading = IioUnitReading::from_counters(counters, group).unwrap();
-
-            assert_eq!(reading.counters, counters);
-            assert_eq!(reading.ticks, 1_000);
-        }
-
-        let mut group = SPR_IIO_EVENT_GROUPS[0];
-        group.events[3] = group.events[0];
-        assert!(IioUnitReading::from_counters([0; IIO_COUNTER_COUNT], group).is_err());
     }
 
     #[test]
@@ -1164,7 +1076,6 @@ mod tests {
     fn measurement(
         kind: IioEventKind,
         value: u64,
-        ticks: u64,
         milliseconds: u64,
     ) -> (IioEventKind, IioEventMeasurement) {
         (
@@ -1172,7 +1083,6 @@ mod tests {
             IioEventMeasurement {
                 enabled: Duration::from_millis(milliseconds),
                 running: Duration::from_millis(milliseconds),
-                ticks,
                 value,
             },
         )

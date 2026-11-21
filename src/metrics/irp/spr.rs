@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -10,9 +10,14 @@ use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
 use crate::metrics::common::topology_label;
+use crate::metrics::uncore::config::{self, ConfigBox};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, PmuConfig, ProgrammedGroup, UncoreCounts,
+};
 
 const DEFAULT_MAX_SLICE: Duration = Duration::from_millis(100);
 const SPR_IRP_COUNTER_COUNT: usize = 2;
+const COUNTER_COUNT: usize = SPR_IRP_COUNTER_COUNT;
 const SPR_IRP_COUNTER_OFFSET: u64 = 0x0008;
 const SPR_IRP_COUNTER_WIDTH: u32 = 48;
 const SPR_IRP_CONTROL_OFFSET: u64 = 0x0002;
@@ -271,17 +276,90 @@ impl SprIrpMetrics {
 
 #[derive(Debug)]
 pub struct SprIrpCollector {
+    /// The PMU config counted instead of the default groups, with its counts
+    /// so far.
+    config: Option<CountAccumulator>,
     next_group: usize,
     packages: Vec<SprIrpPackage>,
     spec: SprIrpSpec,
 }
 
 impl SprIrpCollector {
+    /// The IRP stacks of each package that PMU configs can program.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        self.packages
+            .iter()
+            .map(|package| {
+                (
+                    package.scope.package_id as u16,
+                    package
+                        .units
+                        .iter()
+                        .map(|unit| unit.stack.id() as u16)
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        if let Some(config) = &config {
+            config::check_config(
+                config,
+                BoxType::Irp,
+                &self.config_units(),
+                COUNTER_COUNT,
+                false,
+            )?;
+        }
+
+        self.config = config.map(CountAccumulator::new);
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        if interval.is_zero() {
+            return Err(format!(
+                "{} IRP measure interval must be non-zero",
+                self.spec.name
+            ));
+        }
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "IRP has no PMU config to sample".to_string())?;
+        let packages = &self.packages;
+
+        config::sample_config(accumulator, interval, cycle, |package, unit| {
+            packages
+                .iter()
+                .filter(|candidate| candidate.scope.package_id as u16 == package)
+                .flat_map(|candidate| &candidate.units)
+                .find(|candidate| candidate.stack.id() as u16 == unit)
+                .copied()
+                .ok_or_else(|| format!("IRP stack {unit} of package {package} does not exist"))
+        })
+        .await
+    }
+
     pub fn new() -> Result<Self, String> {
         let packages = discover_packages(SPR_EMR_IRP_SPEC)?;
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
+            config: None,
             next_group: 0,
             packages,
             spec: SPR_EMR_IRP_SPEC,
@@ -561,6 +639,56 @@ impl SprIrpUnit {
 
     fn write_unit_control(self, value: u64) -> Result<(), String> {
         Msr::open(self.cpu)?.write(irp_unit_control_offset(self.spec, self.stack), value)
+    }
+}
+
+impl SprIrpUnit {
+    /// The MSR writes, as (address, value), that program config `group`:
+    /// freeze the stack, reset its controls and then its counters, then set
+    /// each counter control, 0 for unused counters. The controls take no
+    /// reset bit: the unit resets the counters.
+    fn config_writes(self, group: &ProgrammedGroup) -> Vec<(u64, u64)> {
+        let unit_control = irp_unit_control_offset(self.spec, self.stack);
+        let mut writes = vec![
+            (unit_control, u64::from(UNIT_FREEZE)),
+            (unit_control, u64::from(UNIT_FREEZE_AND_CONTROL_RESET)),
+            (unit_control, u64::from(UNIT_FREEZE_AND_COUNTER_RESET)),
+        ];
+        writes.extend(
+            config::general_controls(group, COUNTER_COUNT, 0)
+                .into_iter()
+                .enumerate()
+                .map(|(index, control)| {
+                    (irp_control_offset(self.spec, self.stack, index), control)
+                }),
+        );
+
+        writes
+    }
+}
+
+impl ConfigBox for SprIrpUnit {
+    fn program_group(&self, group: &ProgrammedGroup) -> Result<(), String> {
+        let msr = Msr::open(self.cpu)?;
+        for (address, value) in self.config_writes(group) {
+            msr.write(address, value)?;
+        }
+
+        Ok(())
+    }
+
+    fn freeze_box(&self) -> Result<(), String> {
+        self.freeze()
+    }
+
+    fn unfreeze_box(&self) -> Result<(), String> {
+        self.unfreeze()
+    }
+
+    fn read_slot(&self, slot: CounterSlot) -> Result<u64, String> {
+        let index = config::counter_index(slot, COUNTER_COUNT, false)?
+            .expect("IRP stacks have no fixed counter");
+        self.read_counter(index)
     }
 }
 
@@ -952,5 +1080,65 @@ mod tests {
 
         assert_eq!(event_spec.event, event);
         assert_eq!(event_spec.umask, umask);
+    }
+
+    fn config_collector() -> SprIrpCollector {
+        let scope = |package_id| SprUncoreScope {
+            die_group_id: None,
+            die_id: None,
+            package_id,
+        };
+        SprIrpCollector {
+            config: None,
+            next_group: 0,
+            packages: vec![
+                SprIrpPackage::new(0, scope(0), SPR_EMR_IRP_SPEC),
+                SprIrpPackage::new(56, scope(1), SPR_EMR_IRP_SPEC),
+            ],
+            spec: SPR_EMR_IRP_SPEC,
+        }
+    }
+
+    #[test]
+    fn programs_a_config_group_on_one_stack() {
+        // UNC_I_FAF_INSERTS as the spec programs it.
+        let group = config::fixtures::group(0, 0, &[11], &[(CounterSlot::General(0), 0x18)]);
+        let unit = SprIrpUnit {
+            cpu: 0,
+            spec: SPR_EMR_IRP_SPEC,
+            stack: SPR_IRP_STACKS[11],
+        };
+
+        assert_eq!(
+            unit.config_writes(&group),
+            [
+                (0x34b0, 0x001),
+                (0x34b0, 0x101),
+                (0x34b0, 0x201),
+                (0x34b2, 0x18),
+                (0x34b3, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn runs_irp_configs_on_all_stacks() {
+        for mut collector in [
+            crate::metrics::irp::IrpCollector::Spr(config_collector()),
+            crate::metrics::irp::IrpCollector::Emr(config_collector()),
+        ] {
+            config::fixtures::assert_runs_configs(
+                &mut collector,
+                BoxType::Irp,
+                (0..2).map(|package| (package, (0..12).collect())).collect(),
+                COUNTER_COUNT,
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn schedules_irp_config_groups() {
+        config::fixtures::assert_config_schedule(BoxType::Irp);
     }
 }

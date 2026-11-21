@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -11,12 +11,17 @@ use crate::metal;
 use crate::metal::msr::Msr;
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, topology_label};
+use crate::metrics::uncore::config::{self, ConfigBox};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, PmuConfig, ProgrammedGroup, UncoreCounts,
+};
 
 const COUNTER_ENABLE_BIT: u32 = 1 << 22;
 const COUNTER_OVERFLOW_ENABLE_BIT: u32 = 1 << 20;
 const COUNTER_RESET_BIT: u32 = 1 << 17;
 const DEFAULT_MAX_SLICE: Duration = Duration::from_millis(100);
 const ICX_IRP_COUNTER_COUNT: usize = 2;
+const COUNTER_COUNT: usize = ICX_IRP_COUNTER_COUNT;
 const ICX_IRP_COUNTER_OFFSET: u64 = 0x0001;
 const ICX_IRP_COUNTER_WIDTH: u32 = 48;
 const ICX_IRP_CONTROL_OFFSET: u64 = 0x0003;
@@ -310,12 +315,84 @@ impl IcxIrpMetrics {
 
 #[derive(Debug)]
 pub struct IcxIrpCollector {
+    /// The PMU config counted instead of the default groups, with its counts
+    /// so far.
+    config: Option<CountAccumulator>,
     next_group: usize,
     packages: Vec<IcxIrpPackage>,
     spec: IcxIrpSpec,
 }
 
 impl IcxIrpCollector {
+    /// The IRP stacks of each package that PMU configs can program.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        self.packages
+            .iter()
+            .map(|package| {
+                (
+                    package.scope.package_id as u16,
+                    package
+                        .units
+                        .iter()
+                        .map(|unit| unit.stack.id() as u16)
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        if let Some(config) = &config {
+            config::check_config(
+                config,
+                BoxType::Irp,
+                &self.config_units(),
+                COUNTER_COUNT,
+                false,
+            )?;
+        }
+
+        self.config = config.map(CountAccumulator::new);
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        if interval.is_zero() {
+            return Err(format!(
+                "{} IRP measure interval must be non-zero",
+                self.spec.name
+            ));
+        }
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "IRP has no PMU config to sample".to_string())?;
+        let packages = &self.packages;
+
+        config::sample_config(accumulator, interval, cycle, |package, unit| {
+            packages
+                .iter()
+                .filter(|candidate| candidate.scope.package_id as u16 == package)
+                .flat_map(|candidate| &candidate.units)
+                .find(|candidate| candidate.stack.id() as u16 == unit)
+                .copied()
+                .ok_or_else(|| format!("IRP stack {unit} of package {package} does not exist"))
+        })
+        .await
+    }
+
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         let model = architecture.intel_server_model();
         if !matches!(model, IntelServerCpuModel::IceLakeXeon) {
@@ -328,6 +405,7 @@ impl IcxIrpCollector {
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
+            config: None,
             next_group: 0,
             packages,
             spec: ICX_IRP_SPEC,
@@ -658,6 +736,53 @@ impl IcxIrpUnit {
 
     fn write_unit_control(self, value: u64) -> Result<(), String> {
         Msr::open(self.cpu)?.write(irp_unit_control_offset(self.spec, self.stack), value)
+    }
+}
+
+impl IcxIrpUnit {
+    /// The MSR writes, as (address, value), that program config `group`:
+    /// freeze and reset the stack, then set each counter control with the
+    /// reset bit, 0 for unused counters.
+    fn config_writes(self, group: &ProgrammedGroup) -> Vec<(u64, u64)> {
+        let mut writes = vec![(
+            irp_unit_control_offset(self.spec, self.stack),
+            u64::from(UNIT_FREEZE_AND_RESET),
+        )];
+        writes.extend(
+            config::general_controls(group, COUNTER_COUNT, u64::from(COUNTER_RESET_BIT))
+                .into_iter()
+                .enumerate()
+                .map(|(index, control)| {
+                    (irp_control_offset(self.spec, self.stack, index), control)
+                }),
+        );
+
+        writes
+    }
+}
+
+impl ConfigBox for IcxIrpUnit {
+    fn program_group(&self, group: &ProgrammedGroup) -> Result<(), String> {
+        let msr = Msr::open(self.cpu)?;
+        for (address, value) in self.config_writes(group) {
+            msr.write(address, value)?;
+        }
+
+        Ok(())
+    }
+
+    fn freeze_box(&self) -> Result<(), String> {
+        self.freeze()
+    }
+
+    fn unfreeze_box(&self) -> Result<(), String> {
+        self.unfreeze()
+    }
+
+    fn read_slot(&self, slot: CounterSlot) -> Result<u64, String> {
+        let index = config::counter_index(slot, COUNTER_COUNT, false)?
+            .expect("IRP stacks have no fixed counter");
+        self.read_counter(index)
     }
 }
 
@@ -1063,5 +1188,54 @@ mod tests {
 
         assert_eq!(event_spec.event, event);
         assert_eq!(event_spec.umask, umask);
+    }
+
+    fn config_collector() -> IcxIrpCollector {
+        let scope = |package_id| IcxUncoreScope {
+            die_group_id: None,
+            die_id: None,
+            package_id,
+        };
+        IcxIrpCollector {
+            config: None,
+            next_group: 0,
+            packages: vec![
+                IcxIrpPackage::new(0, scope(0), ICX_IRP_SPEC),
+                IcxIrpPackage::new(32, scope(1), ICX_IRP_SPEC),
+            ],
+            spec: ICX_IRP_SPEC,
+        }
+    }
+
+    #[test]
+    fn programs_a_config_group_on_one_stack() {
+        // UNC_I_COHERENT_OPS.PCITOM as the spec programs it.
+        let group = config::fixtures::group(0, 0, &[3], &[(CounterSlot::General(1), 0x0050_1010)]);
+        let unit = IcxIrpUnit {
+            cpu: 0,
+            spec: ICX_IRP_SPEC,
+            stack: ICX_IRP_STACKS[3],
+        };
+
+        assert_eq!(
+            unit.config_writes(&group),
+            [(0x0ada, 0x30103), (0x0add, 0), (0x0ade, 0x0052_1010)]
+        );
+    }
+
+    #[test]
+    fn runs_irp_configs_on_all_stacks() {
+        config::fixtures::assert_runs_configs(
+            &mut crate::metrics::irp::IrpCollector::Icx(config_collector()),
+            BoxType::Irp,
+            (0..2).map(|package| (package, (0..6).collect())).collect(),
+            COUNTER_COUNT,
+            false,
+        );
+    }
+
+    #[test]
+    fn schedules_irp_config_groups() {
+        config::fixtures::assert_config_schedule(BoxType::Irp);
     }
 }

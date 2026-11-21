@@ -47,6 +47,7 @@ struct Model {
     /// The `alias` label of the IMC fixed counter.
     imc_fixed_alias: &'static str,
     iio: BoxSpec,
+    irp: BoxSpec,
 }
 
 const ICX: Model = Model {
@@ -77,6 +78,13 @@ const ICX: Model = Model {
         general_counters: 4,
         event_counters: &counters::ICX_IIO,
         aliases: ICX_IIO_ALIASES,
+    },
+    irp: BoxSpec {
+        model: "Ice Lake-SP",
+        name: "IRP",
+        general_counters: 2,
+        event_counters: &counters::ICX_IRP,
+        aliases: ICX_IRP_ALIASES,
     },
 };
 
@@ -114,6 +122,13 @@ const fn spr(name: &'static str) -> Model {
             general_counters: 4,
             event_counters: &counters::SPR_IIO,
             aliases: SPR_IIO_ALIASES,
+        },
+        irp: BoxSpec {
+            model: name,
+            name: "IRP",
+            general_counters: 2,
+            event_counters: &counters::SPR_IRP,
+            aliases: SPR_IRP_ALIASES,
         },
     }
 }
@@ -424,6 +439,36 @@ const SPR_IIO_ALIASES: &[Alias] = &[
     },
 ];
 
+const ICX_IRP_ALIASES: &[Alias] = &[
+    // UNC_I_CLOCKTICKS
+    Alias::new("clockticks", 0x01, 0x00, &[]),
+    // UNC_I_FAF_INSERTS
+    Alias::new("faf_inserts", 0x18, 0x00, &[]),
+    // UNC_I_FAF_OCCUPANCY
+    Alias::new("faf_occupancy", 0x19, 0x00, &[]),
+    // UNC_I_COHERENT_OPS.PCITOM and .WBMTOI, its public events.
+    Alias::new(
+        "coherent_ops",
+        0x10,
+        0x00,
+        &[Param {
+            field: "op",
+            values: &[("pcitom", 0x10), ("wbmtoi", 0x40)],
+        }],
+    ),
+];
+
+/// Sapphire Rapids and Emerald Rapids list COHERENT_OPS events only as
+/// experimental.
+const SPR_IRP_ALIASES: &[Alias] = &[
+    // UNC_I_CLOCKTICKS
+    Alias::new("clockticks", 0x01, 0x00, &[]),
+    // UNC_I_FAF_INSERTS
+    Alias::new("faf_inserts", 0x18, 0x00, &[]),
+    // UNC_I_FAF_OCCUPANCY
+    Alias::new("faf_occupancy", 0x19, 0x00, &[]),
+];
+
 /// The register fields of one counter's event on these models. The IIO
 /// ch_mask is 12 bits wide here, so it replaces `base.ch_mask`.
 struct IcxEncoding {
@@ -465,15 +510,9 @@ fn program_group(
     let box_spec = match box_type {
         BoxType::Cha => &model.cha,
         BoxType::Iio => &model.iio,
+        BoxType::Irp => &model.irp,
         BoxType::Imc => &model.imc,
         BoxType::Ha => return Err(format!("{path}: {} has no ha boxes", model.name)),
-        _ => {
-            return Err(format!(
-                "{path}: {} {} configs are not supported",
-                model.name,
-                box_type.label()
-            ));
-        }
     };
     check_event_count(box_spec, group, path)?;
     for (field, given) in [
@@ -554,8 +593,9 @@ fn encoding(
     }
     let box_spec = match box_type {
         BoxType::Iio => &model.iio,
+        BoxType::Irp => &model.irp,
         BoxType::Imc => &model.imc,
-        _ => unreachable!("program_group takes no other box types"),
+        BoxType::Cha | BoxType::Ha => unreachable!("handled by the callers"),
     };
 
     let mut base = event_encoding(box_spec, event, path)?;
@@ -800,6 +840,7 @@ mod tests {
             units: BTreeMap::from([
                 (BoxType::Cha, packages(4)),
                 (BoxType::Iio, packages(6)),
+                (BoxType::Irp, packages(6)),
                 (BoxType::Imc, packages(8)),
             ]),
         }
@@ -849,7 +890,7 @@ mod tests {
     #[test]
     fn counter_tables_are_sorted_and_fit_the_boxes() {
         for (_, model) in MODELS {
-            let boxes = [&model.cha, &model.iio, &model.imc];
+            let boxes = [&model.cha, &model.iio, &model.irp, &model.imc];
             for box_spec in boxes {
                 let counters = box_spec.event_counters;
                 assert!(
@@ -1620,7 +1661,129 @@ mod tests {
     }
 
     #[test]
-    fn rejects_other_box_types_until_supported() {
+    fn spr_and_emr_take_comp_buf_as_raw_events_only() {
+        for model in [
+            IntelServerCpuModel::SapphireRapids,
+            IntelServerCpuModel::EmeraldRapids,
+        ] {
+            // UNC_IIO_COMP_BUF_INSERTS.CMPD.PART0, experimental.
+            let program = program(
+                model,
+                "iio",
+                json!({"events": [{"event": "0xc2", "umask": 3, "ch_mask": 1, "fc_mask": 4}]}),
+            );
+            assert_eq!(
+                program.groups[0].counters[0].control,
+                0xc2 | (0x03 << 8) | (1 << 36) | (4 << 48),
+                "{model:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn programs_irp_events_as_perfmon_lists_them() {
+        use IntelServerCpuModel::{EmeraldRapids, IceLakeXeon, SapphireRapids};
+
+        // (model, slot, request, perfmon event, event, umask)
+        let cases = [
+            (
+                IceLakeXeon,
+                0,
+                json!({"alias": "coherent_ops", "op": "pcitom"}),
+                "UNC_I_COHERENT_OPS.PCITOM",
+                0x10,
+                0x10,
+            ),
+            (
+                IceLakeXeon,
+                1,
+                json!({"alias": "faf_occupancy"}),
+                "UNC_I_FAF_OCCUPANCY",
+                0x19,
+                0x00,
+            ),
+            (
+                SapphireRapids,
+                1,
+                json!({"alias": "faf_inserts"}),
+                "UNC_I_FAF_INSERTS",
+                0x18,
+                0x00,
+            ),
+            (
+                EmeraldRapids,
+                0,
+                json!({"alias": "clockticks"}),
+                "UNC_I_CLOCKTICKS",
+                0x01,
+                0x00,
+            ),
+            (
+                SapphireRapids,
+                0,
+                json!({"event": "0x20", "umask": 1}),
+                "UNC_I_IRP_ALL.INBOUND_INSERTS",
+                0x20,
+                0x01,
+            ),
+        ];
+        for (model, slot, request, name, event, umask) in cases {
+            let mut events = vec![Value::Null; slot];
+            events.push(request);
+            let program = program(model, "irp", json!({ "events": events }));
+            let counter = &program.groups[0].counters[0];
+            assert_eq!(counter.slot, CounterSlot::General(slot as u8), "{name}");
+            assert_eq!(
+                counter.control,
+                perfmon_control(model, event, umask, 0),
+                "{model:?} {name}"
+            );
+            assert_eq!(
+                counter.labels.keys().collect::<Vec<_>>(),
+                ["alias", "event", "umask"],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_irp_requests() {
+        use IntelServerCpuModel::{IceLakeXeon, SapphireRapids};
+
+        let cases = [
+            (
+                IceLakeXeon,
+                json!({"events": [{"alias": "clockticks"}, null, {"alias": "clockticks"}]}),
+                "pmus.irp.groups[0].events: Ice Lake-SP IRP boxes have 2 general counters, got 3 events",
+            ),
+            (
+                SapphireRapids,
+                json!({"events": [{"alias": "coherent_ops", "op": "pcitom"}]}),
+                "pmus.irp.groups[0].events[0].alias: unknown Sapphire Rapids IRP alias \"coherent_ops\" (aliases: clockticks, faf_inserts, faf_occupancy)",
+            ),
+            (
+                IceLakeXeon,
+                json!({"events": [{"alias": "coherent_ops", "op": "drd"}]}),
+                "pmus.irp.groups[0].events[0].op: coherent_ops op must be one of pcitom, wbmtoi, got \"drd\"",
+            ),
+            (
+                IceLakeXeon,
+                json!({"events": [{"alias": "clockticks", "ch_mask": 1}]}),
+                "pmus.irp.groups[0].events[0].ch_mask: only IIO events take a ch_mask",
+            ),
+            (
+                SapphireRapids,
+                json!({"events": [{"event": "0x10", "umask": "0x10"}]}),
+                "pmus.irp.groups[0].events[0]: Intel lists no Sapphire Rapids IRP event 0x10",
+            ),
+        ];
+        for (model, group, expected) in cases {
+            assert_eq!(error(model, "irp", group.clone()), expected, "{group}");
+        }
+    }
+
+    #[test]
+    fn has_no_ha_boxes() {
         assert_eq!(
             error(IntelServerCpuModel::IceLakeXeon, "ha", json!({})),
             "pmus.ha: this host has no ha boxes"
@@ -1701,6 +1864,19 @@ mod tests {
                 3_259_434_963_336_868,
                 4_958_946_945_325_460,
                 4_958_946_945_325_460
+            ]
+        );
+
+        let pmus = json!({"irp": {"aggregate": "box", "groups": [{"events": [
+            {"alias": "faf_inserts"}, {"alias": "faf_occupancy"}
+        ]}]}});
+        let ids = MODELS.map(|(model, _)| configs(model, pmus.clone()).unwrap()[0].config_id);
+        assert_eq!(
+            ids,
+            [
+                4_901_404_150_064_695,
+                4_700_257_040_493_399,
+                4_700_257_040_493_399
             ]
         );
     }

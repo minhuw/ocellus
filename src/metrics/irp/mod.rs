@@ -106,25 +106,29 @@ impl ConfigurableCollector for IrpCollector {
 
     fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.config_units(),
             Self::Hsx(collector) => collector.config_units(),
+            Self::Icx(collector) => collector.config_units(),
             Self::Skx(collector) => collector.config_units(),
-            Self::Emr(_) | Self::Icx(_) | Self::Ivb(_) | Self::Snb(_) | Self::Spr(_) => {
-                BTreeMap::new()
-            }
+            Self::Ivb(_) | Self::Snb(_) => BTreeMap::new(),
         }
     }
 
     fn has_config(&self) -> bool {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.has_config(),
             Self::Hsx(collector) => collector.has_config(),
+            Self::Icx(collector) => collector.has_config(),
             Self::Skx(collector) => collector.has_config(),
-            Self::Emr(_) | Self::Icx(_) | Self::Ivb(_) | Self::Snb(_) | Self::Spr(_) => false,
+            Self::Ivb(_) | Self::Snb(_) => false,
         }
     }
 
     fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => collector.set_config(config),
             Self::Hsx(collector) => collector.set_config(config),
+            Self::Icx(collector) => collector.set_config(config),
             Self::Skx(collector) => collector.set_config(config),
             _ if config.is_none() => Ok(()),
             collector => Err(format!(
@@ -140,7 +144,11 @@ impl ConfigurableCollector for IrpCollector {
         cycle: u64,
     ) -> Result<UncoreCounts, String> {
         match self {
+            Self::Emr(collector) | Self::Spr(collector) => {
+                collector.sample_config(interval, cycle).await
+            }
             Self::Hsx(collector) => collector.sample_config(interval, cycle).await,
+            Self::Icx(collector) => collector.sample_config(interval, cycle).await,
             Self::Skx(collector) => collector.sample_config(interval, cycle).await,
             collector => Err(format!(
                 "PMU configs are not supported on {}",

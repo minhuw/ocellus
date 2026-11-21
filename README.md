@@ -91,10 +91,10 @@ place, and `event_info` carries only `filter0`. These encodings follow
 Intel's uncore guides (327043, 329468), the perfmon JSON and Linux, and have
 not been checked on hardware.
 
-Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha`, `imc`
-and `iio`. Their CHAs select requests in the umask_ext field of each counter's
-control rather than in filter registers, so groups take no `filter0` or
-`filter1`:
+Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha`, `imc`,
+`iio` and `irp`. Their CHAs select requests in the umask_ext field of each
+counter's control rather than in filter registers, so groups take no
+`filter0` or `filter1`:
 
 ```sh
 curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
@@ -127,6 +127,9 @@ curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
   (12 bits, control bits 36-47) and `fc_mask` (3 bits, 48-50) override an
   alias's masks. The unit id is the stack id: 0-5 on Ice Lake-SP, the
   discovered stacks of 0-11 on Sapphire/Emerald Rapids.
+- IRP aliases (2 counters): `clockticks`, `faf_inserts`, `faf_occupancy`,
+  and on Ice Lake-SP `coherent_ops` (`op` `pcitom` or `wbmtoi`). The unit id
+  is the stack id: 0-5 on Ice Lake-SP, 0-11 on Sapphire/Emerald Rapids.
 - Raw events take `event`, `umask` and, for CHA, `umask_ext` (Ice Lake-SP
   26 bits, Sapphire/Emerald Rapids 32 bits).
 - Aliases cover only events of Intel's public perfmon files
@@ -135,7 +138,9 @@ curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
   Rapids, are raw events only.
 - Encodings and the counters each event code may use come from Intel perfmon
   (ICX V1.30, SPR V1.39, EMR V1.23) and the Linux uncore driver; they are
-  checked against those files, not on hardware.
+  checked against those files, not on hardware. Events Intel lists only as
+  experimental, such as the Sapphire/Emerald Rapids IIO COMP_BUF events,
+  stay available as raw events.
 
 - `PUT /pmu-config` sets the configs of the box types it names and returns
   every other box type to its default groups. Once every affected collector

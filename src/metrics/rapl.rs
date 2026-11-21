@@ -359,18 +359,27 @@ fn available_domains(
     model: IntelServerCpuModel,
     leader: RaplLeader,
     package_energy_unit_joules: f64,
-) -> Result<Vec<RaplDomain>, String> {
+    read_msr: &mut impl FnMut(u32, u64) -> Result<u64, String>,
+) -> Vec<RaplDomain> {
     domain_specs()
         .into_iter()
-        .map(|spec| {
-            let energy_unit_joules =
-                domain_energy_unit_joules(model, spec.kind, package_energy_unit_joules);
+        .filter_map(|spec| {
+            if let Err(error) = read_msr(leader.cpu, spec.status_msr) {
+                eprintln!(
+                    "ocellus: leaving out RAPL {} domain of package {}: {error}",
+                    spec.kind.label(),
+                    leader.scope.package_id
+                );
+                return None;
+            }
 
-            Msr::open_readonly(leader.cpu)?.read(spec.status_msr)?;
-
-            Ok(RaplDomain {
+            Some(RaplDomain {
                 cpu: leader.cpu,
-                energy_unit_joules,
+                energy_unit_joules: domain_energy_unit_joules(
+                    model,
+                    spec.kind,
+                    package_energy_unit_joules,
+                ),
                 key: RaplDomainKey {
                     domain: spec.kind,
                     scope: leader.scope,
@@ -382,21 +391,31 @@ fn available_domains(
 }
 
 fn discover_domains(model: IntelServerCpuModel) -> Result<Vec<RaplDomain>, String> {
-    let leaders = rapl_leaders()?;
+    discover_domains_with(model, rapl_leaders()?, |cpu, address| {
+        Msr::open_readonly(cpu)?.read(address)
+    })
+}
+
+fn discover_domains_with(
+    model: IntelServerCpuModel,
+    leaders: Vec<RaplLeader>,
+    mut read_msr: impl FnMut(u32, u64) -> Result<u64, String>,
+) -> Result<Vec<RaplDomain>, String> {
     let mut domains = Vec::with_capacity(leaders.len());
 
     for leader in leaders {
-        let rapl_power_unit = Msr::open_readonly(leader.cpu)?.read(MSR_RAPL_POWER_UNIT)?;
+        let rapl_power_unit = read_msr(leader.cpu, MSR_RAPL_POWER_UNIT)?;
         let package_energy_unit_joules = energy_unit_joules(rapl_power_unit);
         domains.extend(available_domains(
             model,
             leader,
             package_energy_unit_joules,
-        )?);
+            &mut read_msr,
+        ));
     }
 
     if domains.is_empty() {
-        return Err("no CPU packages found for RAPL collection".to_string());
+        return Err("no readable RAPL domain on any CPU package".to_string());
     }
 
     Ok(domains)
@@ -497,6 +516,54 @@ mod tests {
     }
 
     #[test]
+    fn leaves_out_domains_whose_status_msr_is_unreadable() {
+        let leaders = vec![rapl_leader(0, 0), rapl_leader(24, 1)];
+        let domains =
+            discover_domains_with(IntelServerCpuModel::SkylakeXeon, leaders, |cpu, address| {
+                match address {
+                    MSR_RAPL_POWER_UNIT => Ok(14 << 8),
+                    MSR_PKG_ENERGY_STATUS => Ok(0),
+                    _ => Err(format!("failed to read MSR 0x{address:x} on CPU {cpu}")),
+                }
+            })
+            .expect("PKG domains are readable");
+
+        assert_eq!(
+            domains
+                .iter()
+                .map(|domain| (domain.key, domain.cpu, domain.status_msr))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    domain_key(RaplDomainKind::Package, 0, 0),
+                    0,
+                    MSR_PKG_ENERGY_STATUS
+                ),
+                (
+                    domain_key(RaplDomainKind::Package, 1, 0),
+                    24,
+                    MSR_PKG_ENERGY_STATUS
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn fails_when_no_domain_is_readable() {
+        let error = discover_domains_with(
+            IntelServerCpuModel::SkylakeXeon,
+            vec![rapl_leader(0, 0)],
+            |_, address| match address {
+                MSR_RAPL_POWER_UNIT => Ok(14 << 8),
+                _ => Err(format!("failed to read MSR 0x{address:x}")),
+            },
+        )
+        .expect_err("no RAPL domain is readable");
+
+        assert_eq!(error, "no readable RAPL domain on any CPU package");
+    }
+
+    #[test]
     fn computes_wrapping_energy_delta() {
         assert_eq!(wrapping_delta(u64::from(u32::MAX) - 4, 10), 15);
     }
@@ -532,6 +599,13 @@ mod tests {
         };
 
         assert_ne!(scope, domain_key(RaplDomainKind::Package, 0, 0).scope);
+    }
+
+    fn rapl_leader(cpu: u32, package_id: u32) -> RaplLeader {
+        RaplLeader {
+            cpu,
+            scope: domain_key(RaplDomainKind::Package, package_id, 0).scope,
+        }
     }
 
     fn domain_key(domain: RaplDomainKind, package_id: u32, die_id: u32) -> RaplDomainKey {

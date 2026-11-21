@@ -103,8 +103,9 @@ pub type EventLabels = BTreeMap<String, String>;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct ProgrammedCounter {
     pub slot: CounterSlot,
-    /// Control register value with the enable bit set and the reset bit
-    /// clear; the collector adds the reset bit when it programs the counter.
+    /// Control register value with the enable bit set, where the box has
+    /// one, and the reset bit clear; the collector resets the counter when it
+    /// programs it.
     pub control: u64,
     pub labels: EventLabels,
 }

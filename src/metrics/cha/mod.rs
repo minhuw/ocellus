@@ -830,7 +830,8 @@ impl ConfigurableCollector for ChaCollector {
             Self::Hsx(collector) => collector.config_units(),
             Self::Ivb(collector) | Self::Snb(collector) => collector.config_units(),
             Self::Skx(collector) => collector.config_units(),
-            Self::Icx(_) | Self::Emr(_) | Self::Spr(_) => BTreeMap::new(),
+            Self::Icx(collector) => collector.config_units(),
+            Self::Emr(collector) | Self::Spr(collector) => collector.config_units(),
         }
     }
 
@@ -839,7 +840,8 @@ impl ConfigurableCollector for ChaCollector {
             Self::Hsx(collector) => collector.has_config(),
             Self::Ivb(collector) | Self::Snb(collector) => collector.has_config(),
             Self::Skx(collector) => collector.has_config(),
-            Self::Icx(_) | Self::Emr(_) | Self::Spr(_) => false,
+            Self::Icx(collector) => collector.has_config(),
+            Self::Emr(collector) | Self::Spr(collector) => collector.has_config(),
         }
     }
 
@@ -847,12 +849,9 @@ impl ConfigurableCollector for ChaCollector {
         match self {
             Self::Hsx(collector) => collector.set_config(config),
             Self::Ivb(collector) | Self::Snb(collector) => collector.set_config(config),
+            Self::Icx(collector) => collector.set_config(config),
             Self::Skx(collector) => collector.set_config(config),
-            _ if config.is_none() => Ok(()),
-            collector => Err(format!(
-                "PMU configs are not supported on {}",
-                collector.architecture()
-            )),
+            Self::Emr(collector) | Self::Spr(collector) => collector.set_config(config),
         }
     }
 
@@ -866,26 +865,11 @@ impl ConfigurableCollector for ChaCollector {
             Self::Ivb(collector) | Self::Snb(collector) => {
                 collector.sample_config(interval, cycle).await
             }
+            Self::Icx(collector) => collector.sample_config(interval, cycle).await,
             Self::Skx(collector) => collector.sample_config(interval, cycle).await,
-            collector => Err(format!(
-                "PMU configs are not supported on {}",
-                collector.architecture()
-            )),
-        }
-    }
-}
-
-impl ChaCollector {
-    /// The architecture's name, for errors.
-    fn architecture(&self) -> &'static str {
-        match self {
-            Self::Hsx(_) => "Haswell-EP and Broadwell-EP",
-            Self::Icx(_) => "Ice Lake-SP",
-            Self::Ivb(_) => "Ivy Bridge-EP",
-            Self::Snb(_) => "Sandy Bridge-EP",
-            Self::Emr(_) => "Emerald Rapids",
-            Self::Spr(_) => "Sapphire Rapids",
-            Self::Skx(_) => "Skylake-SP",
+            Self::Emr(collector) | Self::Spr(collector) => {
+                collector.sample_config(interval, cycle).await
+            }
         }
     }
 }

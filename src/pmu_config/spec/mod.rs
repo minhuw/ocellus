@@ -2,6 +2,7 @@
 //! box type.
 
 mod hsx;
+mod icx;
 mod skx;
 mod snb;
 
@@ -180,6 +181,12 @@ struct EventRequest {
     kind: Option<String>,
     home: Option<String>,
     ring: Option<String>,
+    /// Raw umask_ext of an Ice Lake-SP, Sapphire Rapids or Emerald Rapids
+    /// CHA event.
+    umask_ext: Option<Number>,
+    /// Opcode name or raw opcode an Ice Lake-SP, Sapphire Rapids or Emerald
+    /// Rapids TOR alias matches.
+    opcode: Option<Token>,
     /// Counts only requests of the group's filter0 `tid`.
     #[serde(default)]
     tid_en: bool,
@@ -334,6 +341,9 @@ pub fn validate(
         IntelServerCpuModel::HaswellXeon | IntelServerCpuModel::BroadwellXeon => hsx::program_group,
         IntelServerCpuModel::SandyBridgeEp => snb::program_sandy_bridge_group,
         IntelServerCpuModel::IvyTown => snb::program_ivy_bridge_group,
+        IntelServerCpuModel::IceLakeXeon => icx::program_icx_group,
+        IntelServerCpuModel::SapphireRapids => icx::program_spr_group,
+        IntelServerCpuModel::EmeraldRapids => icx::program_emr_group,
         _ => return Err(format!("PMU configs are not supported on {model:?}")),
     };
 
@@ -622,6 +632,16 @@ fn event_encoding(
     event: &EventRequest,
     path: &str,
 ) -> Result<Encoding, String> {
+    if event.umask_ext.is_some() {
+        return Err(format!(
+            "{path}.umask_ext: only Ice Lake-SP, Sapphire Rapids and Emerald Rapids CHA events take a umask_ext"
+        ));
+    }
+    if event.opcode.is_some() {
+        return Err(format!(
+            "{path}.opcode: only Ice Lake-SP, Sapphire Rapids and Emerald Rapids TOR aliases take an opcode"
+        ));
+    }
     match (&event.alias, &event.event) {
         (Some(alias), None) => alias_encoding(box_spec, alias, event, path),
         (None, Some(code)) => raw_encoding(code, event, path),
@@ -1520,8 +1540,8 @@ mod tests {
         let request = parse(pmu("cha", clockticks())).unwrap();
 
         assert_eq!(
-            validate(request, &topology(), IntelServerCpuModel::IceLakeXeon).unwrap_err(),
-            "PMU configs are not supported on IceLakeXeon"
+            validate(request, &topology(), IntelServerCpuModel::KnightsLanding).unwrap_err(),
+            "PMU configs are not supported on KnightsLanding"
         );
     }
 

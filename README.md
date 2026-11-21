@@ -39,13 +39,13 @@ sudo ./result/bin/ocellus --daemon --listen 0.0.0.0:8080 --measure-interval-ms 1
 
 ## PMU configs
 
-On Skylake-SP, Cascade Lake, Sandy Bridge-EP, Ivy Bridge-EP, Haswell-EP and
-Broadwell-EP, daemon mode lets a client set uncore event groups at runtime.
-While a box type (`cha`, `iio`, `irp`, `imc`, `ha`) has a config, its
-collector counts the config's groups instead of its default ones, and
-`/metrics` exports raw counts cumulative since the config was set in place of
-the box type's default `ocellus_<box type>_*` (Haswell-EP/Broadwell-EP:
-`ocellus_haswell_<box type>_*`) metrics.
+On Skylake-SP, Cascade Lake, Sandy Bridge-EP, Ivy Bridge-EP, Haswell-EP,
+Broadwell-EP, Ice Lake-SP, Sapphire Rapids and Emerald Rapids, daemon mode lets
+a client set uncore event groups at runtime. While a box type (`cha`, `iio`,
+`irp`, `imc`, `ha`) has a config, its collector counts the config's groups
+instead of its default ones, and `/metrics` exports raw counts cumulative since
+the config was set in place of the box type's default `ocellus_<box type>_*`
+(Haswell-EP/Broadwell-EP: `ocellus_haswell_<box type>_*`) metrics.
 
 ```sh
 curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
@@ -91,6 +91,36 @@ place, and `event_info` carries only `filter0`. These encodings follow
 Intel's uncore guides (327043, 329468), the perfmon JSON and Linux, and have
 not been checked on hardware.
 
+Ice Lake-SP, Sapphire Rapids and Emerald Rapids take configs for `cha`. Their
+CHAs select requests in the umask_ext field of each counter's control rather
+than in filter registers, so groups take no `filter0` or `filter1`:
+
+```sh
+curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
+  "pmus": {"cha": {"groups": [{
+    "events": [{"alias": "tor_inserts", "source": "io", "result": "miss", "opcode": "ITOM"}]
+  }]}}
+}'
+```
+
+- CHA aliases: `clockticks`, `tor_inserts` and `tor_occupancy` (`source`
+  `ia`, `io` or `all`; `result` `hit`, `miss` or `all`; optional `opcode`),
+  `requests` (`op` as in UNC_CHA_REQUESTS.*, e.g. `reads_local`), and on Ice
+  Lake-SP only `llc_lookup` (`op` `data_read`), `llc_victims` and
+  `sf_eviction` (`state` `m`, `e` or `s`). An `opcode` is a name from Intel's
+  TOR event names (`DRD`, `RFO`, `ITOM`, `PCIRDCUR`, ...; the error lists the
+  model's names per source) or a raw 11-bit value, and needs source `ia` or
+  `io`; IA opcodes match before morphing, as every Intel IA opcode event does.
+- Raw events take `event`, `umask` and, for CHA, `umask_ext` (Ice Lake-SP
+  26 bits, Sapphire/Emerald Rapids 32 bits).
+- Aliases cover only events of Intel's public perfmon files
+  (`*_uncore.json`). Events only the experimental files list, such as every
+  LLC_LOOKUP, LLC_VICTIMS and SF_EVICTION event on Sapphire and Emerald
+  Rapids, are raw events only.
+- Encodings and the counters each event code may use come from Intel perfmon
+  (ICX V1.30, SPR V1.39, EMR V1.23) and the Linux uncore driver; they are
+  checked against those files, not on hardware.
+
 - `PUT /pmu-config` sets the configs of the box types it names and returns
   every other box type to its default groups. Once every affected collector
   has switched it replies `200` with
@@ -113,8 +143,9 @@ A config exports, from its first sample on:
   group the latest sample started with (see below).
 - `ocellus_uncore_event_info{config_id,box_type,package,group,slot,units,alias,event,umask,...} 1`:
   what each counter counts, with `filter0`/`filter1` for CHA (`filter0` only
-  on Sandy Bridge-EP), `ch_mask`/`fc_mask` for IIO, and `tid_en="1"` on the
-  CBo events of Sandy Bridge-EP to Broadwell-EP that set it.
+  on Sandy Bridge-EP; `umask_ext` instead on Ice Lake-SP, Sapphire Rapids and
+  Emerald Rapids), `ch_mask`/`fc_mask` for IIO, and `tid_en="1"` on the CBo
+  events of Sandy Bridge-EP to Broadwell-EP that set it.
 
 A delta of a box type's counts is valid only between two samples with equal
 `ocellus_uncore_config_id` and equal

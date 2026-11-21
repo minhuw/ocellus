@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, btree_map::Entry};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -19,9 +19,13 @@ use crate::metrics::cha::{
     scale_measurement_value,
 };
 use crate::metrics::common::topology_label;
+use crate::metrics::uncore::config::{self, ConfigBox};
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, frequency_hz, mask_counter, measurement_round_count,
     queue_residency_seconds, ratio, uncore_leaders,
+};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, PmuConfig, ProgrammedGroup, UncoreCounts,
 };
 
 const COUNTER_ENABLE_BIT: u64 = 1 << 22;
@@ -889,6 +893,9 @@ struct IcxChaTransactionScopeMetrics {
 #[derive(Debug)]
 pub struct IcxChaCollector {
     architecture: IcxChaArchitecture,
+    /// The PMU config counted instead of the default groups, with its counts
+    /// so far.
+    config: Option<CountAccumulator>,
     multiplex_mode: ChaMultiplexMode,
     next_group: usize,
     next_partition_offset: usize,
@@ -896,6 +903,74 @@ pub struct IcxChaCollector {
 }
 
 impl IcxChaCollector {
+    /// The CHA ids of each package that PMU configs can program.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        self.packages
+            .iter()
+            .map(|package| {
+                (
+                    package.scope.package_id as u16,
+                    package.units.iter().map(|unit| unit.id as u16).collect(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    ///
+    /// The default samples need no reset: they program every CHA they read
+    /// in every slice.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        if let Some(config) = &config {
+            config::check_config(
+                config,
+                BoxType::Cha,
+                &self.config_units(),
+                CHA_COUNTER_COUNT,
+                false,
+            )?;
+        }
+
+        self.config = config.map(CountAccumulator::new);
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        if interval.is_zero() {
+            return Err(format!(
+                "{} CHA measure interval must be non-zero",
+                self.architecture.name()
+            ));
+        }
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "CHA collector has no PMU config to sample".to_string())?;
+        let packages = &self.packages;
+
+        config::sample_config(accumulator, interval, cycle, |package, unit| {
+            packages
+                .iter()
+                .filter(|candidate| candidate.scope.package_id as u16 == package)
+                .flat_map(|candidate| &candidate.units)
+                .find(|candidate| candidate.id as u16 == unit)
+                .copied()
+                .ok_or_else(|| format!("CHA {unit} does not exist in package {package}"))
+        })
+        .await
+    }
+
     pub fn new(architecture: &Architecture) -> Result<Self, String> {
         let model = architecture.intel_server_model();
         let architecture = IcxChaArchitecture::Icx;
@@ -911,6 +986,7 @@ impl IcxChaCollector {
 
         Ok(Self {
             architecture,
+            config: None,
             multiplex_mode: ChaMultiplexMode::default(),
             next_group: 0,
             next_partition_offset: 0,
@@ -1113,6 +1189,55 @@ impl IcxChaUnit {
     fn probe_writable(self) -> Result<(), String> {
         self.freeze_and_reset()?;
         self.unfreeze()
+    }
+}
+
+impl IcxChaUnit {
+    /// The MSR writes, as (address, value), that program config `group`:
+    /// freeze and reset the unit, clear its filter, then set each counter
+    /// control with the reset bit, 0 for unused counters.
+    fn config_writes(self, group: &ProgrammedGroup) -> Vec<(u64, u64)> {
+        let architecture = self.architecture;
+        let mut writes = vec![
+            (
+                architecture.unit_control_offset(self.id),
+                ICX_UNIT_FREEZE_AND_RESET,
+            ),
+            (architecture.filter_offset(self.id), 0),
+        ];
+        writes.extend(
+            config::general_controls(group, CHA_COUNTER_COUNT, COUNTER_RESET_BIT)
+                .into_iter()
+                .enumerate()
+                .map(|(index, control)| (architecture.control_offset(self.id, index), control)),
+        );
+
+        writes
+    }
+}
+
+impl ConfigBox for IcxChaUnit {
+    fn program_group(&self, group: &ProgrammedGroup) -> Result<(), String> {
+        let msr = Msr::open(self.cpu)?;
+        for (address, value) in self.config_writes(group) {
+            msr.write(address, value)?;
+        }
+
+        Ok(())
+    }
+
+    fn freeze_box(&self) -> Result<(), String> {
+        self.freeze()
+    }
+
+    fn unfreeze_box(&self) -> Result<(), String> {
+        self.unfreeze()
+    }
+
+    fn read_slot(&self, slot: CounterSlot) -> Result<u64, String> {
+        let index = config::counter_index(slot, CHA_COUNTER_COUNT, false)?
+            .expect("CHAs have no fixed counter");
+        self.read_counter(index)
     }
 }
 
@@ -2637,5 +2762,85 @@ mod tests {
         assert_eq!(icx_cha_partition(1, slice, 8), 1);
         assert_eq!(icx_cha_partition(6, slice, 8), 3);
         assert_eq!(icx_cha_partition(7, slice, 8), 0);
+    }
+
+    fn config_collector() -> IcxChaCollector {
+        let package = |package_id, cpu| {
+            IcxChaPackage::new(
+                UncoreScope {
+                    die_group_id: None,
+                    die_id: None,
+                    package_id,
+                },
+                [0, 1, 5]
+                    .map(|id| IcxChaUnit {
+                        architecture: IcxChaArchitecture::Icx,
+                        cpu,
+                        id,
+                    })
+                    .to_vec(),
+            )
+        };
+
+        IcxChaCollector {
+            architecture: IcxChaArchitecture::Icx,
+            config: None,
+            multiplex_mode: ChaMultiplexMode::default(),
+            next_group: 0,
+            next_partition_offset: 0,
+            packages: vec![package(0, 0), package(1, 32)],
+        }
+    }
+
+    #[test]
+    fn programs_a_config_group_on_one_cha() {
+        // UNC_CHA_TOR_INSERTS.IA_HIT_DRD and UNC_CHA_CLOCKTICKS as the spec
+        // programs them.
+        let group = config::fixtures::group(
+            0,
+            0,
+            &[5],
+            &[
+                (CounterSlot::General(0), 0x00c8_17fd_0050_0135),
+                (CounterSlot::General(2), 0x0050_0000),
+            ],
+        );
+        let unit = IcxChaUnit {
+            architecture: IcxChaArchitecture::Icx,
+            cpu: 3,
+            id: 5,
+        };
+
+        assert_eq!(
+            unit.config_writes(&group),
+            [
+                (0x0e46, 0x10103),
+                (0x0e4b, 0),
+                (0x0e47, 0x00c8_17fd_0052_0135),
+                (0x0e48, 0),
+                (0x0e49, 0x0052_0000),
+                (0x0e4a, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn runs_cha_configs_on_discovered_chas() {
+        let units = BTreeMap::from([
+            (0, BTreeSet::from([0, 1, 5])),
+            (1, BTreeSet::from([0, 1, 5])),
+        ]);
+        config::fixtures::assert_runs_configs(
+            &mut crate::metrics::cha::ChaCollector::Icx(config_collector()),
+            BoxType::Cha,
+            units,
+            CHA_COUNTER_COUNT,
+            false,
+        );
+    }
+
+    #[test]
+    fn schedules_cha_config_groups() {
+        config::fixtures::assert_config_schedule(BoxType::Cha);
     }
 }

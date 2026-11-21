@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, btree_map::Entry};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -17,9 +17,13 @@ use crate::metrics::cha::{
     llc_victim_metrics, pci_location_for_cpu, required_measurement, scale_measurement_value,
 };
 use crate::metrics::common::topology_label;
+use crate::metrics::uncore::config::{self, ConfigBox};
 use crate::metrics::uncore::skx::{
     SKX_UNCORE_COUNTER_WIDTH, UncoreScope, frequency_hz, mask_counter, measurement_round_count,
     queue_residency_seconds, ratio, uncore_leaders,
+};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, PmuConfig, ProgrammedGroup, UncoreCounts,
 };
 
 const SPR_CHA_COUNT_DEVICE_ID: u16 = 0x325b;
@@ -736,6 +740,9 @@ struct SprChaTransactionScopeMetrics {
 
 #[derive(Debug)]
 pub struct SprChaCollector {
+    /// The PMU config counted instead of the default groups, with its counts
+    /// so far.
+    config: Option<CountAccumulator>,
     multiplex_mode: ChaMultiplexMode,
     next_group: usize,
     next_partition_offset: usize,
@@ -743,11 +750,79 @@ pub struct SprChaCollector {
 }
 
 impl SprChaCollector {
+    /// The CHA ids of each package that PMU configs can program.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        self.packages
+            .iter()
+            .map(|package| {
+                (
+                    package.scope.package_id as u16,
+                    package.units.iter().map(|unit| unit.id as u16).collect(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    ///
+    /// The default samples need no reset: they program every CHA they read
+    /// in every slice.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        if let Some(config) = &config {
+            config::check_config(
+                config,
+                BoxType::Cha,
+                &self.config_units(),
+                CHA_COUNTER_COUNT,
+                false,
+            )?;
+        }
+
+        self.config = config.map(CountAccumulator::new);
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        if interval.is_zero() {
+            return Err(format!(
+                "{SPR_EMR_CHA_NAME} CHA measure interval must be non-zero"
+            ));
+        }
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| "CHA collector has no PMU config to sample".to_string())?;
+        let packages = &self.packages;
+
+        config::sample_config(accumulator, interval, cycle, |package, unit| {
+            packages
+                .iter()
+                .filter(|candidate| candidate.scope.package_id as u16 == package)
+                .flat_map(|candidate| &candidate.units)
+                .find(|candidate| candidate.id as u16 == unit)
+                .copied()
+                .ok_or_else(|| format!("CHA {unit} does not exist in package {package}"))
+        })
+        .await
+    }
+
     pub fn new() -> Result<Self, String> {
         let packages = discover_packages()?;
         probe_writable_msrs(&packages)?;
 
         Ok(Self {
+            config: None,
             multiplex_mode: ChaMultiplexMode::default(),
             next_group: 0,
             next_partition_offset: 0,
@@ -942,6 +1017,60 @@ impl SprChaUnit {
     fn probe_writable(self) -> Result<(), String> {
         self.freeze_and_reset()?;
         self.unfreeze()
+    }
+}
+
+impl SprChaUnit {
+    /// The MSR writes, as (address, value), that program config `group`:
+    /// freeze the unit, reset its controls and then its counters, clear its
+    /// filter, then set each counter control, 0 for unused counters. The
+    /// controls take no reset bit: the unit resets the counters.
+    fn config_writes(self, group: &ProgrammedGroup) -> Vec<(u64, u64)> {
+        let unit_control = spr_cha_unit_control_offset(self.id);
+        let mut writes = vec![
+            (
+                unit_control,
+                SPR_UNIT_FREEZE_BIT | SPR_UNIT_CONTROL_RESET_BIT,
+            ),
+            (
+                unit_control,
+                SPR_UNIT_FREEZE_BIT | SPR_UNIT_COUNTER_RESET_BIT,
+            ),
+            (spr_cha_filter_offset(self.id), 0),
+        ];
+        writes.extend(
+            config::general_controls(group, CHA_COUNTER_COUNT, 0)
+                .into_iter()
+                .enumerate()
+                .map(|(index, control)| (spr_cha_control_offset(self.id, index), control)),
+        );
+
+        writes
+    }
+}
+
+impl ConfigBox for SprChaUnit {
+    fn program_group(&self, group: &ProgrammedGroup) -> Result<(), String> {
+        let msr = Msr::open(self.cpu)?;
+        for (address, value) in self.config_writes(group) {
+            msr.write(address, value)?;
+        }
+
+        Ok(())
+    }
+
+    fn freeze_box(&self) -> Result<(), String> {
+        self.freeze()
+    }
+
+    fn unfreeze_box(&self) -> Result<(), String> {
+        self.unfreeze()
+    }
+
+    fn read_slot(&self, slot: CounterSlot) -> Result<u64, String> {
+        let index = config::counter_index(slot, CHA_COUNTER_COUNT, false)?
+            .expect("CHAs have no fixed counter");
+        self.read_counter(index)
     }
 }
 
@@ -2470,5 +2599,77 @@ mod tests {
         assert_eq!(spr_cha_partition(1, slice, 8), 1);
         assert_eq!(spr_cha_partition(6, slice, 8), 3);
         assert_eq!(spr_cha_partition(7, slice, 8), 0);
+    }
+
+    fn config_collector() -> SprChaCollector {
+        let package = |package_id, cpu| {
+            SprChaPackage::new(
+                UncoreScope {
+                    die_group_id: None,
+                    die_id: None,
+                    package_id,
+                },
+                [0, 2, 59].map(|id| SprChaUnit { cpu, id }).to_vec(),
+            )
+        };
+
+        SprChaCollector {
+            config: None,
+            multiplex_mode: ChaMultiplexMode::default(),
+            next_group: 0,
+            next_partition_offset: 0,
+            packages: vec![package(0, 0), package(1, 56)],
+        }
+    }
+
+    #[test]
+    fn programs_a_config_group_on_one_cha() {
+        // UNC_CHA_TOR_INSERTS.IO_MISS_ITOM as the spec programs it.
+        let group = config::fixtures::group(
+            0,
+            0,
+            &[59],
+            &[(CounterSlot::General(1), 0x00cc_43fe_0000_0435)],
+        );
+        let unit = SprChaUnit { cpu: 3, id: 59 };
+
+        assert_eq!(
+            unit.config_writes(&group),
+            [
+                (0x23b0, 0x101),
+                (0x23b0, 0x201),
+                (0x23be, 0),
+                (0x23b2, 0),
+                (0x23b3, 0x00cc_43fe_0000_0435),
+                (0x23b4, 0),
+                (0x23b5, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn runs_cha_configs_on_discovered_chas() {
+        let units = BTreeMap::from([
+            (0, BTreeSet::from([0, 2, 59])),
+            (1, BTreeSet::from([0, 2, 59])),
+        ]);
+        for collector in [
+            crate::metrics::cha::ChaCollector::Spr(config_collector()),
+            crate::metrics::cha::ChaCollector::Emr(config_collector()),
+        ] {
+            let mut collector = collector;
+            config::fixtures::assert_runs_configs(
+                &mut collector,
+                BoxType::Cha,
+                units.clone(),
+                CHA_COUNTER_COUNT,
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn schedules_cha_config_groups() {
+        config::fixtures::assert_config_schedule(BoxType::Cha);
     }
 }

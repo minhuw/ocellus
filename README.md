@@ -79,15 +79,17 @@ traffic or both see all of it. Until item 10 has run, count with
 `"aggregate": "box"` or one set's `units`; with `"aggregate": "sum"` a
 group on both sets counts the box's traffic twice if both sets see all of it.
 
-Sandy Bridge-EP and Ivy Bridge-EP take configs for `cha` (the CBo boxes) in
-the Haswell-EP shape. PCIe requests carry thread id 0x1e, which only the
-Sandy Bridge-EP guide documents. Sandy Bridge-EP's TOR events have no
-`local` or `remote` home and its filters no `nc` or `isoc`. It has one CBo
-filter register: a group's `filter0` fields (`tid`, `states`) and `filter1`
-fields (`opcodes`, `nid`) both fill it, each filter's `raw` gives its own
-fields' bits in place, and `event_info` carries only `filter0`. These
-encodings follow Intel's uncore guides (327043, 329468), the perfmon JSON
-and Linux, and have not been checked on hardware.
+Sandy Bridge-EP and Ivy Bridge-EP take configs for `cha` (the CBo boxes)
+and `imc` in the Haswell-EP shape. An IMC unit is the channel's index in its
+package, 0-3 on Sandy Bridge-EP and 0-7 on Ivy Bridge-EP, and `"fixed": true`
+adds DCLK. PCIe requests carry thread id 0x1e, which only the Sandy Bridge-EP
+guide documents. Sandy Bridge-EP's TOR events have no `local` or `remote`
+home and its filters no `nc` or `isoc`. It has one CBo filter register: a
+group's `filter0` fields (`tid`, `states`) and `filter1` fields (`opcodes`,
+`nid`) both fill it, each filter's `raw` gives its own fields' bits in
+place, and `event_info` carries only `filter0`. These encodings follow
+Intel's uncore guides (327043, 329468), the perfmon JSON and Linux, and have
+not been checked on hardware.
 
 - `PUT /pmu-config` sets the configs of the box types it names and returns
   every other box type to its default groups. Once every affected collector

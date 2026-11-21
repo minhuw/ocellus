@@ -8,7 +8,9 @@
 //! all events of a `Unit` and `EventCode`. The guides (327043, 329468) give
 //! the same counters for the events they list. Linux's
 //! `snbep_uncore_cbox_constraints`, which Ivy Bridge-EP shares, agrees on
-//! every event code both list.
+//! every CBo event code both list, and constrains no iMC event. Neither file
+//! has an event for the iMC fixed counter (MC_CHy_PCI_PMON_FIXED_CTR, DCLK),
+//! which is not a general counter.
 
 /// Sandy Bridge-EP unit CBO.
 pub(super) const SNB_CBO: [(u8, u8); 25] = [
@@ -66,4 +68,82 @@ pub(super) const IVB_CBO: [(u8, u8); 25] = [
     (0x37, 0b0011),
     (0x39, 0b0011),
     (0x3c, 0b0011),
+];
+
+/// Sandy Bridge-EP unit iMC.
+pub(super) const SNB_IMC: [(u8, u8); 25] = [
+    (0x00, 0b1111),
+    (0x01, 0b1111),
+    (0x02, 0b1111),
+    (0x04, 0b1111),
+    (0x05, 0b1111),
+    (0x06, 0b1111),
+    (0x07, 0b1111),
+    (0x08, 0b1111),
+    (0x09, 0b1111),
+    (0x10, 0b1111),
+    (0x11, 0b1111),
+    (0x12, 0b1111),
+    (0x20, 0b1111),
+    (0x21, 0b1111),
+    (0x22, 0b1111),
+    (0x23, 0b1111),
+    (0x24, 0b1111),
+    (0x41, 0b1111),
+    (0x43, 0b1111),
+    (0x80, 0b1111),
+    (0x81, 0b1111),
+    (0x83, 0b1111),
+    (0x84, 0b1111),
+    (0x85, 0b1111),
+    (0x86, 0b1111),
+];
+
+/// Ivy Bridge-EP unit iMC.
+pub(super) const IVB_IMC: [(u8, u8); 45] = [
+    (0x00, 0b1111),
+    (0x01, 0b1111),
+    (0x02, 0b1111),
+    (0x04, 0b1111),
+    (0x05, 0b1111),
+    (0x06, 0b1111),
+    (0x07, 0b1111),
+    (0x08, 0b1111),
+    (0x09, 0b1111),
+    (0x10, 0b1111),
+    (0x11, 0b1111),
+    (0x20, 0b1111),
+    (0x21, 0b1111),
+    (0x22, 0b1111),
+    (0x23, 0b1111),
+    (0x24, 0b1111),
+    (0x41, 0b1111),
+    (0x42, 0b1111),
+    (0x43, 0b1111),
+    (0x83, 0b1111),
+    (0x84, 0b1111),
+    (0x85, 0b1111),
+    (0x86, 0b1111),
+    (0x90, 0b1111),
+    (0x91, 0b1111),
+    (0xa0, 0b1111),
+    (0xa1, 0b1111),
+    (0xb0, 0b1111),
+    (0xb1, 0b1111),
+    (0xb2, 0b1111),
+    (0xb3, 0b1111),
+    (0xb4, 0b1111),
+    (0xb5, 0b1111),
+    (0xb6, 0b1111),
+    (0xb7, 0b1111),
+    (0xb8, 0b1111),
+    (0xb9, 0b1111),
+    (0xba, 0b1111),
+    (0xbb, 0b1111),
+    (0xbc, 0b1111),
+    (0xbd, 0b1111),
+    (0xbe, 0b1111),
+    (0xbf, 0b1111),
+    (0xc0, 0b1111),
+    (0xc1, 0b1111),
 ];

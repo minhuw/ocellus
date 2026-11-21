@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,11 @@ use crate::metal;
 use crate::metal::pci::{PciBus, PciDevice, PciDeviceSpec, PciVendorDevice};
 use crate::metal::topology::{CpuTopology, TopologyLevelKind};
 use crate::metrics::common::{BYTES_PER_CACHE_LINE, DEFAULT_MAX_SLICE};
+use crate::metrics::uncore::hsx::{self, ConfigReading};
+use crate::pmu_config::types::{
+    BoxType, CountAccumulator, CounterSlot, PmuConfig, ProgrammedBoxType, ProgrammedGroup,
+    UncoreCounts,
+};
 
 const COUNTER_ENABLE_BIT: u32 = 1 << 22;
 const COUNTER_OVERFLOW_ENABLE_BIT: u32 = 1 << 20;
@@ -294,6 +299,7 @@ impl SnbImcMetrics {
 pub struct SnbImcCollector {
     architecture: SnbImcArchitecture,
     channels: Vec<SnbImcChannel>,
+    config: Option<CountAccumulator>,
     next_group: usize,
 }
 
@@ -307,6 +313,7 @@ impl SnbImcCollector {
         Ok(Self {
             architecture,
             channels: discover_channels(architecture)?,
+            config: None,
             next_group: 0,
         })
     }
@@ -369,6 +376,94 @@ impl SnbImcCollector {
         }
 
         slices
+    }
+}
+
+impl SnbImcCollector {
+    /// The IMC channels of each package that PMU configs can program.
+    /// Unit id: the channel's index in the model's IMC channel table, 0..=3
+    /// on Sandy Bridge-EP and 0..=7 on Ivy Bridge-EP.
+    pub fn config_units(&self) -> BTreeMap<u16, BTreeSet<u16>> {
+        hsx::unit_map(self.channels.iter().map(SnbImcChannel::config_unit))
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    /// Counts `config`'s groups from the next sample on, or the default
+    /// groups for `None`. Counts restart from 0.
+    pub fn set_config(&mut self, config: Option<PmuConfig>) -> Result<(), String> {
+        // The default sample resets every channel, which clears its controls,
+        // and programs its group and DCLK, on every slice.
+        let Some(config) = config else {
+            self.config = None;
+            return Ok(());
+        };
+        check_config(self.architecture, &config.program, &self.config_units())?;
+        self.config = Some(CountAccumulator::new(config));
+
+        Ok(())
+    }
+
+    /// Samples the set config for `interval`; `cycle` sets the group temporal
+    /// groups start from. Its counts are cumulative since the config was set.
+    /// Channels in none of the config's groups stay untouched.
+    pub async fn sample_config(
+        &mut self,
+        interval: Duration,
+        cycle: u64,
+    ) -> Result<UncoreCounts, String> {
+        let name = self.architecture.name();
+        let accumulator = self
+            .config
+            .as_mut()
+            .ok_or_else(|| format!("no PMU config is set for {name} IMC"))?;
+        if interval.is_zero() {
+            return Err(format!("{name} IMC measure interval must be non-zero"));
+        }
+        let ids = self
+            .channels
+            .iter()
+            .map(SnbImcChannel::config_unit)
+            .collect::<Vec<_>>();
+        let program = accumulator.config().program.clone();
+
+        for slice in hsx::config_schedule(&program, interval, cycle) {
+            let targets = hsx::slice_units(&ids, &program, &slice)?;
+            for &(channel, group) in &targets {
+                for (offset, value) in
+                    config_unit_writes(self.architecture, &program.groups[group])?
+                {
+                    self.channels[channel].device.write_u32(offset, value)?;
+                }
+            }
+
+            let started_at = Instant::now();
+            for &(channel, _) in &targets {
+                self.channels[channel].unfreeze()?;
+            }
+            tokio::time::sleep(slice.duration).await;
+            for &(channel, _) in &targets {
+                self.channels[channel].freeze()?;
+            }
+            let running = started_at.elapsed();
+
+            let mut readings = Vec::with_capacity(targets.len());
+            for &(channel, group) in &targets {
+                let group = &program.groups[group];
+                let (package, id) = ids[channel];
+                readings.push(ConfigReading {
+                    package,
+                    unit: id,
+                    group: group.index,
+                    counters: self.channels[channel].read_config_counters(group)?,
+                });
+            }
+            hsx::fold_readings(accumulator, &readings, running)?;
+        }
+
+        Ok(accumulator.counts())
     }
 }
 
@@ -516,6 +611,8 @@ impl SnbImcScopeLabels {
 struct SnbImcChannel {
     architecture: SnbImcArchitecture,
     device: PciDevice,
+    /// Index in the model's IMC channel table.
+    id: u16,
     scope: SnbImcScope,
 }
 
@@ -524,8 +621,31 @@ impl SnbImcChannel {
         Ok(Self {
             architecture: spec.architecture,
             device: PciDevice::open(spec.location)?,
+            id: spec.id,
             scope: spec.scope,
         })
+    }
+
+    /// The channel's package and unit id in PMU configs.
+    fn config_unit(&self) -> (u16, u16) {
+        (self.scope.package_id as u16, self.id)
+    }
+
+    /// The raw values of `group`'s counters.
+    fn read_config_counters(
+        &self,
+        group: &ProgrammedGroup,
+    ) -> Result<Vec<(CounterSlot, u64)>, String> {
+        group
+            .counters
+            .iter()
+            .map(|counter| {
+                let (_, offset) = config_slot_offsets(counter.slot)?;
+                let value =
+                    hsx::read_counter_dwords(offset, |offset| self.device.read_u32(offset))?;
+                Ok((counter.slot, value))
+            })
+            .collect()
     }
 
     fn freeze_and_reset(&self) -> Result<(), String> {
@@ -592,6 +712,7 @@ struct SnbImcChannelReading {
 #[derive(Clone, Copy, Debug)]
 struct SnbImcChannelSpec {
     architecture: SnbImcArchitecture,
+    id: u16,
     location: metal::pci::PciLocation,
     scope: SnbImcScope,
 }
@@ -804,7 +925,7 @@ fn discover_channel_specs(
                 .find(|device| device.location == location)
                 .copied()
                 .ok_or_else(|| format!("failed to resolve device id for {location}"))?;
-            channel_specs
+            let id = channel_specs
                 .iter()
                 .position(|spec| matches_spec(device, spec))
                 .ok_or_else(|| {
@@ -813,6 +934,7 @@ fn discover_channel_specs(
 
             channels.push(SnbImcChannelSpec {
                 architecture,
+                id: id as u16,
                 location,
                 scope: bus_scope.scope,
             });
@@ -976,6 +1098,106 @@ fn imc_scopes() -> Result<Vec<SnbImcScope>, String> {
     Ok(scopes.into_keys().collect())
 }
 
+/// Errs for a program the channels in `units` cannot count.
+fn check_config(
+    architecture: SnbImcArchitecture,
+    program: &ProgrammedBoxType,
+    units: &BTreeMap<u16, BTreeSet<u16>>,
+) -> Result<(), String> {
+    if program.box_type != BoxType::Imc {
+        return Err(format!(
+            "{} IMC cannot count a {} config",
+            architecture.name(),
+            program.box_type.label()
+        ));
+    }
+
+    for group in &program.groups {
+        if group.filters.is_some() {
+            return Err(format!(
+                "IMC config group {} has filters, which IMC channels do not have",
+                group.index
+            ));
+        }
+        for (package, group_units) in &group.units {
+            let host_units = units.get(package).ok_or_else(|| {
+                format!(
+                    "IMC config group {} runs on package {package}, which has no IMC channels on this host",
+                    group.index
+                )
+            })?;
+            if let Some(unit) = group_units.difference(host_units).next() {
+                return Err(format!(
+                    "IMC config group {} runs on channel {unit} of package {package}, which this host does not have",
+                    group.index
+                ));
+            }
+        }
+        config_unit_writes(architecture, group)?;
+    }
+
+    Ok(())
+}
+
+/// The (offset, value) writes that program one channel for `group`: freeze
+/// and reset the channel as the default groups do, then reset and enable
+/// each counter of the group, and write 0 to the controls of the others,
+/// DCLK included.
+fn config_unit_writes(
+    architecture: SnbImcArchitecture,
+    group: &ProgrammedGroup,
+) -> Result<Vec<(u64, u32)>, String> {
+    let mut controls = SNB_IMC_CTL_OFFSETS
+        .into_iter()
+        .chain([SNB_IMC_DCLK_CTL_OFFSET])
+        .map(|offset| (offset, 0))
+        .collect::<BTreeMap<u64, u32>>();
+
+    for counter in &group.counters {
+        let (offset, _) = config_slot_offsets(counter.slot)
+            .map_err(|error| format!("IMC config group {}: {error}", group.index))?;
+        let control = u32::try_from(counter.control).map_err(|_| {
+            format!(
+                "IMC config group {} slot {} control 0x{:x} does not fit in 32 bits",
+                group.index,
+                counter.slot.label(),
+                counter.control
+            )
+        })?;
+        let reset = match counter.slot {
+            CounterSlot::General(_) => COUNTER_RESET_BIT,
+            CounterSlot::Fixed => FIXED_COUNTER_RESET_BIT,
+        };
+        controls.insert(offset, control | reset);
+    }
+
+    Ok([(
+        SNB_IMC_UNIT_CTL_OFFSET,
+        architecture.unit_freeze_and_reset(),
+    )]
+    .into_iter()
+    .chain(controls)
+    .collect())
+}
+
+/// The control and counter offsets of a counter slot.
+fn config_slot_offsets(slot: CounterSlot) -> Result<(u64, u64), String> {
+    let offsets = match slot {
+        CounterSlot::General(index) => SNB_IMC_CTL_OFFSETS
+            .get(usize::from(index))
+            .zip(SNB_IMC_CTR_OFFSETS.get(usize::from(index)))
+            .map(|(&control, &counter)| (control, counter)),
+        CounterSlot::Fixed => Some((SNB_IMC_DCLK_CTL_OFFSET, SNB_IMC_DCLK_CTR_OFFSET)),
+    };
+
+    offsets.ok_or_else(|| {
+        format!(
+            "Sandy/Ivy Bridge-EP IMC channels have no counter slot {}",
+            slot.label()
+        )
+    })
+}
+
 fn program_channels(channels: &[SnbImcChannel], group: SnbImcEventGroup) -> Result<(), String> {
     for channel in channels {
         channel.freeze_and_reset()?;
@@ -1130,7 +1352,12 @@ fn scale_to_enabled(value: u64, enabled: Duration, running: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+    use crate::metrics::ConfigurableCollector;
+    use crate::metrics::uncore::hsx::config_fixtures::*;
+    use crate::pmu_config::types::{ChaFilters, CountUnit, Grouping, PmuTopology};
 
     #[test]
     fn computes_snb_imc_metrics() {
@@ -1325,6 +1552,7 @@ mod tests {
                     group: 0,
                 },
             ),
+            id: 0,
             scope: test_scope(),
         };
 
@@ -1428,10 +1656,394 @@ mod tests {
         slices.into_iter().map(|slice| slice.group).collect()
     }
 
+    /// Every default group, as a config request by raw event with the fixed
+    /// counter, validates to the controls the default collector programs,
+    /// less the overflow enable (bit 20, reserved on Sandy Bridge-EP) it
+    /// adds, and writes the same registers.
+    #[test]
+    fn config_mode_programs_the_default_groups_alike() {
+        for (architecture, model) in [
+            (SnbImcArchitecture::Snb, IntelServerCpuModel::SandyBridgeEp),
+            (SnbImcArchitecture::Ivb, IntelServerCpuModel::IvyTown),
+        ] {
+            for &group in architecture.event_groups() {
+                let events = group
+                    .events
+                    .map(|event| {
+                        event
+                            .kind
+                            .map(|_| json!({"event": event.event, "umask": event.umask}))
+                    })
+                    .to_vec();
+                let request: crate::pmu_config::spec::PmuConfigRequest =
+                    serde_json::from_value(json!({"pmus": {"imc": {"groups": [
+                        {"events": events, "fixed": true}
+                    ]}}}))
+                    .unwrap();
+                let topology = PmuTopology {
+                    units: BTreeMap::from([(
+                        BoxType::Imc,
+                        BTreeMap::from([(0, BTreeSet::from([0]))]),
+                    )]),
+                };
+                let mut configs =
+                    crate::pmu_config::spec::validate(request, &topology, model).unwrap();
+                let programmed = configs.remove(0).program.groups.remove(0);
+
+                let mut expected = vec![(
+                    SNB_IMC_UNIT_CTL_OFFSET,
+                    architecture.unit_freeze_and_reset(),
+                )];
+                expected.extend(group.events.into_iter().enumerate().map(|(index, event)| {
+                    let control = match event.kind {
+                        Some(_) => {
+                            counter_control(event.event, event.umask) & !COUNTER_OVERFLOW_ENABLE_BIT
+                        }
+                        None => 0,
+                    };
+                    (SNB_IMC_CTL_OFFSETS[index], control)
+                }));
+                expected.push((SNB_IMC_DCLK_CTL_OFFSET, FIXED_COUNTER_RESET_AND_ENABLE));
+                assert_eq!(
+                    config_unit_writes(architecture, &programmed).unwrap(),
+                    expected,
+                    "{architecture:?} {group:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn programs_two_general_counters_and_dclk_on_each_model() {
+        let group = config_group(
+            0,
+            vec![
+                config_counter(CounterSlot::General(0), 0x40_0304),
+                config_counter(CounterSlot::General(3), 0x40_0c04),
+                config_counter(CounterSlot::Fixed, 0x40_0000),
+            ],
+            BTreeMap::from([(1, BTreeSet::from([3]))]),
+        );
+        let controls = [
+            (0xd8, 0x42_0304),
+            (0xdc, 0),
+            (0xe0, 0),
+            (0xe4, 0x42_0c04),
+            (0xf0, 0x48_0000),
+        ];
+
+        // Sandy Bridge-EP keeps the freeze enable bit 16 set.
+        for (architecture, unit_control) in [
+            (SnbImcArchitecture::Snb, 0x1_0103),
+            (SnbImcArchitecture::Ivb, 0x103),
+        ] {
+            let mut expected = vec![(0xf4, unit_control)];
+            expected.extend(controls);
+            assert_eq!(
+                config_unit_writes(architecture, &group).unwrap(),
+                expected,
+                "{architecture:?}"
+            );
+        }
+
+        let without_fixed = config_group(
+            0,
+            vec![config_counter(CounterSlot::General(1), 0x40_0304)],
+            BTreeMap::from([(0, BTreeSet::from([0]))]),
+        );
+        assert_eq!(
+            config_unit_writes(SnbImcArchitecture::Ivb, &without_fixed).unwrap(),
+            vec![
+                (0xf4, 0x103),
+                (0xd8, 0),
+                (0xdc, 0x42_0304),
+                (0xe0, 0),
+                (0xe4, 0),
+                (0xf0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn numbers_channels_by_their_index_in_the_channel_table() {
+        let mut collector = test_collector(SnbImcArchitecture::Ivb);
+        collector.channels = [(0, 0), (0, 1), (0, 3), (1, 0), (1, 7)]
+            .into_iter()
+            .map(|(package, id)| test_channel(SnbImcArchitecture::Ivb, package, id, &[0; 0x100]))
+            .collect();
+
+        assert_eq!(
+            collector.config_units(),
+            BTreeMap::from([(0, BTreeSet::from([0, 1, 3])), (1, BTreeSet::from([0, 7]))])
+        );
+        // The table order is Linux's: IVB MC0 channels 0-3 are D16:F4, F5,
+        // F0 and F1.
+        let id = |device, function| {
+            IVB_IMC_CHANNELS
+                .iter()
+                .position(|spec| (spec.device, spec.function) == (device, function))
+        };
+        assert_eq!(
+            [id(16, 4), id(16, 0), id(30, 4), id(30, 1)],
+            [Some(0), Some(2), Some(4), Some(7)]
+        );
+    }
+
+    #[test]
+    fn rejects_configs_imc_channels_cannot_count() {
+        let host = BTreeMap::from([(0, BTreeSet::from([0, 1, 3])), (1, (0..4).collect())]);
+        let valid = || {
+            config_program(
+                BoxType::Imc,
+                Grouping::Fixed,
+                vec![config_group(
+                    0,
+                    vec![
+                        config_counter(CounterSlot::General(3), 0x40_0304),
+                        config_counter(CounterSlot::Fixed, 0x40_0000),
+                    ],
+                    BTreeMap::from([(0, BTreeSet::from([0, 3])), (1, BTreeSet::from([2]))]),
+                )],
+            )
+        };
+        check_config(SnbImcArchitecture::Snb, &valid(), &host).unwrap();
+
+        let mut cha = valid();
+        cha.box_type = BoxType::Cha;
+        let mut package = valid();
+        package.groups[0].units.insert(2, BTreeSet::from([0]));
+        let mut channel = valid();
+        channel.groups[0].units.insert(0, BTreeSet::from([2]));
+        let mut slot = valid();
+        slot.groups[0]
+            .counters
+            .push(config_counter(CounterSlot::General(4), 0x40_0304));
+        let mut control = valid();
+        control.groups[0].counters[0].control = 1 << 32;
+        let mut filters = valid();
+        filters.groups[0].filters = Some(ChaFilters {
+            filter0: 0,
+            filter1: 0,
+        });
+
+        for (program, error) in [
+            (cha, "Sandy Bridge-EP IMC cannot count a cha config"),
+            (
+                package,
+                "IMC config group 0 runs on package 2, which has no IMC channels on this host",
+            ),
+            (
+                channel,
+                "IMC config group 0 runs on channel 2 of package 0, which this host does not have",
+            ),
+            (
+                slot,
+                "IMC config group 0: Sandy/Ivy Bridge-EP IMC channels have no counter slot 4",
+            ),
+            (
+                control,
+                "IMC config group 0 slot 3 control 0x100000000 does not fit in 32 bits",
+            ),
+            (
+                filters,
+                "IMC config group 0 has filters, which IMC channels do not have",
+            ),
+        ] {
+            assert_eq!(
+                check_config(SnbImcArchitecture::Snb, &program, &host),
+                Err(error.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn counts_a_config_on_its_channels_only() {
+        for (architecture, frozen) in [
+            (SnbImcArchitecture::Snb, 0x1_0100),
+            (SnbImcArchitecture::Ivb, 0x100),
+        ] {
+            let mut collector = test_collector(architecture);
+            collector.channels = vec![
+                test_channel(architecture, 1, 0, &test_config_space()),
+                test_channel(architecture, 1, 3, &test_config_space()),
+            ];
+            collector
+                .set_config(Some(config(dclk_and_cas_program())))
+                .unwrap();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            for (cas, dclk) in [(5, 1_000), (10, 2_000)] {
+                let counts = runtime
+                    .block_on(collector.sample_config(Duration::from_millis(1), 0))
+                    .unwrap();
+                assert_eq!(
+                    count_values(&counts),
+                    vec![
+                        (1, CountUnit::Box(3), CounterSlot::General(0), cas),
+                        (1, CountUnit::Box(3), CounterSlot::Fixed, dclk),
+                    ]
+                );
+                assert!(counts.running[0].seconds >= 0.001);
+            }
+
+            let registers = |channel: &SnbImcChannel| {
+                [0xf4, 0xd8, 0xdc, 0xe0, 0xe4, 0xf0]
+                    .map(|offset| channel.device.read_u32(offset).unwrap())
+            };
+            // Channel 3 ends frozen, with the group's controls; channel 0 is
+            // in no group and keeps what it had.
+            assert_eq!(
+                registers(&collector.channels[1]),
+                [frozen, 0x42_0304, 0, 0, 0, 0x48_0000]
+            );
+            assert_eq!(
+                registers(&collector.channels[0]),
+                [0, 0, 0x40_0001, 0x40_0001, 0x40_0001, 0]
+            );
+        }
+    }
+
+    #[test]
+    fn restarts_counts_when_the_config_changes() {
+        let mut collector = test_collector(SnbImcArchitecture::Snb);
+        collector.channels = vec![test_channel(
+            SnbImcArchitecture::Snb,
+            1,
+            3,
+            &test_config_space(),
+        )];
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let sample = |collector: &mut SnbImcCollector| {
+            runtime
+                .block_on(collector.sample_config(Duration::from_millis(1), 0))
+                .unwrap()
+        };
+        let cas = |counts: &UncoreCounts| count_values(counts)[0].3;
+
+        collector
+            .set_config(Some(config(dclk_and_cas_program())))
+            .unwrap();
+        sample(&mut collector);
+        assert_eq!(cas(&sample(&mut collector)), 10);
+
+        // An invalid config leaves the current one and its counts alone.
+        let mut elsewhere = dclk_and_cas_program();
+        elsewhere.groups[0].units = BTreeMap::from([(1, BTreeSet::from([2]))]);
+        assert!(collector.set_config(Some(config(elsewhere))).is_err());
+        assert_eq!(cas(&sample(&mut collector)), 15);
+
+        // Setting a config, even the same one again, restarts its counts.
+        collector
+            .set_config(Some(config(dclk_and_cas_program())))
+            .unwrap();
+        let restarted = collector.config.as_ref().unwrap().counts();
+        assert!(count_values(&restarted).iter().all(|count| count.3 == 0));
+        assert_eq!(cas(&sample(&mut collector)), 5);
+
+        collector.set_config(None).unwrap();
+        assert!(!collector.has_config());
+        assert_eq!(
+            runtime.block_on(collector.sample_config(Duration::from_millis(1), 0)),
+            Err("no PMU config is set for Sandy Bridge-EP IMC".to_string())
+        );
+    }
+
+    #[test]
+    fn routes_configs_through_the_imc_dispatcher() {
+        for architecture in [SnbImcArchitecture::Snb, SnbImcArchitecture::Ivb] {
+            let mut snb = test_collector(architecture);
+            snb.channels = vec![test_channel(architecture, 1, 3, &test_config_space())];
+            let mut collector = match architecture {
+                SnbImcArchitecture::Snb => super::super::ImcCollector::Snb(snb),
+                SnbImcArchitecture::Ivb => super::super::ImcCollector::Ivb(snb),
+            };
+
+            assert_eq!(
+                ConfigurableCollector::config_units(&collector),
+                BTreeMap::from([(1, BTreeSet::from([3]))])
+            );
+            collector
+                .set_config(Some(config(dclk_and_cas_program())))
+                .unwrap();
+            assert!(collector.has_config());
+            collector.set_config(None).unwrap();
+            assert!(!collector.has_config());
+        }
+    }
+
+    /// CAS reads on counter 0 and DCLK, on channel 3 of package 1.
+    fn dclk_and_cas_program() -> ProgrammedBoxType {
+        config_program(
+            BoxType::Imc,
+            Grouping::Fixed,
+            vec![config_group(
+                0,
+                vec![
+                    config_counter(CounterSlot::General(0), 0x40_0304),
+                    config_counter(CounterSlot::Fixed, 0x40_0000),
+                ],
+                BTreeMap::from([(1, BTreeSet::from([3]))]),
+            )],
+        )
+    }
+
+    /// A channel's config space whose counter 0 holds 5 above bit 48 junk,
+    /// DCLK 1000, and controls 1-3 a stale event.
+    fn test_config_space() -> [u8; 0x100] {
+        let mut config_space = [0_u8; 0x100];
+        config_space[0xa0..0xa8].copy_from_slice(&((0xabcd_u64 << 48) | 5).to_le_bytes());
+        config_space[0xd0..0xd8].copy_from_slice(&1_000_u64.to_le_bytes());
+        for offset in [0xdc, 0xe0, 0xe4] {
+            config_space[offset..offset + 4].copy_from_slice(&0x40_0001_u32.to_le_bytes());
+        }
+        config_space
+    }
+
+    /// A channel whose config space is a temporary file holding
+    /// `config_space`.
+    fn test_channel(
+        architecture: SnbImcArchitecture,
+        package_id: u32,
+        id: u16,
+        config_space: &[u8],
+    ) -> SnbImcChannel {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "ocellus-snb-imc-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, config_space).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        SnbImcChannel {
+            architecture,
+            device: PciDevice::from_file(
+                file,
+                metal::pci::PciLocation {
+                    bus: 0,
+                    device: 0,
+                    function: 0,
+                    group: 0,
+                },
+            ),
+            id,
+            scope: SnbImcScope { package_id },
+        }
+    }
+
     fn test_collector(architecture: SnbImcArchitecture) -> SnbImcCollector {
         SnbImcCollector {
             architecture,
             channels: Vec::new(),
+            config: None,
             next_group: 0,
         }
     }

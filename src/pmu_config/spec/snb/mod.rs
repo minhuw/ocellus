@@ -1,7 +1,7 @@
 //! Sandy Bridge-EP and Ivy Bridge-EP encodings of PMU config requests for
-//! the CBo (`cha`) boxes. The models lay out the CBo filters differently:
-//! Sandy Bridge-EP has one filter register, Ivy Bridge-EP a FILTER0 and a
-//! FILTER1 like Haswell-EP.
+//! the CBo (`cha`) and IMC boxes. The models lay out the CBo filters
+//! differently: Sandy Bridge-EP has one filter register, Ivy Bridge-EP a
+//! FILTER0 and a FILTER1 like Haswell-EP.
 //!
 //! [SNB] is Intel's Xeon E5-2600 uncore performance monitoring guide
 //! (327043-001), [IVB] the Xeon E5-2600 v2 and E7 v2 one (329468-001); the
@@ -19,9 +19,14 @@ use crate::pmu_config::types::{BoxType, ChaFilters, CounterSlot, EventLabels, Pr
 
 /// Cn_MSR_PMON_CTL ([SNB] Table 2-10, [IVB] Table 2-14): ev_sel [7:0],
 /// umask [15:8], tid_en 19, en 22, and bits 21:20 "Reserved; SW must write
-/// to 0", which configs leave 0.
+/// to 0", which configs leave 0. MC_CHy_PCI_PMON_CTL ([SNB] Table 2-61,
+/// [IVB] Table 2-75) has no tid_en and the same enable bit; configs leave
+/// its overflow enable (bit 20 on Ivy Bridge-EP, reserved on Sandy
+/// Bridge-EP) 0.
 const COUNTER_TID_ENABLE: u64 = 1 << 19;
 const COUNTER_ENABLE: u64 = 1 << 22;
+/// MC_CHy_PCI_PMON_FIXED_CTL.en ([SNB] Table 2-62, [IVB] Table 2-76).
+const FIXED_COUNTER_ENABLE: u64 = 1 << 22;
 
 const OPCODE_MAX: u64 = 0x1ff;
 
@@ -36,10 +41,11 @@ const LLC_VICTIMS_EVENT: u8 = 0x37;
 const TOR_OPCODE_UMASK: u8 = 0x01;
 const NID_UMASK: u8 = 0x40;
 
-/// What sets the CBo configs of the two models apart.
+/// What sets the configs of the two models apart.
 struct Model {
     name: &'static str,
     cbo: BoxSpec,
+    imc: BoxSpec,
     filters: FilterLayout,
     /// IDI opcodes by name, from the model's guide.
     opcodes: &'static [(&'static str, u16)],
@@ -98,6 +104,13 @@ const SANDY_BRIDGE: Model = Model {
         event_counters: &counters::SNB_CBO,
         aliases: SNB_CBO_ALIASES,
     },
+    imc: BoxSpec {
+        model: SNB_MODEL,
+        name: "IMC",
+        general_counters: 4,
+        event_counters: &counters::SNB_IMC,
+        aliases: SNB_IMC_ALIASES,
+    },
     // Cn_MSR_PMON_BOX_FILTER ([SNB] Table 2-12): tid [4:0], nid [17:10],
     // state [22:18], opc [31:23]; bits 9:5 are reserved. Linux's
     // snbep_cbox_filter_mask has the same fields.
@@ -126,6 +139,13 @@ const IVY_BRIDGE: Model = Model {
         general_counters: 4,
         event_counters: &counters::IVB_CBO,
         aliases: IVB_CBO_ALIASES,
+    },
+    imc: BoxSpec {
+        model: IVB_MODEL,
+        name: "IMC",
+        general_counters: 4,
+        event_counters: &counters::IVB_IMC,
+        aliases: IVB_IMC_ALIASES,
     },
     // Cn_MSR_PMON_BOX_FILTER0 ([IVB] Table 2-16): tid [4:0], state [22:17];
     // bits 16:5 are reserved. Cn_MSR_PMON_BOX_FILTER1 (Table 2-17): nid
@@ -276,6 +296,49 @@ const IVB_CBO_ALIASES: &[Alias] = &[
     Alias::new("llc_victims", LLC_VICTIMS_EVENT, 0x00, &[LLC_VICTIM_STATES]),
 ];
 
+/// UNC_M_CAS_COUNT.* ([SNB] Table 2-66, [IVB] Table 2-80)
+const CAS_COUNT_OPS: Param = Param {
+    field: "op",
+    values: &[("rd", 0x03), ("wr", 0x0c), ("all", 0x0f)],
+};
+
+// The RPQ and WPQ events of [SNB] Table 2-64 and the JSON.
+const SNB_IMC_ALIASES: &[Alias] = &[
+    Alias::new("cas_count", 0x04, 0x00, &[CAS_COUNT_OPS]),
+    // UNC_M_RPQ_INSERTS
+    Alias::new("rpq_inserts", 0x10, 0x00, &[]),
+    // UNC_M_RPQ_CYCLES_NE
+    Alias::new("rpq_cycles_ne", 0x11, 0x00, &[]),
+    // UNC_M_RPQ_CYCLES_FULL
+    Alias::new("rpq_cycles_full", 0x12, 0x00, &[]),
+    // UNC_M_WPQ_INSERTS
+    Alias::new("wpq_inserts", 0x20, 0x00, &[]),
+    // UNC_M_WPQ_CYCLES_NE
+    Alias::new("wpq_cycles_ne", 0x21, 0x00, &[]),
+    // UNC_M_WPQ_CYCLES_FULL
+    Alias::new("wpq_cycles_full", 0x22, 0x00, &[]),
+    // UNC_M_RPQ_OCCUPANCY
+    Alias::new("rpq_occupancy", 0x80, 0x00, &[]),
+    // UNC_M_WPQ_OCCUPANCY
+    Alias::new("wpq_occupancy", 0x81, 0x00, &[]),
+];
+
+// [IVB] section 2.5.6 and the JSON list neither RPQ_CYCLES_FULL (0x12) nor
+// the occupancy events 0x80 and 0x81.
+const IVB_IMC_ALIASES: &[Alias] = &[
+    Alias::new("cas_count", 0x04, 0x00, &[CAS_COUNT_OPS]),
+    // UNC_M_RPQ_INSERTS
+    Alias::new("rpq_inserts", 0x10, 0x00, &[]),
+    // UNC_M_RPQ_CYCLES_NE
+    Alias::new("rpq_cycles_ne", 0x11, 0x00, &[]),
+    // UNC_M_WPQ_INSERTS
+    Alias::new("wpq_inserts", 0x20, 0x00, &[]),
+    // UNC_M_WPQ_CYCLES_NE
+    Alias::new("wpq_cycles_ne", 0x21, 0x00, &[]),
+    // UNC_M_WPQ_CYCLES_FULL
+    Alias::new("wpq_cycles_full", 0x22, 0x00, &[]),
+];
+
 /// The filter state bits by name ([SNB] Table 2-12, [IVB] Table 2-16: I
 /// 0x01, S 0x02, E 0x04, M 0x08, F 0x10), which the default CBo collector
 /// programs too. Ivy Bridge-EP's sixth bit (0x20, M' in the JSON) takes a
@@ -368,19 +431,34 @@ fn program_group(
     group: &GroupRequest,
     path: &str,
 ) -> Result<GroupProgram, String> {
-    if box_type != BoxType::Cha {
+    let snb_box = match box_type {
+        BoxType::Cha => &model.cbo,
+        BoxType::Imc => &model.imc,
+        BoxType::Iio | BoxType::Irp | BoxType::Ha => {
+            return Err(format!(
+                "{path}: PMU configs do not support {} on {}",
+                box_type.label(),
+                model.name
+            ));
+        }
+    };
+    check_event_count(snb_box, group, path)?;
+    let filters = if box_type == BoxType::Cha {
+        Some(cbo_filters(model, group, path)?)
+    } else {
+        for (field, given) in [
+            ("filter0", group.filter0.is_some()),
+            ("filter1", group.filter1.is_some()),
+        ] {
+            if given {
+                return Err(format!("{path}.{field}: only CBo groups take filters"));
+            }
+        }
+        None
+    };
+    if group.fixed && box_type != BoxType::Imc {
         return Err(format!(
-            "{path}: PMU configs do not support {} on {}",
-            box_type.label(),
-            model.name
-        ));
-    }
-    let cbo = &model.cbo;
-    check_event_count(cbo, group, path)?;
-    let filters = cbo_filters(model, group, path)?;
-    if group.fixed {
-        return Err(format!(
-            "{path}.fixed: {} CBo boxes have no fixed counter",
+            "{path}.fixed: only IMC boxes have a fixed counter on {}",
             model.name
         ));
     }
@@ -393,17 +471,22 @@ fn program_group(
             continue;
         };
         let event_path = format!("{path}.events[{slot}]");
-        let encoding = encoding(model, event, &event_path)?;
-        check_counter(cbo, &encoding, slot, &event_path)?;
-        check_cbo_event(model, &encoding, filters, &event_path)?;
-        opcode_used |= is_tor(encoding.event) && encoding.umask & TOR_OPCODE_UMASK != 0;
+        let encoding = encoding(model, snb_box, event, &event_path)?;
+        check_counter(snb_box, &encoding, slot, &event_path)?;
+        if let Some(filters) = filters {
+            check_cbo_event(model, &encoding, filters, &event_path)?;
+            opcode_used |= is_tor(encoding.event) && encoding.umask & TOR_OPCODE_UMASK != 0;
+        }
         if event.tid_en {
-            if !filters.tid {
-                return Err(format!(
-                    "{event_path}.tid_en: the group's filter0 sets no tid"
-                ));
+            match filters {
+                None => return Err(format!("{event_path}.tid_en: only CBo events take tid_en")),
+                Some(filters) if !filters.tid => {
+                    return Err(format!(
+                        "{event_path}.tid_en: the group's filter0 sets no tid"
+                    ));
+                }
+                Some(_) => tid_used = true,
             }
-            tid_used = true;
         }
         counters.push(ProgrammedCounter {
             slot: CounterSlot::General(slot as u8),
@@ -411,26 +494,41 @@ fn program_group(
             labels: labels(model, &encoding, event.tid_en, filters),
         });
     }
-    if filters.tid && !tid_used {
-        return Err(format!(
-            "{path}.filter0: sets a tid, but no event sets tid_en"
-        ));
+    if let Some(filters) = filters {
+        if filters.tid && !tid_used {
+            return Err(format!(
+                "{path}.filter0: sets a tid, but no event sets tid_en"
+            ));
+        }
+        // The opcode matches TOR events with an opcode umask; nothing else
+        // counts by it ([SNB] Table 2-12, [IVB] Table 2-17).
+        if filters.opcode && !opcode_used {
+            return Err(format!(
+                "{path}.filter1: sets an opcode, but no TOR event has an opcode umask (0x01)"
+            ));
+        }
     }
-    // The opcode matches TOR events with an opcode umask; nothing else
-    // counts by it ([SNB] Table 2-12, [IVB] Table 2-17).
-    if filters.opcode && !opcode_used {
-        return Err(format!(
-            "{path}.filter1: sets an opcode, but no TOR event has an opcode umask (0x01)"
-        ));
+    if group.fixed {
+        // The default IMC collector's DCLK control without the reset bit.
+        counters.push(ProgrammedCounter {
+            slot: CounterSlot::Fixed,
+            control: FIXED_COUNTER_ENABLE,
+            labels: EventLabels::from([("alias".to_string(), "dclk".to_string())]),
+        });
     }
 
     Ok(GroupProgram {
         counters,
-        filters: Some(filters.registers),
+        filters: filters.map(|filters| filters.registers),
     })
 }
 
-fn encoding(model: &Model, event: &EventRequest, path: &str) -> Result<Encoding, String> {
+fn encoding(
+    model: &Model,
+    snb_box: &BoxSpec,
+    event: &EventRequest,
+    path: &str,
+) -> Result<Encoding, String> {
     for (field, given) in [
         ("ch_mask", event.ch_mask.is_some()),
         ("fc_mask", event.fc_mask.is_some()),
@@ -440,7 +538,7 @@ fn encoding(model: &Model, event: &EventRequest, path: &str) -> Result<Encoding,
         }
     }
 
-    event_encoding(&model.cbo, event, path)
+    event_encoding(snb_box, event, path)
 }
 
 fn is_tor(event: u8) -> bool {
@@ -668,18 +766,25 @@ fn control(encoding: &Encoding, tid_en: bool) -> u64 {
     u64::from(encoding.event) | (u64::from(encoding.umask) << 8) | tid_enable | COUNTER_ENABLE
 }
 
-/// The event's labels, with the filter registers the model has: filter0 only
-/// on Sandy Bridge-EP.
-fn labels(model: &Model, encoding: &Encoding, tid_en: bool, filters: CboFilters) -> EventLabels {
+/// The event's labels, with the CBo filter registers the model has: filter0
+/// only on Sandy Bridge-EP.
+fn labels(
+    model: &Model,
+    encoding: &Encoding,
+    tid_en: bool,
+    filters: Option<CboFilters>,
+) -> EventLabels {
     let mut labels = EventLabels::from([
         ("alias".to_string(), encoding.alias.to_string()),
         ("event".to_string(), format!("{:#04x}", encoding.event)),
         ("umask".to_string(), format!("{:#04x}", encoding.umask)),
     ]);
-    let registers = filters.registers;
-    labels.insert("filter0".to_string(), format!("{:#x}", registers.filter0));
-    if model.filters.filter1_register {
-        labels.insert("filter1".to_string(), format!("{:#x}", registers.filter1));
+    if let Some(filters) = filters {
+        let registers = filters.registers;
+        labels.insert("filter0".to_string(), format!("{:#x}", registers.filter0));
+        if model.filters.filter1_register {
+            labels.insert("filter1".to_string(), format!("{:#x}", registers.filter1));
+        }
     }
     if tid_en {
         labels.insert("tid_en".to_string(), "1".to_string());
@@ -998,6 +1103,83 @@ mod tests {
     }
 
     #[test]
+    fn programs_imc_cas_counts_and_dclk() {
+        for model in [SNB, IVB] {
+            let group = configs(
+                model,
+                pmu(
+                    "imc",
+                    json!({
+                        "events": [
+                            {"alias": "cas_count", "op": "rd"},
+                            null,
+                            {"alias": "cas_count", "op": "wr"},
+                            {"alias": "cas_count", "op": "all"}
+                        ],
+                        "fixed": true
+                    }),
+                ),
+            )
+            .unwrap()
+            .remove(0)
+            .program
+            .groups
+            .remove(0);
+
+            assert_eq!(group.filters, None);
+            assert_eq!(
+                controls(&group),
+                [
+                    (CounterSlot::General(0), 0x40_0304),
+                    (CounterSlot::General(2), 0x40_0c04),
+                    (CounterSlot::General(3), 0x40_0f04),
+                    // The default collector's DCLK control
+                    // FIXED_COUNTER_RESET_AND_ENABLE (0x480000) without the
+                    // reset bit (1 << 19).
+                    (CounterSlot::Fixed, 0x40_0000),
+                ],
+                "{model:?}"
+            );
+            assert_eq!(
+                group.counters[0].labels,
+                labels(&[("alias", "cas_count"), ("event", "0x04"), ("umask", "0x03")])
+            );
+            assert_eq!(group.counters[3].labels, labels(&[("alias", "dclk")]));
+        }
+    }
+
+    #[test]
+    fn encodes_every_imc_alias() {
+        let both = &[SNB, IVB][..];
+        let cases = [
+            (both, "rpq_inserts", 0x10),
+            (both, "rpq_cycles_ne", 0x11),
+            (&[SNB], "rpq_cycles_full", 0x12),
+            (both, "wpq_inserts", 0x20),
+            (both, "wpq_cycles_ne", 0x21),
+            (both, "wpq_cycles_full", 0x22),
+            (&[SNB], "rpq_occupancy", 0x80),
+            (&[SNB], "wpq_occupancy", 0x81),
+        ];
+
+        for (models, alias, code) in cases {
+            for &model in models {
+                let mut configs =
+                    configs(model, pmu("imc", json!({"events": [{"alias": alias}]}))).unwrap();
+                let group = configs.remove(0).program.groups.remove(0);
+
+                assert_eq!(
+                    controls(&group),
+                    [(CounterSlot::General(0), code | COUNTER_ENABLE)],
+                    "{model:?} {alias}"
+                );
+            }
+        }
+        let imc = |model| configs(model, pmu("imc", json!({"fixed": true})));
+        assert!(imc(SNB).is_ok() && imc(IVB).is_ok());
+    }
+
+    #[test]
     fn encodes_cbo_filters_in_each_layout() {
         let tor_tid =
             json!({"alias": "tor_inserts", "kind": "opcode", "home": "any", "tid_en": true});
@@ -1245,10 +1427,6 @@ mod tests {
                     format!("pmus.irp.groups[0]: PMU configs do not support irp on {name}"),
                 ),
                 (
-                    pmu("imc", json!({"events": [{"event": 4, "umask": 3}]})),
-                    format!("pmus.imc.groups[0]: PMU configs do not support imc on {name}"),
-                ),
-                (
                     pmu("ha", json!({"events": [{"event": 0}]})),
                     format!("pmus.ha.groups[0]: PMU configs do not support ha on {name}"),
                 ),
@@ -1415,7 +1593,68 @@ mod tests {
                 ),
                 (
                     pmu("cha", json!({"fixed": true})),
-                    format!("pmus.cha.groups[0].fixed: {name} CBo boxes have no fixed counter"),
+                    format!(
+                        "pmus.cha.groups[0].fixed: only IMC boxes have a fixed counter on {name}"
+                    ),
+                ),
+                (
+                    pmu(
+                        "imc",
+                        json!({"events": vec![json!({"alias": "rpq_inserts"}); 5]}),
+                    ),
+                    format!(
+                        "pmus.imc.groups[0].events: {name} IMC boxes have 4 general counters, got 5 events"
+                    ),
+                ),
+                (
+                    pmu("imc", json!({"events": [{"event": "0x03"}]})),
+                    format!("pmus.imc.groups[0].events[0]: Intel lists no {name} IMC event 0x03"),
+                ),
+                (
+                    pmu("imc", json!({"events": [{"event": "0xff"}]})),
+                    format!("pmus.imc.groups[0].events[0]: Intel lists no {name} IMC event 0xff"),
+                ),
+                (
+                    pmu(
+                        "imc",
+                        json!({"filter0": {"states": ["M"]}, "events": [{"alias": "rpq_inserts"}]}),
+                    ),
+                    "pmus.imc.groups[0].filter0: only CBo groups take filters".to_string(),
+                ),
+                (
+                    pmu("imc", json!({"filter1": {}, "fixed": true})),
+                    "pmus.imc.groups[0].filter1: only CBo groups take filters".to_string(),
+                ),
+                (
+                    pmu(
+                        "imc",
+                        json!({"events": [{"alias": "cas_count", "op": "rd", "tid_en": true}]}),
+                    ),
+                    "pmus.imc.groups[0].events[0].tid_en: only CBo events take tid_en".to_string(),
+                ),
+                (
+                    pmu(
+                        "imc",
+                        json!({"events": [{"alias": "cas_count", "op": "rd", "ch_mask": 1}]}),
+                    ),
+                    format!("pmus.imc.groups[0].events[0].ch_mask: not supported on {name}"),
+                ),
+                (
+                    pmu(
+                        "imc",
+                        json!({"events": [{"alias": "cas_count", "op": "rd_reg"}]}),
+                    ),
+                    "pmus.imc.groups[0].events[0].op: cas_count op must be one of rd, wr, all, got \"rd_reg\"".to_string(),
+                ),
+                (
+                    pmu("imc", json!({"events": [{"alias": "cas_count"}]})),
+                    "pmus.imc.groups[0].events[0]: cas_count needs a op (rd, wr, all)".to_string(),
+                ),
+                (
+                    pmu("imc", json!({"events": [{"alias": "tor_inserts"}]})),
+                    format!(
+                        "pmus.imc.groups[0].events[0].alias: unknown {name} IMC alias \"tor_inserts\" (aliases: cas_count, rpq_inserts, rpq_cycles_ne,"
+                    ),
                 ),
                 (
                     cha_event(json!({"alias": "clockticks", "ch_mask": 1})),
@@ -1614,6 +1853,26 @@ mod tests {
                 cha_event(json!({"event": "0x21"})),
                 "pmus.cha.groups[0].events[0]: Intel lists no Ivy Bridge-EP CBo event 0x21",
             ),
+            (
+                IVB,
+                pmu("imc", json!({"events": [{"alias": "rpq_cycles_full"}]})),
+                "pmus.imc.groups[0].events[0].alias: unknown Ivy Bridge-EP IMC alias \"rpq_cycles_full\" (aliases: cas_count, rpq_inserts, rpq_cycles_ne, wpq_inserts, wpq_cycles_ne, wpq_cycles_full)",
+            ),
+            (
+                IVB,
+                pmu("imc", json!({"events": [{"alias": "wpq_occupancy"}]})),
+                "pmus.imc.groups[0].events[0].alias: unknown Ivy Bridge-EP IMC alias \"wpq_occupancy\"",
+            ),
+            (
+                IVB,
+                pmu("imc", json!({"events": [{"event": "0x80"}]})),
+                "pmus.imc.groups[0].events[0]: Intel lists no Ivy Bridge-EP IMC event 0x80",
+            ),
+            (
+                SNB,
+                pmu("imc", json!({"events": [{"event": "0x90"}]})),
+                "pmus.imc.groups[0].events[0]: Intel lists no Sandy Bridge-EP IMC event 0x90",
+            ),
         ];
 
         for (model, request, expected) in cases {
@@ -1655,44 +1914,59 @@ mod tests {
         // The id hashes the programming, not the model: groups without
         // filters program both models alike.
         assert_eq!(config_id(SNB, &clockticks), config_id(IVB, &clockticks));
+
+        let imc = json!({"imc": {"groups": [{
+            "events": [{"alias": "cas_count", "op": "rd"}, {"alias": "cas_count", "op": "wr"}],
+            "fixed": true
+        }]}});
+        assert_eq!(config_id(SNB, &imc), 4_950_938_686_470_922);
+        assert_eq!(config_id(IVB, &imc), config_id(SNB, &imc));
+        // The same counters on another box type get another id.
+        let raw = |box_type: &str| json!({box_type: {"groups": [{"events": [{"event": "0x00"}]}]}});
+        assert_ne!(config_id(SNB, &raw("imc")), config_id(SNB, &raw("cha")));
     }
 
     #[test]
     fn tables_are_sorted_and_aliases_name_listed_events() {
-        for model in [SANDY_BRIDGE, IVY_BRIDGE] {
-            let cbo = &model.cbo;
+        for snb_box in [
+            &SANDY_BRIDGE.cbo,
+            &SANDY_BRIDGE.imc,
+            &IVY_BRIDGE.cbo,
+            &IVY_BRIDGE.imc,
+        ] {
+            let name = format!("{} {}", snb_box.model, snb_box.name);
             assert!(
-                cbo.event_counters
+                snb_box
+                    .event_counters
                     .windows(2)
                     .all(|pair| pair[0].0 < pair[1].0),
-                "{}",
-                model.name
+                "{name}"
             );
             assert!(
-                cbo.event_counters
-                    .iter()
-                    .all(|(_, counters)| *counters != 0 && counters >> cbo.general_counters == 0),
-                "{}",
-                model.name
+                snb_box.event_counters.iter().all(
+                    |(_, counters)| *counters != 0 && counters >> snb_box.general_counters == 0
+                ),
+                "{name}"
             );
-            for (index, alias) in cbo.aliases.iter().enumerate() {
+            for (index, alias) in snb_box.aliases.iter().enumerate() {
                 assert!(
-                    cbo.event_counters
+                    snb_box
+                        .event_counters
                         .binary_search_by_key(&alias.event, |(event, _)| *event)
                         .is_ok(),
-                    "{} {}",
-                    model.name,
+                    "{name} {}",
                     alias.name
                 );
                 assert!(
-                    cbo.aliases[..index]
+                    snb_box.aliases[..index]
                         .iter()
                         .all(|earlier| earlier.name != alias.name),
-                    "{} {}",
-                    model.name,
+                    "{name} {}",
                     alias.name
                 );
             }
+        }
+        for model in [SANDY_BRIDGE, IVY_BRIDGE] {
             for (index, (name, value)) in model.opcodes.iter().enumerate() {
                 assert!(u64::from(*value) <= OPCODE_MAX && *value >= 0x180, "{name}");
                 assert!(

@@ -69,6 +69,15 @@ impl PciDevice {
         Self::open_with_options(location, false)
     }
 
+    /// The bytes of config space the kernel exposes: 256, or 4096 with PCIe
+    /// extended config space.
+    pub fn config_size(&self) -> Result<u64, String> {
+        self.file
+            .metadata()
+            .map(|metadata| metadata.len())
+            .map_err(|error| format!("failed to read PCI {self} config space size: {error}"))
+    }
+
     /// A device whose config space is `file`, for tests that must not touch PCI.
     #[cfg(test)]
     pub(crate) fn from_file(file: File, location: PciLocation) -> Self {

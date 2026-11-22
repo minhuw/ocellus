@@ -2259,6 +2259,13 @@ mod upi_common {
         fn counter_offset(&self, counter_index: usize) -> u64 {
             self.box_offset + self.architecture.counter_base() + counter_index as u64 * 8
         }
+
+        /// The end of the highest register the collector accesses.
+        fn config_end(&self) -> u64 {
+            (self.box_control_offset() + 4)
+                .max(self.control_offset(COUNTER_COUNT - 1) + 4)
+                .max(self.counter_offset(COUNTER_COUNT - 1) + 8)
+        }
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -2376,6 +2383,7 @@ mod upi_common {
             }
         }
 
+        let mut links = complete_links(architecture, links, |line| eprintln!("{line}"))?;
         links.sort_by_key(|link| {
             (
                 link.scope.package_id,
@@ -2393,6 +2401,35 @@ mod upi_common {
         }
 
         Ok(links)
+    }
+
+    /// The links whose config space holds every PMU register, logging the
+    /// others: a part with fewer links than UPI functions, like the two-link
+    /// Xeon Gold 6230R, has the absent link's function with 256 bytes.
+    fn complete_links(
+        architecture: UpiArchitecture,
+        links: Vec<UpiLink>,
+        mut log: impl FnMut(String),
+    ) -> Result<Vec<UpiLink>, String> {
+        let mut complete = Vec::with_capacity(links.len());
+
+        for link in links {
+            let size = link.unit.device.config_size()?;
+            let end = link.unit.config_end();
+            if size < end {
+                log(format!(
+                    "ocellus: skipping {} UPI link {} of package {} at {}: its config space is {size} bytes, but the PMU registers end at 0x{end:x}",
+                    architecture.name(),
+                    link.scope.link_id,
+                    link.scope.package_id,
+                    link.unit.device
+                ));
+                continue;
+            }
+            complete.push(link);
+        }
+
+        Ok(complete)
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2767,6 +2804,73 @@ mod upi_common {
             assert_eq!(metrics.traffic[0].bytes_per_second, Some(6_400.0));
             assert_eq!(metrics.traffic[2].bytes_per_second, Some(3_200.0));
             assert_eq!(metrics.power_states.len(), 3);
+        }
+
+        #[test]
+        fn leaves_out_links_whose_config_space_ends_before_the_pmu_registers() {
+            let links = [(0, 4096), (1, 4096), (2, 256)]
+                .map(|(link_id, size)| test_link(link_id, size))
+                .into();
+            let mut lines = Vec::new();
+
+            let links =
+                complete_links(UpiArchitecture::Skx, links, |line| lines.push(line)).unwrap();
+
+            assert_eq!(
+                links
+                    .iter()
+                    .map(|link| link.scope.link_id)
+                    .collect::<Vec<_>>(),
+                [0, 1]
+            );
+            assert_eq!(
+                lines,
+                [
+                    "ocellus: skipping Skylake/Cascade Lake UPI link 2 of package 0 at 0000:5d:10.0: its config space is 256 bytes, but the PMU registers end at 0x37c"
+                ]
+            );
+        }
+
+        /// A Skylake-SP link on package 0 whose config space is a temporary
+        /// file of `size` bytes.
+        fn test_link(link_id: u32, size: usize) -> UpiLink {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "ocellus-upi-link-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::write(&path, vec![0_u8; size]).unwrap();
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .unwrap();
+            std::fs::remove_file(&path).unwrap();
+
+            UpiLink {
+                scope: InterconnectScope {
+                    die_group_id: None,
+                    die_id: None,
+                    link_id,
+                    package_id: 0,
+                },
+                unit: UpiUnit {
+                    architecture: UpiArchitecture::Skx,
+                    box_offset: 0,
+                    device: PciDevice::from_file(
+                        file,
+                        metal::pci::PciLocation {
+                            bus: 0x5d,
+                            device: 14 + link_id as u8,
+                            function: 0,
+                            group: 0,
+                        },
+                    ),
+                },
+            }
         }
 
         fn measurement(value: u64, seconds: u64) -> UpiEventMeasurement {

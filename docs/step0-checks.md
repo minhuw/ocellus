@@ -38,19 +38,29 @@ non-removable disk in `lsblk`, NVMe first) size the checks.
    the unit's MainPID and binary. 0x2D SNB, 0x3E IVB, 0x3F HSX, 0x4F BDX,
    0x55 SKX (CLX from stepping 5), 0x6A ICX, 0x8F SPR, 0xCF EMR; on any other
    model nothing else runs. It fails if `processor_info` names another model.
+   `mem_channels` is the populated DDR channels per package from EDAC
+   (`/sys/devices/system/edac/mc`), if its sockets are the packages.
 2. **`collectors.*`**: each collector of the family gains samples over two
    intervals, is not stopped and exports every package; the SNB HA, which has
    no default group, exports no series. RDT: L3 occupancy
    everywhere; MBM on BDX and later exactly when `/proc/cpuinfo` has
    `cqm_mbm_total` or `cqm_mbm_local`, never on HSX. `collectors.journal`
    lists the `skipping ... collector` lines of the unit's current
-   invocation and passes if each is expected (below).
+   invocation and passes if each is expected (below). An interconnect skip
+   fails unless no links were found; Ocellus's per-link lines (`skipping ...
+   UPI link ...`, for a link function without the PMU registers) are not
+   collector skips.
 3. **`bundle.*`**: the family's bundle (below) is PUT, all box types with
    `"aggregate": "box"`, and held 30 s. `bundle.put` and `bundle.event_info`
    record the request, the `config_id`s and the `ocellus_uncore_event_info`
    labels. `bundle.series`: every series of every package and unit that
    event_info names exists and never decreases, the config ids stay, clock
-   series tick, and every group's running seconds are > 0.
+   series tick, and every group's running seconds are > 0. On SKX, CLX and
+   ICX, an IIO/IRP unit whose stack the kernel marks absent
+   (`/sys/devices/uncore_iio_<n>/die<package>` missing, or root bus 00 on
+   another than the bus-00 stack) is listed in `absent_stacks` and its clock
+   need not tick; on SPR/EMR, where the kernel places no stacks, a clock
+   that does not tick is an unexpected skip.
    `bundle.precession`: in every CHA sample
    `ocellus_uncore_schedule_first_group{box_type="cha"}` is the cycle (window
    end / interval) mod the group count.
@@ -63,9 +73,14 @@ non-removable disk in `lsblk`, NVMe first) size the checks.
    the bytes dd copied, less at most one LLC, plus up to 1 GiB of page
    zeroing on first touch. **`imc.channels`** runs the load again under the
    bundle: `cas_count wr` x 64 summed over package 0's channels must be in
-   the band, and no channel may stay below 5% of an even share (with
-   sub-NUMA clustering, only the load node's channels must). A silent
-   channel is dead or unpopulated; see `dmidecode -t memory`.
+   the band, and no populated channel may stay below 5% of an even share
+   (with sub-NUMA clustering, only the load node's channels must). The
+   populated channels come from EDAC, mapped to Ocellus unit ids on SKX,
+   CLX, ICX (MC x 3 + channel) and SNB, HSX, BDX (MC x 4 + channel), and
+   channels without a DIMM are listed in `empty`. Without EDAC, or on IVB,
+   SPR and EMR, silent channels are an unexpected skip: they may be empty
+   slots (see `dmidecode -t memory`, whose locators do not name the
+   channel).
 5. **`rapl.<domain>.<package>`**: Ocellus's package and DRAM energy over the
    idle window and the load against `/sys/class/powercap/intel-rapl:*`,
    read at each new RAPL sample and scaled to the samples' span, within 5%.

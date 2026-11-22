@@ -29,6 +29,20 @@ MODELS = {0x2D: "SNB", 0x3E: "IVB", 0x3F: "HSX", 0x4F: "BDX", 0x55: "SKX",
 ARCH = {"SNB": "snb", "IVB": "snb", "HSX": "hsx", "BDX": "hsx", "SKX": "skx",
         "CLX": "skx", "ICX": "icx", "SPR": "spr", "EMR": "spr"}
 CLOCKS = {"clockticks", "dclk", "hclockticks", "fixed_clockticks"}
+# EDAC names a memory controller "<model> Socket#<node> IMC#<mc>" (skx_edac,
+# i10nm_edac) or "<model> SrcID#<node>_Ha#<mc>" (sb_edac).
+EDAC_MC_RE = re.compile(r"(?:Socket|SrcID)#(\d+)[ _](?:IMC|Ha)#(\d+)$")
+# EDAC channel c of memory controller m is Ocellus IMC unit m * n + c. SKX/CLX:
+# the imc/skx.rs channel table, skx_base.c's order. ICX: 3 PMON slots per
+# memory BAR (imc/icx.rs), i10nm_edac's 2 channels the first two. SNB, HSX,
+# BDX: the imc/snb.rs and imc/hsx.rs tables in Linux's "MC<m> Channel <c>"
+# order, sb_edac's TAD <c> of HA <m>. None for IVB (Linux numbers its
+# channels 0, 1, 3, 4) and SPR/EMR (units in discovery-table order).
+EDAC_UNITS_PER_MC = {"SKX": 3, "CLX": 3, "ICX": 3, "SNB": 4, "HSX": 4, "BDX": 4}
+# The stack whose root bus may be 00 (Linux pmu_iio_mapping_visible). On these
+# families kernel uncore_iio_<n> is Ocellus IIO and IRP unit n (box_ctl
+# 0xa40 + 0x20 n on SKX, icx_msr_offsets on ICX); SPR/EMR have no mapping.
+IIO_ZERO_BUS_STACK = {"SKX": 0, "CLX": 0, "ICX": 5}
 SKIP_RE = re.compile(r"ocellus: skipping (\S+) collector: (.*)")
 # Collectors that sample their default groups but export no series of them:
 # the Sandy Bridge-EP HA has no default group.
@@ -307,6 +321,42 @@ def read_powercap(sys_root):
     return zones
 
 
+def read_edac(sys_root):
+    """Populated channels from EDAC, which lists only populated DIMMs
+    (edac_mc_sysfs.c): {socket: {memory controller: {channel}}}, or None."""
+    sockets = {}
+    for mc in glob.glob(host_path(sys_root, "/sys/devices/system/edac/mc/mc[0-9]*")):
+        name = EDAC_MC_RE.search(read("/", f"{mc}/mc_name"))
+        if not name:
+            return None
+        channels = sockets.setdefault(name.group(1), {}).setdefault(int(name.group(2)), set())
+        for dimm in glob.glob(f"{mc}/dimm[0-9]*"):
+            location = re.match(r"channel (\d+) ", read("/", f"{dimm}/dimm_location") + " ")
+            if not location:
+                return None
+            if "_HBMC#" not in read("/", f"{dimm}/dimm_label"):  # not HBM (skx_common.c)
+                channels.add(int(location.group(1)))
+    return sockets or None
+
+
+def absent_stacks(sys_root, host):
+    """(package, unit) of the IIO stacks the kernel marks absent: no
+    uncore_iio_<n>/die<package>, or root bus 00 on another than the zero-bus
+    stack. None where unknown: other families, or no die* mapping at all."""
+    zero_bus = IIO_ZERO_BUS_STACK.get(host.family)
+    pmus = glob.glob(host_path(sys_root, "/sys/devices/uncore_iio_[0-9]*"))
+    if zero_bus is None or not any(glob.glob(f"{pmu}/die[0-9]*") for pmu in pmus):
+        return None
+    absent = set()
+    for pmu in pmus:
+        stack = int(pmu.rsplit("_", 1)[1])
+        for package in host.packages:
+            die = f"{pmu}/die{package}"
+            if not os.path.exists(die) or stack != zero_bus and read("/", die).endswith(":00"):
+                absent.add((package, str(stack)))
+    return absent
+
+
 def cpu_list(text):
     cpus = []
     for part in filter(None, text.split(",")):
@@ -385,6 +435,9 @@ def check_identity(args, report, metrics):
         except OSError as error:
             host.unit["binary_error"] = str(error)
     processor = (series(metrics, "processor_info") or [({}, 0)])[0][0]
+    # EDAC's socket is a node id: used only if the node ids are the packages.
+    edac = read_edac(args.sys_root)
+    host.edac = edac if edac and set(edac) == set(host.packages) else None
     report.identity = {
         "family": host.family, "model": f"{model:#04x}", "stepping": stepping,
         "sockets": len(host.packages), "cpus": len(cpus), "kernel": read(args.proc_root, "/proc/sys/kernel/osrelease"),
@@ -393,6 +446,7 @@ def check_identity(args, report, metrics):
         "processor_info": processor,
         "ocellus_version": (series(metrics, "ocellus_info") or [({}, 0)])[0][0].get("version"),
         "unit": host.unit or {"error": unit_error},
+        "mem_channels": host.edac and {p: sum(map(len, mcs.values())) for p, mcs in host.edac.items()},
     }
     report.notes = NOTES[ARCH[host.family]] if host.family else []
     same_model = processor.get("model") == str(model)
@@ -572,16 +626,27 @@ def run_bundle(args, report, daemon, host, state):
                          and h1["counts"][k] <= h0["counts"][k]
                          and any(l["alias"] in CLOCKS and (l["box_type"], l["package"], l["group"], l["slot"])
                                  == (k[0], k[1], k[3], k[4]) for l in info))
+    # The IIO/IRP clock of a stack the kernel marks absent need not tick; that
+    # of a stack it does not place is an unexpected skip.
+    absent = absent_stacks(args.sys_root, host)
+    on_stack = {k for k in idle_clocks if k[0] in ("iio", "irp") and ARCH[host.family] in ("skx", "icx", "spr")}
+    unplaced = sorted(on_stack) if absent is None else []
+    idle_clocks = [k for k in idle_clocks if k not in on_stack or absent is not None and (k[1], k[2]) not in absent]
+    absent = sorted(absent, key=lambda s: (int(s[0]), int(s[1]))) if absent is not None else None
     unchanged = sum(1 for k in expected_keys - set(missing) if h1["counts"][k] == h0["counts"].get(k))
     not_running = sorted(k for k in {(l["box_type"], l["package"], l["group"]) for l in info}
                          if h1["running"].get(k, 0) <= 0)
     ok = not (missing or seen["decreases"] or seen["ids"] or idle_clocks or not_running)
-    report.add("bundle.series", "pass" if ok else "fail",
+    notes = ["absent IIO stacks (package/unit) " + ", ".join(map("/".join, absent))] if absent else []
+    notes += ["IIO/IRP clocks not ticking on stacks the kernel does not place"] if unplaced else []
+    report.add("bundle.series", "skip" if ok and unplaced else "pass" if ok else "fail",
                {"series": len(expected_keys), "missing": missing[:20], "decreasing": seen["decreases"][:20],
                 "config_id_changes": seen["ids"][:20], "clocks_not_ticking": idle_clocks[:20],
+                "clocks_on_unplaced_stacks": unplaced[:20], "absent_stacks": absent,
                 "groups_not_running": not_running, "series_without_counts": unchanged,
                 "hold_seconds": h1["ends"]["cha"] - h0["ends"]["cha"]},
-               "every series present, non-decreasing; clock series ticking; running seconds > 0")
+               "every series present, non-decreasing; clock series ticking except on absent IIO stacks; "
+               "running seconds > 0", "; ".join(notes))
     wrong = [p for p in seen["precession"] if p[1] != p[2]]
     report.add("bundle.precession", "pass" if len(seen["precession"]) >= 3 and not wrong else "fail",
                {"samples": len(seen["precession"]), "mismatches": wrong[:20]},
@@ -624,13 +689,33 @@ def run_bundle(args, report, daemon, host, state):
     if not channels:
         raise RuntimeError(f"no imc cas_count wr series on package {host.packages[0]}")
     total = sum(channels.values())
-    silent = sorted(u for u, b in channels.items() if b < 0.05 * total / len(channels))
+    populated = populated_units(host, host.packages[0], channels)
+    empty = sorted(set(channels) - populated, key=int) if populated is not None else []
+    counted = [u for u in channels if u not in empty]
+    silent = sorted((u for u in counted if channels[u] < 0.05 * total / max(len(counted), 1)), key=int)
     nodes = numa_nodes_per_package(args, host)
-    allowed = len(channels) - math.ceil(len(channels) / nodes)
-    report.add("imc.channels", "pass" if in_band(total, nbytes) and len(silent) <= allowed else "fail",
-               {"write_bytes_by_channel": channels, "total": total, "silent": silent, "numa_nodes_per_package": nodes},
+    allowed = len(counted) - math.ceil(len(counted) / nodes)
+    # Without the population, a silent channel may be an empty slot.
+    banded, quiet = in_band(total, nbytes), len(silent) > allowed
+    status = "pass" if banded and not quiet else "skip" if banded and populated is None else "fail"
+    report.add("imc.channels", status,
+               {"write_bytes_by_channel": channels, "total": total, "silent": silent, "empty": empty,
+                "populated": sorted(populated, key=int) if populated is not None else None,
+                "numa_nodes_per_package": nodes},
                {"bytes": nbytes, "band": BAND, "silent_at_most": allowed},
-               f"bundle cas_count wr x 64 on package {host.packages[0]}, cpu {cpu}")
+               f"bundle cas_count wr x 64 on package {host.packages[0]}, cpu {cpu}"
+               + (f"; empty channels (EDAC) {', '.join(empty)}" if empty else "")
+               + ("; silent channels, and no EDAC population to tell empty ones" if status == "skip" else ""))
+
+
+def populated_units(host, package, units):
+    """The Ocellus IMC unit ids of package's populated channels; None without
+    EDAC, on a family without the mapping, or if EDAC lists too few
+    controllers for units (i10nm_edac leaves absent ones out and renumbers)."""
+    per_mc, mcs = EDAC_UNITS_PER_MC.get(host.family), (host.edac or {}).get(package)
+    if not per_mc or not mcs or len(mcs) * per_mc <= max(map(int, units)):
+        return None
+    return {str(mc * per_mc + channel) for mc, channels in mcs.items() for channel in channels}
 
 
 def imc_load(args):

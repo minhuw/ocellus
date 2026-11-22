@@ -23,7 +23,9 @@ import unittest
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "step0_smoke.py")
 INTERVAL = 0.25
 PACKAGES = ("0", "1")
-UNITS = {"cha": 4, "imc": 2, "iio": 3, "irp": 2}
+UNITS = {"cha": 4, "imc": 6, "iio": 6, "irp": 6}
+POPULATED = (0, 1, 3, 4)  # IMC units: channels 0 and 1 of both memory controllers
+ABSENT_STACKS = (4, 5)  # IIO stacks MCP0 and MCP1, as on a Xeon Gold 6230R
 POWER = {"package": 100.0, "dram": 10.0}
 JOURNAL = """ocellus: starting CHA collector
 ocellus: starting IIO collector
@@ -45,8 +47,9 @@ spec.loader.exec_module(step0)
 class FakeOcellus:
     """A 2-socket Cascade Lake daemon whose counts and energy follow the clock."""
 
-    def __init__(self, root, config=None, dram_factor=1.0, imc_factor=1.0):
+    def __init__(self, root, config=None, dram_factor=1.0, imc_factor=1.0, silent_channel=None):
         self.root, self.dram_factor, self.imc_factor = root, dram_factor, imc_factor
+        self.loaded = [u for u in POPULATED if u != silent_channel]
         self.config, self.started, self.calls, self.loads = dict(config or {}), {}, [], []
         self.t0 = time.time()
         self.lock = threading.Lock()
@@ -127,10 +130,12 @@ class FakeOcellus:
                                      f'units="0-{UNITS[box] - 1}",alias="{alias}"}} 1')
                         for unit in range(UNITS[box]):
                             count = 1000 * running * (number + 1)
-                            if (box, package, index, slot) == ("imc", "0", 0, "1"):
-                                count += self.moved("imc", end) / 64 / UNITS["imc"]
+                            if (box, package, index, slot) == ("imc", "0", 0, "1") and unit in self.loaded:
+                                count += self.moved("imc", end) / 64 / len(self.loaded)
                             if (box, package, unit, index, slot) == ("iio", "1", 1, 0, "0"):
                                 count += self.moved("dma", end) / 4
+                            if box in ("iio", "irp") and unit in ABSENT_STACKS:
+                                count = 0
                             lines.append(f'ocellus_uncore_count_total{{{labels},unit="{unit}",slot="{slot}"}} '
                                          f"{int(count)}")
         return "\n".join(lines) + "\n"
@@ -201,6 +206,17 @@ def host_files(root):
     write(root, "sys/bus/pci/devices/0000:5e:00.0/local_cpulist", "2-3\n")
     write(root, "sys/devices/system/node/node0/cpulist", "0-1\n")
     write(root, "sys/devices/system/node/node1/cpulist", "2-3\n")
+    for mc in range(4):  # skx_edac, as on Guava
+        socket, imc = divmod(mc, 2)
+        write(root, f"sys/devices/system/edac/mc/mc{mc}/mc_name", f"Skylake Socket#{socket} IMC#{imc}\n")
+        for dimm, channel in ((0, 0), (2, 1)):
+            path = f"sys/devices/system/edac/mc/mc{mc}/dimm{dimm}"
+            write(root, f"{path}/dimm_location", f"channel {channel} slot 0 \n")
+            write(root, f"{path}/dimm_label", f"CPU_SrcID#{socket}_MC#{imc}_Chan#{channel}_DIMM#0\n")
+    for stack, buses in enumerate([("00", "80"), ("17", "85"), ("3a", "ae"), ("5d", "d7"), (), ()]):
+        os.makedirs(os.path.join(root, f"sys/devices/uncore_iio_{stack}"))
+        for die, bus in enumerate(buses):
+            write(root, f"sys/devices/uncore_iio_{stack}/die{die}", f"0000:{bus}\n")
 
 
 class StepZeroTest(unittest.TestCase):
@@ -249,8 +265,11 @@ class StepZeroTest(unittest.TestCase):
         code, checks, report = self.finish(self.start())
         self.assertEqual(code, 0)
         self.assertEqual(report["identity"]["family"], "CLX")
+        self.assertEqual(report["identity"]["mem_channels"], {"0": 4, "1": 4})
         self.assertEqual(checks["collectors.journal"]["status"], "pass")
         self.assertEqual(checks["bundle.series"]["status"], "pass")
+        self.assertEqual(checks["bundle.series"]["measured"]["absent_stacks"],
+                         [["0", "4"], ["0", "5"], ["1", "4"], ["1", "5"]])
         self.assertGreaterEqual(checks["bundle.precession"]["measured"]["samples"], 3)
         self.assertEqual(checks["rapl.dram.1"]["status"], "pass")
         self.assertTrue(checks["dma"]["expected_skip"])
@@ -264,6 +283,7 @@ class StepZeroTest(unittest.TestCase):
         self.assertEqual((dma["package"], dma["unit"]), ("1", "1"))
         self.assertAlmostEqual(dma["ratio"], 1.0, delta=0.01)
         self.assertEqual(checks["imc.channels"]["measured"]["silent"], [])
+        self.assertEqual(checks["imc.channels"]["measured"]["empty"], ["2", "5"])
         self.assertAlmostEqual(checks["imc.channels"]["measured"]["total"] / (1 << 30), 1.0, delta=0.01)
         extra = checks["imc.default_write_bytes"]["measured"]["bytes_by_package"]
         self.assertAlmostEqual(extra["0"] / (1 << 30), 1.0, delta=0.05)
@@ -274,6 +294,12 @@ class StepZeroTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(checks["imc.default_write_bytes"]["status"], "fail")
         self.assertEqual(checks["imc.channels"]["status"], "pass")
+
+    def test_fails_a_silent_populated_channel(self):
+        code, checks = self.run_with_loads(silent_channel=3)
+        self.assertEqual(code, 1)
+        self.assertEqual(checks["imc.channels"]["status"], "fail")
+        self.assertEqual(checks["imc.channels"]["measured"]["silent"], ["3"])
 
     def test_refuses_to_start_under_another_config(self):
         code, checks, _ = self.finish(self.start(config={"cha": {"groups": []}}))

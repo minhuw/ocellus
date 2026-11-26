@@ -3522,6 +3522,29 @@ mod tests {
     }
 
     #[test]
+    fn programs_thresholded_counters_with_their_control_bits() {
+        let mut group = config_group(0, &[5], &[0, 1, 2, 3]);
+        for (counter, control) in
+            group
+                .counters
+                .iter_mut()
+                .zip([0x50_2436, 0x0154_001f, 0x1350_001f, 0x1450_001f])
+        {
+            counter.control = control;
+        }
+
+        assert_eq!(
+            cha_config_unit_writes(5, &group).unwrap()[3..],
+            [
+                (0x0e51, 0x52_2436),
+                (0x0e52, 0x0156_001f),
+                (0x0e53, 0x1352_001f),
+                (0x0e54, 0x1452_001f),
+            ]
+        );
+    }
+
+    #[test]
     fn schedules_config_slices_by_grouping() {
         let slice = |milliseconds, groups: &[usize]| ChaConfigSlice {
             duration: Duration::from_millis(milliseconds),

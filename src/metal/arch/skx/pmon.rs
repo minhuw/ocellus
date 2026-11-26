@@ -12,6 +12,11 @@ const UNIT_RESERVED_BITS: u32 = 0b11 << 16;
 
 /// Added to a counter control value to reset the counter as it is programmed.
 pub const COUNTER_RESET: u32 = COUNTER_RESET_BIT;
+/// Counter control fields that shape the incoming increment (Skylake-SP uncore
+/// guide Table 1-6): count only cycles whose increment is >= .thresh, and with
+/// .edge_det only the cycles that condition turns true.
+pub const COUNTER_EDGE_DETECT: u32 = 1 << 18;
+pub const COUNTER_THRESHOLD_SHIFT: u32 = 24;
 pub const FIXED_COUNTER_ENABLE: u32 = FIXED_COUNTER_ENABLE_BIT;
 /// Added to the fixed counter's control value to reset it as it is programmed.
 pub const FIXED_COUNTER_RESET: u32 = FIXED_COUNTER_RESET_BIT;

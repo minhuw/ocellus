@@ -57,6 +57,18 @@ curl -X PUT localhost:8080/pmu-config -H 'Content-Type: application/json' -d '{
 }'
 ```
 
+On Skylake-SP and Cascade Lake a CHA event also takes `thresh` (0-20) and
+`edge_det`: the counter then counts the cycles whose increment is at least
+`thresh`, or with `edge_det` the cycles that condition turns true. Only counter
+0 takes occupancy events, and it increments by at most 20 per cycle (uncore
+guide 336274, 2.2.5), so the alias `counter0_occupancy` (event 0x1f) puts its
+increment on counters 1-3, each with its own `thresh`: up to three thresholds
+of counter 0's occupancy in one group. The comparison is per CHA and cycle, so
+summed boxes give the cycles each box held at least `thresh` entries. A
+`counter0_occupancy` group needs a plain `tor_occupancy` on counter 0, and
+`edge_det` needs a `thresh` of at least 1. These fields are not checked on
+hardware.
+
 Haswell-EP and Broadwell-EP take configs for `cha` (the CBo boxes), `imc`,
 `ha` (the home agents) and `irp`. Their TOR events filter by `kind` and `home`
 rather than by source: requests from IO are told apart by thread id, which a
@@ -190,8 +202,9 @@ A config exports, from its first sample on:
 - `ocellus_uncore_event_info{config_id,box_type,package,group,slot,units,alias,event,umask,...} 1`:
   what each counter counts, with `filter0`/`filter1` for CHA (`filter0` only
   on Sandy Bridge-EP; `umask_ext` instead on Ice Lake-SP, Sapphire Rapids and
-  Emerald Rapids), `ch_mask`/`fc_mask` for IIO, and `tid_en="1"` on the CBo
-  events of Sandy Bridge-EP to Broadwell-EP that set it.
+  Emerald Rapids), `ch_mask`/`fc_mask` for IIO, `tid_en="1"` on the CBo
+  events of Sandy Bridge-EP to Broadwell-EP that set it, and `thresh` and
+  `edge_det="1"` on the Skylake-SP CHA events that set them.
 
 A delta of a box type's counts is valid only between two samples with equal
 `ocellus_uncore_config_id` and equal

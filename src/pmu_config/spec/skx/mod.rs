@@ -16,12 +16,20 @@ use crate::pmu_config::spec::{
 };
 use crate::pmu_config::types::{BoxType, ChaFilters, CounterSlot, EventLabels, ProgrammedCounter};
 
+/// "CHA counter 0 can increment by a maximum of 20 per cycle; counters 1-3 can
+/// increment by 1 per cycle" (Skylake-SP uncore guide 2.2.5), so no larger
+/// threshold can be met.
+const CHA_THRESH_MAX: u8 = 20;
+/// UNC_CHA_COUNTER0_OCCUPANCY: counter 0's increment, on counters 1-3, so they
+/// can threshold counter 0's occupancy event (guide 2.2.5.1).
+const COUNTER0_OCCUPANCY_EVENT: u8 = 0x1f;
 const FILTER0_STATE_MASK: u64 = 0x3ff << CHA_FILTER0_STATE_SHIFT;
 const FILTER_REGISTER_MAX: u64 = 0xffff_ffff;
 const IDI_OPCODE_MAX: u64 = 0x3ff;
 const IIO_FC_MASK_MAX: u8 = 0x07;
 const LLC_LOOKUP_EVENT: u8 = 0x34;
 const MODEL: &str = "Skylake-SP";
+const TOR_OCCUPANCY_EVENT: u8 = 0x36;
 
 const CHA: BoxSpec = BoxSpec {
     model: MODEL,
@@ -122,10 +130,11 @@ const CHA_ALIASES: &[Alias] = &[
     ),
     Alias::new(
         "tor_occupancy",
-        0x36,
+        TOR_OCCUPANCY_EVENT,
         0x00,
         &[TOR_OCCUPANCY_SOURCES, TOR_RESULTS],
     ),
+    Alias::new("counter0_occupancy", COUNTER0_OCCUPANCY_EVENT, 0x00, &[]),
     Alias::new("llc_lookup", LLC_LOOKUP_EVENT, 0x00, &[LLC_LOOKUP_OPS]),
     Alias::new("llc_victims", 0x37, 0x00, &[LLC_VICTIM_STATES]),
     Alias::new("sf_eviction", 0x3d, 0x00, &[SF_EVICTION_STATES]),
@@ -310,6 +319,8 @@ pub(super) fn program_group(
     }
 
     let mut counters = Vec::new();
+    let mut counter0 = None;
+    let mut mirror = None;
     for (slot, event) in group.events.iter().enumerate() {
         let Some(event) = event else {
             continue;
@@ -320,11 +331,32 @@ pub(super) fn program_group(
         if let Some(filters) = filters {
             check_cha_filters(&encoding, filters, &event_path)?;
         }
+        let threshold = threshold(event, &event_path)?;
+        if encoding.event == COUNTER0_OCCUPANCY_EVENT && box_type == BoxType::Cha {
+            if slot == 0 {
+                return Err(format!(
+                    "{event_path}: COUNTER0_OCCUPANCY (event 0x1f) mirrors counter 0, so it counts only on counters 1-3"
+                ));
+            }
+            mirror.get_or_insert(event_path.clone());
+        }
+        if slot == 0 {
+            counter0 = Some((encoding.event, threshold));
+        }
+        let mut labels = labels(box_type, &encoding, filters);
+        threshold.add_labels(&mut labels);
         counters.push(ProgrammedCounter {
             slot: CounterSlot::General(slot as u8),
-            control: control(box_type, &encoding),
-            labels: labels(box_type, &encoding, filters),
+            control: control(box_type, &encoding) | threshold.control(),
+            labels,
         });
+    }
+    if let Some(mirror) = mirror
+        && counter0 != Some((TOR_OCCUPANCY_EVENT, Threshold::default()))
+    {
+        return Err(format!(
+            "{mirror}: COUNTER0_OCCUPANCY (event 0x1f) needs a plain TOR_OCCUPANCY (event 0x36, no thresh or edge_det) on counter 0"
+        ));
     }
     if group.fixed {
         counters.push(ProgrammedCounter {
@@ -534,6 +566,55 @@ fn control(box_type: BoxType, encoding: &Encoding) -> u64 {
             true,
         ))
     }
+}
+
+/// The .thresh and .edge_det fields of a CHA counter control; other boxes
+/// never get here with them (`spec::reject_thresholds`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Threshold {
+    thresh: u8,
+    edge_det: bool,
+}
+
+impl Threshold {
+    fn control(self) -> u64 {
+        let edge_det = if self.edge_det {
+            pmon::COUNTER_EDGE_DETECT
+        } else {
+            0
+        };
+
+        u64::from((u32::from(self.thresh) << pmon::COUNTER_THRESHOLD_SHIFT) | edge_det)
+    }
+
+    /// Labels only what is set, so configs without them keep their labels.
+    fn add_labels(self, labels: &mut EventLabels) {
+        if self.thresh != 0 {
+            labels.insert("thresh".to_string(), format!("{:#04x}", self.thresh));
+        }
+        if self.edge_det {
+            labels.insert("edge_det".to_string(), "1".to_string());
+        }
+    }
+}
+
+fn threshold(event: &EventRequest, path: &str) -> Result<Threshold, String> {
+    let thresh = match &event.thresh {
+        Some(thresh) => register_field(thresh, CHA_THRESH_MAX, &format!("{path}.thresh"))?,
+        None => 0,
+    };
+    // "edge_det is in series following thresh ... the thresh field must be set
+    // to a non-0 value" (guide Table 1-6).
+    if event.edge_det && thresh == 0 {
+        return Err(format!(
+            "{path}.edge_det: needs a thresh of at least 1, which edge detection follows"
+        ));
+    }
+
+    Ok(Threshold {
+        thresh,
+        edge_det: event.edge_det,
+    })
 }
 
 fn labels(box_type: BoxType, encoding: &Encoding, filters: Option<ChaFilters>) -> EventLabels {

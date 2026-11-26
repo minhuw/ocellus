@@ -190,6 +190,13 @@ struct EventRequest {
     /// Counts only requests of the group's filter0 `tid`.
     #[serde(default)]
     tid_en: bool,
+    /// Counts the cycles whose increment is at least this value; Skylake-SP
+    /// CHA events only.
+    thresh: Option<Number>,
+    /// Counts the cycles the thresholded condition turns true; Skylake-SP CHA
+    /// events only.
+    #[serde(default)]
+    edge_det: bool,
 }
 
 impl EventRequest {
@@ -349,6 +356,9 @@ pub fn validate(
 
     let mut configs = Vec::new();
     for (box_type, box_request) in request.pmus.into_box_requests() {
+        if model != IntelServerCpuModel::SkylakeXeon || box_type != BoxType::Cha {
+            reject_thresholds(box_type, &box_request)?;
+        }
         let program = program_box_type(box_type, box_request, topology, program_group)?;
         configs.push(ProgrammedConfig {
             config_id: config_id(&program),
@@ -360,6 +370,30 @@ pub fn validate(
     }
 
     Ok(configs)
+}
+
+/// Only Skylake-SP CHA groups take `thresh` and `edge_det`.
+fn reject_thresholds(box_type: BoxType, request: &BoxRequest) -> Result<(), String> {
+    for (index, group) in request.groups.iter().enumerate() {
+        for (slot, event) in group.events.iter().enumerate() {
+            let Some(event) = event else {
+                continue;
+            };
+            for (field, given) in [
+                ("thresh", event.thresh.is_some()),
+                ("edge_det", event.edge_det),
+            ] {
+                if given {
+                    return Err(format!(
+                        "pmus.{}.groups[{index}].events[{slot}].{field}: only Skylake-SP and Cascade Lake CHA events take {field}",
+                        box_type.label()
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn program_box_type(
@@ -1335,7 +1369,7 @@ mod tests {
             ),
             (
                 cha_event(json!({"alias": "cas_count", "op": "rd"})),
-                "pmus.cha.groups[0].events[0].alias: unknown Skylake-SP CHA alias \"cas_count\" (aliases: clockticks, tor_inserts, tor_occupancy, llc_lookup, llc_victims, sf_eviction)",
+                "pmus.cha.groups[0].events[0].alias: unknown Skylake-SP CHA alias \"cas_count\" (aliases: clockticks, tor_inserts, tor_occupancy, counter0_occupancy, llc_lookup, llc_victims, sf_eviction)",
             ),
             (
                 cha_event(json!({"alias": "tor_inserts", "source": "io"})),
@@ -1460,6 +1494,140 @@ mod tests {
             assert!(
                 error.starts_with(expected),
                 "{request}\nexpected: {expected}\n     got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn thresholds_counter0_occupancy_on_cha_counters_1_to_3() {
+        let mirror = |thresh: u64| json!({"alias": "counter0_occupancy", "thresh": thresh});
+        let programs = validate_json(request(json!({"cha": {"grouping": "temporal", "groups": [
+            {"filter1": {"opcodes": ["RdCur"]}, "events": [
+                {"alias": "tor_occupancy", "source": "io", "result": "miss"},
+                mirror(18), mirror(19), mirror(20)
+            ]},
+            {"filter1": {"opcodes": ["RdCur"]}, "events": [
+                {"alias": "tor_occupancy", "source": "io", "result": "miss"},
+                {"alias": "counter0_occupancy", "thresh": 1, "edge_det": true},
+                mirror(3), {"event": "0x1f", "thresh": "0x6"}
+            ]},
+            {"filter1": {"raw": "0x3b"}, "events": [
+                {"event": "0x36", "umask": "0x3f"}, mirror(18), mirror(19), mirror(20)
+            ]}
+        ]}})))
+        .unwrap();
+        let groups = &programs[0].groups;
+        let slots = |controls: [u64; 4]| {
+            controls
+                .into_iter()
+                .enumerate()
+                .map(|(slot, control)| (CounterSlot::General(slot as u8), control))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            controls(&groups[0]),
+            slots([0x50_2436, 0x1250_001f, 0x1350_001f, 0x1450_001f])
+        );
+        assert_eq!(
+            controls(&groups[1]),
+            slots([0x50_2436, 0x0154_001f, 0x0350_001f, 0x0650_001f])
+        );
+        assert_eq!(
+            controls(&groups[2]),
+            slots([0x50_3f36, 0x1250_001f, 0x1350_001f, 0x1450_001f])
+        );
+        assert_eq!(groups[0].filters.unwrap().filter1, 0x4_3c33);
+        assert_eq!(groups[2].filters.unwrap().filter1, 0x3b);
+        assert_eq!(
+            groups[0].counters[3].labels,
+            labels(&[
+                ("alias", "counter0_occupancy"),
+                ("event", "0x1f"),
+                ("umask", "0x00"),
+                ("filter0", "0x0"),
+                ("filter1", "0x43c33"),
+                ("thresh", "0x14"),
+            ])
+        );
+        assert_eq!(groups[1].counters[1].labels["thresh"], "0x01");
+        assert_eq!(groups[1].counters[1].labels["edge_det"], "1");
+        assert!(!groups[0].counters[0].labels.contains_key("thresh"));
+        assert!(!groups[0].counters[0].labels.contains_key("edge_det"));
+    }
+
+    #[test]
+    fn rejects_invalid_thresholds() {
+        let tor = json!({"alias": "tor_occupancy", "source": "io", "result": "miss"});
+        let mirror = json!({"alias": "counter0_occupancy", "thresh": 2});
+        let cha = |events: Value| pmu("cha", json!({"events": events}));
+        let cases = [
+            (
+                cha(json!([mirror])),
+                "pmus.cha.groups[0].events[0]: COUNTER0_OCCUPANCY (event 0x1f) mirrors counter 0, so it counts only on counters 1-3",
+            ),
+            (
+                cha(json!([{"alias": "clockticks"}, mirror])),
+                "pmus.cha.groups[0].events[1]: COUNTER0_OCCUPANCY (event 0x1f) needs a plain TOR_OCCUPANCY (event 0x36, no thresh or edge_det) on counter 0",
+            ),
+            (
+                cha(json!([null, mirror])),
+                "pmus.cha.groups[0].events[1]: COUNTER0_OCCUPANCY (event 0x1f) needs a plain TOR_OCCUPANCY",
+            ),
+            (
+                cha(json!([
+                    {"alias": "tor_occupancy", "source": "io", "result": "miss", "thresh": 1},
+                    mirror
+                ])),
+                "pmus.cha.groups[0].events[1]: COUNTER0_OCCUPANCY (event 0x1f) needs a plain TOR_OCCUPANCY",
+            ),
+            (
+                cha(json!([tor, {"alias": "counter0_occupancy", "edge_det": true}])),
+                "pmus.cha.groups[0].events[1].edge_det: needs a thresh of at least 1, which edge detection follows",
+            ),
+            (
+                cha(json!([tor, {"alias": "counter0_occupancy", "thresh": 21}])),
+                "pmus.cha.groups[0].events[1].thresh: must be at most 0x14, got 0x15",
+            ),
+            (
+                pmu(
+                    "iio",
+                    json!({"events": [{"alias": "clockticks", "thresh": 1}]}),
+                ),
+                "pmus.iio.groups[0].events[0].thresh: only Skylake-SP and Cascade Lake CHA events take thresh",
+            ),
+            (
+                pmu(
+                    "imc",
+                    json!({"events": [{"alias": "clockticks", "edge_det": true}]}),
+                ),
+                "pmus.imc.groups[0].events[0].edge_det: only Skylake-SP and Cascade Lake CHA events take edge_det",
+            ),
+        ];
+
+        for (request, expected) in cases {
+            let error = validate_json(request.clone()).unwrap_err();
+            assert!(
+                error.starts_with(expected),
+                "{request}\nexpected: {expected}\n     got: {error}"
+            );
+        }
+
+        for model in [
+            IntelServerCpuModel::HaswellXeon,
+            IntelServerCpuModel::IvyTown,
+            IntelServerCpuModel::IceLakeXeon,
+        ] {
+            let error = validate(
+                parse(cha(json!([{"alias": "clockticks", "thresh": 1}]))).unwrap(),
+                &topology(),
+                model,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                "pmus.cha.groups[0].events[0].thresh: only Skylake-SP and Cascade Lake CHA events take thresh",
+                "{model:?}"
             );
         }
     }
@@ -1681,6 +1849,18 @@ mod tests {
         let mut aggregate = cha("0x34");
         aggregate["aggregate"] = json!("box");
         assert_ne!(config_id(json!({"cha": aggregate}), BoxType::Cha), base);
+        // thresh 0 is no threshold; any other thresh or edge_det changes the id.
+        let mut thresh = cha("0x34");
+        thresh["groups"][0]["events"][0]["thresh"] = json!(0);
+        assert_eq!(
+            config_id(json!({"cha": thresh.clone()}), BoxType::Cha),
+            base
+        );
+        thresh["groups"][0]["events"][0]["thresh"] = json!(1);
+        let thresholded = config_id(json!({"cha": thresh.clone()}), BoxType::Cha);
+        assert_ne!(thresholded, base);
+        thresh["groups"][0]["events"][0]["edge_det"] = json!(true);
+        assert_ne!(config_id(json!({"cha": thresh}), BoxType::Cha), thresholded);
     }
 
     #[test]
